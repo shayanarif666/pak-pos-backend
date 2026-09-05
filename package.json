@@ -1,0 +1,37 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "description": "Multi-tenant ecommerce + admin + POS API",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "db:migrate": "node src/db/migrate.js",
+    "db:seed:superadmin": "node src/db/seeders/superadmin.seeder.js",
+    "db:seed:plans": "node src/db/seeders/runPlans.seeder.js",
+    "db:clear": "node src/db/seeders/clear.seeder.js",
+    "test": "node --test src/modules/commerce/pricing.service.test.js src/modules/audit/audit.util.test.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cloudinary": "^2.11.0",
+    "compression": "^1.8.1",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^4.22.2",
+    "express-mongo-sanitize": "^2.2.0",
+    "helmet": "^8.3.0",
+    "hpp": "^0.2.3",
+    "jsonwebtoken": "^9.0.3",
+    "mongoose": "^9.9.3",
+    "morgan": "^1.11.0",
+    "multer": "^2.3.0",
+    "mysql2": "^3.24.2",
+    "nodemailer": "^10.0.0",
+    "sequelize": "^6.37.8",
+    "winston": "^3.19.0"
+  }
+}
