@@ -90,8 +90,6 @@ assert(extraLoc.status === 409, "p1 second location", extraLoc)
 const device1 = await req("POST", "/licenses/validate", {
   body: {
     license_key: license1,
-    email: "mgr-p1-" + stamp + "@p11.local",
-    password: "secret12",
     device_uid: "pc-p11-a-" + stamp,
     name: "Till 1",
     location_id: loc1,
@@ -102,8 +100,6 @@ assert(device1.status === 200 && device1.json.data.device, "first device", devic
 const device2 = await req("POST", "/licenses/validate", {
   body: {
     license_key: license1,
-    email: "mgr-p1-" + stamp + "@p11.local",
-    password: "secret12",
     device_uid: "pc-p11-b-" + stamp,
     name: "Till 2",
     location_id: loc1,
@@ -221,8 +217,6 @@ const admin2 = await login("admin-p2-" + stamp + "@p11.local", "secret12")
 const act2 = await req("POST", "/licenses/validate", {
   body: {
     license_key: license2,
-    email: "mgr-p2-" + stamp + "@p11.local",
-    password: "secret12",
     device_uid: "pc-p11-b-" + stamp,
     name: "Till 2",
     location_id: loc2,

@@ -13,12 +13,9 @@ export const Customer = sequelize.define(
     name: { type: DataTypes.TEXT, allowNull: false },
     email: { type: DataTypes.STRING(255), allowNull: true },
     phone: { type: DataTypes.STRING(64), allowNull: true },
-    credit_limit: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
-    credit_balance: {
-      type: DataTypes.DECIMAL(12, 2),
-      allowNull: false,
-      defaultValue: 0,
-    },
+    total_debt: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
+    remaining_debt: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
+    debt_notes: { type: DataTypes.TEXT, allowNull: true },
     is_active: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
   },
   {

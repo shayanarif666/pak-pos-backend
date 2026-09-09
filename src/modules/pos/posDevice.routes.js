@@ -6,8 +6,8 @@ import {
   tenantMiddleware,
 } from "../../shared/middlewares/tenant.middleware.js"
 import { validate } from "../../shared/middlewares/validate.middleware.js"
-import { parsePatchDevice } from "./posDevice.validation.js"
-import { heartbeat, list, patch } from "./posDevice.controller.js"
+import { parsePatchDevice, parseRegisterDevice } from "./posDevice.validation.js"
+import { heartbeat, list, patch, register } from "./posDevice.controller.js"
 
 const router = Router()
 const tenant = [authMiddleware, tenantMiddleware, requireTenantStore]
@@ -17,6 +17,13 @@ router.get(
   ...tenant,
   authorize("store_admin", "manager"),
   list
+)
+router.post(
+  "/",
+  ...tenant,
+  authorize("store_admin", "manager"),
+  validate(parseRegisterDevice),
+  register
 )
 router.patch(
   "/:id/heartbeat",

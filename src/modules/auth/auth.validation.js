@@ -26,13 +26,17 @@ function optionalPin(body, key) {
 }
 
 export function parseLogin(body) {
+  const email = optionalString(body, "email")
   const password = optionalString(body, "password")
   const pin = optionalPin(body, "pin")
-  if (password && pin) {
-    throw new AppError("Send password or pin, not both", 400)
-  }
-  if (!password && !pin) {
-    throw new AppError("password or pin is required", 400)
+
+  if (pin) {
+    if (email || password) {
+      throw new AppError("Use email and password, or pin only", 400)
+    }
+  } else {
+    if (!email) throw new AppError("email is required", 400)
+    if (!password) throw new AppError("password is required", 400)
   }
 
   const channel = optionalString(body, "channel")
@@ -46,7 +50,7 @@ export function parseLogin(body) {
   }
 
   return {
-    email: requireString(body, "email").toLowerCase(),
+    email: email ? email.toLowerCase() : null,
     password,
     pin,
     channel,

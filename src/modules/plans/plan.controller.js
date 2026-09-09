@@ -8,7 +8,7 @@ export const list = asyncHandler(async (req, res) => {
 })
 
 export const getOne = asyncHandler(async (req, res) => {
-  const data = await planService.getPlanById(req.params.id)
+  const data = await planService.getPlanView(req.params.id)
   return apiResponse(res, 200, "OK", data)
 })
 

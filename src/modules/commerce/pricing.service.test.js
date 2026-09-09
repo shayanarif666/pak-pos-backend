@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import {
   applyDiscount,
   bogoFreeQty,
+  lineTaxAmount,
   money,
   priceAfterProductDiscount,
   priceCatalogLine,
@@ -33,10 +34,61 @@ describe("pricing.service", () => {
     assert.equal(priceAfterProductDiscount(product), 90)
   })
 
+  it("applies category discount when product has none", () => {
+    const product = {
+      id: "p1",
+      selling_price: 100,
+      has_product_discount: false,
+      category: { discount_type: "percentage", discount_value: 20 },
+    }
+    assert.equal(priceAfterProductDiscount(product), 80)
+  })
+
   it("computes BOGO free qty in groups", () => {
     assert.equal(bogoFreeQty(3, 2, 1), 1)
     assert.equal(bogoFreeQty(5, 2, 1), 1)
     assert.equal(bogoFreeQty(6, 2, 1), 2)
+  })
+
+  it("does not stack a weaker offer on top of product discount", () => {
+    const product = {
+      id: "p1",
+      category_id: "c1",
+      title: "Pepsi",
+      sku: "PEP",
+      selling_price: 90,
+      cost_price: 60,
+      has_product_discount: true,
+      discount_type: "percentage",
+      discount_value: 17,
+      unit: "piece",
+    }
+    const line = priceCatalogLine({
+      product,
+      quantity: 2,
+      offers: [
+        {
+          id: "o1",
+          type: "promotional",
+          is_active: true,
+          discount_type: "percentage",
+          discount_value: 10,
+          OfferTargets: [{ product_id: "p1" }],
+        },
+      ],
+    })
+    assert.equal(line.pricing_source, "product")
+    assert.equal(line.discount_amount, 30.6)
+    assert.equal(line.subtotal, 149.4)
+  })
+
+  it("adds 17% tax after 17% product discount", () => {
+    const store = { charge_tax_on_sales: true }
+    const product = {
+      tax_type: "percentage",
+      tax_value: 17,
+    }
+    assert.equal(lineTaxAmount(store, product, null, 149.4), 25.4)
   })
 
   it("picks the better of product bulk vs offer, without stacking both", () => {
@@ -77,6 +129,31 @@ describe("pricing.service", () => {
     assert.equal(quoteShipping("pos", rule, 200), 0)
     assert.equal(quoteShipping("web", rule, 200), 50)
     assert.equal(quoteShipping("web", rule, 1000), 0)
+  })
+
+  it("quotes Pepsi 90 x2 with 17% discount then 17% tax", () => {
+    const lines = [
+      {
+        unit_price: 90,
+        quantity: 2,
+        discount_amount: 30.6,
+        subtotal: 149.4,
+        tax_amount: 25.4,
+        cost_price: 60,
+      },
+    ]
+    const quoted = quoteOrderTotals({
+      lines,
+      store: { charge_tax_on_sales: true },
+      channel: "pos",
+      paymentMethod: "cash",
+    })
+    assert.equal(quoted.gross_amount, 180)
+    assert.equal(quoted.line_discount_amount, 30.6)
+    assert.equal(quoted.subtotal, 149.4)
+    assert.equal(quoted.tax_amount, 25.4)
+    assert.equal(quoted.total_amount, 174.8)
+    assert.equal(quoted.cost_total, 120)
   })
 
   it("quotes the same goods total for web and POS except shipping", () => {

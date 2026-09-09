@@ -16,14 +16,24 @@ export function applyDiscount(base, type, value) {
   return money(Math.min(base, amount))
 }
 
-export function productUnitDiscount(product) {
-  const list = Number(product.selling_price || 0)
-  if (!product.has_product_discount) return 0
-  return applyDiscount(list, product.discount_type, product.discount_value)
+function categoryOf(product, category) {
+  return category || product?.Category || product?.category || null
 }
 
-export function priceAfterProductDiscount(product) {
-  return money(Number(product.selling_price || 0) - productUnitDiscount(product))
+export function productUnitDiscount(product, category) {
+  const list = Number(product.selling_price || 0)
+  if (product.has_product_discount) {
+    return applyDiscount(list, product.discount_type, product.discount_value)
+  }
+  const cat = categoryOf(product, category)
+  if (cat?.discount_type && cat.discount_value != null) {
+    return applyDiscount(list, cat.discount_type, cat.discount_value)
+  }
+  return 0
+}
+
+export function priceAfterProductDiscount(product, category) {
+  return money(Number(product.selling_price || 0) - productUnitDiscount(product, category))
 }
 
 export function bogoFreeQty(qty, buy_qty, get_qty) {
@@ -111,16 +121,22 @@ export function priceCatalogLine({
   }
 
   const list = money(product.selling_price)
-  const afterProduct = priceAfterProductDiscount(product)
+  const afterProduct = priceAfterProductDiscount(product, product.Category || product.category)
   const live = offers.filter((offer) => offerIsLive(offer, { locationId, now }))
   const matching = live.filter((offer) => matchingTargets(offer, product).length)
+  const catalogSource =
+    product.has_product_discount
+      ? "product"
+      : product.Category?.discount_type || product.category?.discount_type
+        ? "category"
+        : "list"
 
   const candidates = [
     {
       unit: afterProduct,
       discount: money((list - afterProduct) * qty),
       offer_id: null,
-      source: "product",
+      source: catalogSource,
     },
   ]
 
@@ -128,7 +144,7 @@ export function priceCatalogLine({
     ["flash_sale", "promotional"].includes(row.type)
   )) {
     const target = matchingTargets(offer, product)[0]
-    const unit = offerUnitAfterDiscount(afterProduct, offer, target)
+    const unit = offerUnitAfterDiscount(list, offer, target)
     candidates.push({
       unit,
       discount: money((list - unit) * qty),
@@ -139,7 +155,7 @@ export function priceCatalogLine({
 
   const bulkOffers = matching.filter((row) => row.type === "bulk_discount")
   const tiers = product.has_bulk_discount ? bulkTiers : []
-  const bulk = bestBulkUnit(afterProduct, qty, tiers, bulkOffers, product)
+  const bulk = bestBulkUnit(list, qty, tiers, bulkOffers, product)
   if (bulk.source) {
     candidates.push({
       unit: bulk.unit,
@@ -152,10 +168,10 @@ export function priceCatalogLine({
   for (const offer of matching.filter((row) => row.type === "bogo")) {
     const free = bogoFreeQty(qty, offer.buy_qty, offer.get_qty)
     const paidQty = qty - free
-    const line = money(afterProduct * paidQty)
+    const line = money(list * paidQty)
     const discount = money(list * qty - line)
     candidates.push({
-      unit: afterProduct,
+      unit: list,
       discount,
       offer_id: offer.id,
       source: "bogo",
@@ -253,15 +269,26 @@ export function quoteOrderTotals({
   paymentMethod,
   paymentSplits,
   taxRates,
+  taxExempt = false,
 }) {
+  const gross_amount = money(
+    lines.reduce((sum, line) => sum + Number(line.unit_price) * Number(line.quantity), 0)
+  )
+  const line_discount_amount = money(
+    lines.reduce((sum, line) => sum + Number(line.discount_amount || 0), 0)
+  )
   const subtotal = money(lines.reduce((sum, line) => sum + Number(line.subtotal), 0))
-  const line_tax = money(lines.reduce((sum, line) => sum + Number(line.tax_amount || 0), 0))
+  const line_tax = taxExempt
+    ? 0
+    : money(lines.reduce((sum, line) => sum + Number(line.tax_amount || 0), 0))
   const goods = money(Math.max(0, subtotal - orderDiscount - couponDiscount))
   const shipping_fee = quoteShipping(channel, shippingRule, goods)
   const pre_gst = money(goods + line_tax + shipping_fee)
 
   let gst = 0
-  if (paymentSplits?.length) {
+  if (taxExempt || channel === "pos") {
+    gst = 0
+  } else if (paymentSplits?.length) {
     const splitSum = paymentSplits.reduce((sum, row) => sum + Number(row.amount), 0)
     if (splitSum > 0) {
       gst = money(
@@ -280,6 +307,8 @@ export function quoteOrderTotals({
   const cost_total = money(lines.reduce((sum, line) => sum + Number(line.cost_price) * Number(line.quantity), 0))
 
   return {
+    gross_amount,
+    line_discount_amount,
     subtotal,
     discount_amount: money(orderDiscount),
     coupon_discount_amount: money(couponDiscount),

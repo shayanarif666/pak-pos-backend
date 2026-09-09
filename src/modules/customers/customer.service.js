@@ -6,6 +6,10 @@ import { Location } from "../locations/location.model.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { AppError } from "../../shared/errors/AppError.js"
 
+function money(value) {
+  return Math.round(Number(value || 0) * 100) / 100
+}
+
 function publicCustomer(row) {
   return {
     id: row.id,
@@ -15,8 +19,9 @@ function publicCustomer(row) {
     name: row.name,
     email: row.email,
     phone: row.phone,
-    credit_limit: row.credit_limit,
-    credit_balance: Number(row.credit_balance),
+    total_debt: Number(row.total_debt || 0),
+    remaining_debt: Number(row.remaining_debt || 0),
+    debt_notes: row.debt_notes || null,
     is_active: row.is_active,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -61,6 +66,16 @@ export async function getCustomerView(storeId, id) {
 
 export async function createCustomer(store, fields) {
   const location_id = await resolveLocation(store.id, fields.location_id)
+  const remaining =
+    fields.remaining_debt == null
+      ? fields.total_debt == null
+        ? 0
+        : Number(fields.total_debt)
+      : Number(fields.remaining_debt)
+  const total = fields.total_debt == null ? remaining : Number(fields.total_debt)
+  if (remaining > total) {
+    throw new AppError("remaining_debt cannot be greater than total_debt", 400)
+  }
   const row = await Customer.create({
     store_id: store.id,
     store_id_int: store.store_id_int,
@@ -68,34 +83,50 @@ export async function createCustomer(store, fields) {
     name: fields.name,
     email: fields.email,
     phone: fields.phone,
-    credit_limit: fields.credit_limit,
-    credit_balance: 0,
+    total_debt: 0,
+    remaining_debt: 0,
+    debt_notes: fields.debt_notes || null,
     is_active: true,
   })
+  if (total > 0) {
+    await sequelize.transaction(async (transaction) => {
+      await recordLedgerEntry(
+        row,
+        {
+          entry_type: "debit",
+          amount: total,
+          note: fields.debt_notes || "Opening total debt",
+        },
+        { transaction }
+      )
+      const paid = money(total - remaining)
+      if (paid > 0) {
+        await recordLedgerEntry(
+          row,
+          {
+            entry_type: "credit",
+            amount: paid,
+            note: "Opening amount already paid",
+          },
+          { transaction }
+        )
+      }
+    })
+    await row.reload()
+  }
   return publicCustomer(row)
 }
 
 export async function updateCustomer(storeId, id, fields) {
   const row = await getCustomer(storeId, id)
   const patch = { ...fields }
+  delete patch.total_debt
+  delete patch.remaining_debt
   if (fields.location_id !== undefined) {
     patch.location_id = await resolveLocation(storeId, fields.location_id)
   }
   await row.update(patch)
   return publicCustomer(row)
-}
-
-async function syncCreditBalance(customer, { transaction }) {
-  const entries = await CustomerCreditEntry.findAll({
-    where: { customer_id: customer.id, store_id: customer.store_id },
-    transaction,
-  })
-  const balance = entries.reduce((sum, entry) => {
-    const amount = Number(entry.amount)
-    return entry.entry_type === "debit" ? sum + amount : sum - amount
-  }, 0)
-  await customer.update({ credit_balance: balance }, { transaction })
-  return balance
 }
 
 export async function listCredit(storeId, customerId) {
@@ -104,6 +135,31 @@ export async function listCredit(storeId, customerId) {
     where: { store_id: storeId, customer_id: customerId },
     order: [["created_at", "DESC"]],
   })
+}
+
+async function syncCustomerDebt(customer, { transaction }) {
+  const entries = await CustomerCreditEntry.findAll({
+    where: { customer_id: customer.id, store_id: customer.store_id },
+    transaction,
+  })
+  const total_debt = entries.reduce((sum, entry) => {
+    return entry.entry_type === "debit" ? sum + Number(entry.amount || 0) : sum
+  }, 0)
+  const remaining_debt = entries.reduce((sum, entry) => {
+    const amount = Number(entry.amount || 0)
+    return entry.entry_type === "debit" ? sum + amount : sum - amount
+  }, 0)
+  await customer.update(
+    {
+      total_debt: Math.round(total_debt * 100) / 100,
+      remaining_debt: Math.round(Math.max(0, remaining_debt) * 100) / 100,
+    },
+    { transaction }
+  )
+  return {
+    total_debt: Number(customer.total_debt),
+    remaining_debt: Number(customer.remaining_debt),
+  }
 }
 
 export async function recordLedgerEntry(customer, fields, { transaction }) {
@@ -120,8 +176,8 @@ export async function recordLedgerEntry(customer, fields, { transaction }) {
     },
     { transaction }
   )
-  const credit_balance = await syncCreditBalance(customer, { transaction })
-  return { entry, credit_balance }
+  const debt = await syncCustomerDebt(customer, { transaction })
+  return { entry, ...debt }
 }
 
 export async function addCreditEntry(storeId, customerId, fields, actor) {

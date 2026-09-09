@@ -1,17 +1,6 @@
 import { AppError } from "../../shared/errors/AppError.js"
 import { PLAN_CODE } from "../../db/enums.js"
 
-const BOOL_KEYS = [
-  "offline_enabled",
-  "pin_override_enabled",
-  "approval_enabled",
-  "advanced_reports",
-  "backup_restore_enabled",
-  "multi_branch_enabled",
-  "has_dedicated_am",
-  "is_active",
-]
-
 function requireString(body, key, { max = 255 } = {}) {
   const value = body[key]
   if (typeof value !== "string" || !value.trim()) {
@@ -54,6 +43,37 @@ function optionalBool(body, key) {
   return Boolean(body[key])
 }
 
+export function parseFeatures(value, { required = false } = {}) {
+  if (value === undefined) {
+    if (required) throw new AppError("features is required", 400)
+    return undefined
+  }
+  if (value === null) return []
+  if (!Array.isArray(value)) {
+    throw new AppError("features must be an array of strings", 400)
+  }
+  if (value.length > 50) throw new AppError("features cannot have more than 50 items", 400)
+
+  const seen = new Set()
+  const features = []
+  for (const item of value) {
+    let text = ""
+    if (typeof item === "string") text = item.trim()
+    else if (item && typeof item === "object") {
+      text = String(item.label || item.key || item.name || "").trim()
+    } else {
+      throw new AppError("each feature must be a string", 400)
+    }
+    if (!text) continue
+    if (text.length > 200) throw new AppError("each feature must be at most 200 characters", 400)
+    const key = text.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    features.push(text)
+  }
+  return features
+}
+
 export function parseCreatePlan(body) {
   const fields = {
     code: requireCode(body),
@@ -61,10 +81,10 @@ export function parseCreatePlan(body) {
     price_pkr: requireNumber(body, "price_pkr", { min: 0 }),
     max_devices: requireNumber(body, "max_devices", { min: 1, integer: true }),
     max_locations: requireNumber(body, "max_locations", { min: 1, integer: true }),
+    features: parseFeatures(body.features) ?? [],
   }
-  for (const key of BOOL_KEYS) {
-    if (body[key] !== undefined) fields[key] = Boolean(body[key])
-  }
+  const is_active = optionalBool(body, "is_active")
+  if (is_active !== undefined) fields.is_active = is_active
   return fields
 }
 
@@ -77,10 +97,10 @@ export function parsePatchPlan(body) {
   if (devices !== undefined) fields.max_devices = devices
   const locations = optionalNumber(body, "max_locations", { min: 1, integer: true })
   if (locations !== undefined) fields.max_locations = locations
-  for (const key of BOOL_KEYS) {
-    const value = optionalBool(body, key)
-    if (value !== undefined) fields[key] = value
-  }
+  const features = parseFeatures(body.features)
+  if (features !== undefined) fields.features = features
+  const is_active = optionalBool(body, "is_active")
+  if (is_active !== undefined) fields.is_active = is_active
   if (!Object.keys(fields).length) throw new AppError("No fields to update", 400)
   return fields
 }

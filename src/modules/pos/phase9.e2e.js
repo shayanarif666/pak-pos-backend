@@ -76,8 +76,6 @@ const license1 = reg1.json.data.license.license_key
 const device = await req("POST", "/licenses/validate", {
   body: {
     license_key: license1,
-    email: "mgr-p1-" + stamp + "@p9.local",
-    password: "secret12",
     device_uid: "pc-p9-" + stamp,
     name: "Till 1",
     location_id: loc1,
@@ -230,8 +228,6 @@ const admin2 = await login("admin-p2-" + stamp + "@p9.local", "secret12")
 const act2 = await req("POST", "/licenses/validate", {
   body: {
     license_key: license2,
-    email: "mgr-p2-" + stamp + "@p9.local",
-    password: "secret12",
     device_uid: "pc-p9-b-" + stamp,
     name: "Till 2",
     location_id: loc2,

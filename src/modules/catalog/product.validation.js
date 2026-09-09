@@ -75,7 +75,6 @@ export function parseCreateProduct(body) {
 
   const fields = {
     title: requireString(body, "title"),
-    slug: optionalString(body, "slug"),
     sku: requireString(body, "sku"),
     barcode: optionalString(body, "barcode") ?? null,
     image_url: optionalString(body, "image_url") ?? null,
@@ -114,7 +113,6 @@ export function parseCreateProduct(body) {
 export function parsePatchProduct(body) {
   const fields = {}
   if (body.title !== undefined) fields.title = requireString(body, "title")
-  if (body.slug !== undefined) fields.slug = optionalString(body, "slug")
   if (body.sku !== undefined) fields.sku = requireString(body, "sku")
   if (body.barcode !== undefined) fields.barcode = optionalString(body, "barcode")
   if (body.image_url !== undefined) fields.image_url = optionalString(body, "image_url")
@@ -147,10 +145,13 @@ export function parsePatchProduct(body) {
     fields.discount_value = optionalNumber(body, "discount_value")
   }
   if (body.tax_type !== undefined) {
-    if (body.tax_type !== null && !TAX_AMOUNT_TYPE.includes(body.tax_type)) {
+    if (body.tax_type === null || body.tax_type === "") {
+      fields.tax_type = null
+    } else if (!TAX_AMOUNT_TYPE.includes(body.tax_type)) {
       throw new AppError("tax_type must be percentage or fixed", 400)
+    } else {
+      fields.tax_type = body.tax_type
     }
-    fields.tax_type = body.tax_type
   }
   if (body.tax_value !== undefined) fields.tax_value = optionalNumber(body, "tax_value")
   if (body.is_pack_product !== undefined) {

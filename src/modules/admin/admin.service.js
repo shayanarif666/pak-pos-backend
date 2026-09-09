@@ -16,7 +16,7 @@ import {
 import { issueLicense } from "../stores/license.service.js"
 import { createBilling } from "../billings/billing.service.js"
 import { hashPassword } from "../../shared/utils/hash.util.js"
-import { slugify } from "../../shared/utils/slugify.js"
+import { ensureUniqueSlug } from "../../shared/utils/slugify.js"
 import { ensureSequenceAtLeast } from "../../shared/utils/counter.util.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
@@ -51,15 +51,16 @@ function publicUser(user) {
     phone: user.phone,
     role: user.role,
     store_id: user.store_id,
+    store_number: user.store_id_int,
     location_id: user.location_id,
-    location_id_int: user.location_id_int,
+    location_number: user.location_id_int,
   }
 }
 
 function publicStore(store) {
   return {
     id: store.id,
-    store_id_int: store.store_id_int,
+    store_number: store.store_id_int,
     plan_id: store.plan_id,
     name: store.name,
     slug: store.slug,
@@ -72,7 +73,7 @@ function publicStore(store) {
     contact_phone: store.contact_phone,
     admin_id: store.admin_id,
     default_location_id: store.default_location_id,
-    default_location_id_int: store.default_location_id_int,
+    default_location_number: store.default_location_id_int,
     account_manager_name: store.account_manager_name,
     account_manager_phone: store.account_manager_phone,
     is_active: store.is_active,
@@ -85,8 +86,11 @@ function publicStore(store) {
 }
 
 export async function registerStore(input, superadmin) {
-  const slug = slugify(input.slug || input.name)
-  if (!slug) throw new AppError("slug is required", 400)
+  const slug = await ensureUniqueSlug(input.name, async (candidate) => {
+    const taken = await Store.findOne({ where: { slug: candidate } })
+    return Boolean(taken)
+  })
+  if (!slug) throw new AppError("Store name must contain letters or numbers for a slug", 400)
 
   return sequelize.transaction(async (transaction) => {
     const plan = await Plan.findByPk(input.plan_id, { transaction })
@@ -222,7 +226,7 @@ export async function registerStore(input, superadmin) {
       store: publicStore(store),
       location: {
         id: location.id,
-        location_id_int: location.location_id_int,
+        location_number: location.location_id_int,
         name: location.name,
         phone: location.phone,
       },

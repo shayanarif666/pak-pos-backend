@@ -42,6 +42,17 @@ export function parsePutTaxRates(body) {
   if (body.fbr_invoice_enabled !== undefined) {
     store.fbr_invoice_enabled = Boolean(body.fbr_invoice_enabled)
   }
+  if (body.default_tax_rate !== undefined) {
+    if (body.default_tax_rate === null || body.default_tax_rate === "") {
+      store.default_tax_rate = null
+    } else {
+      const n = Number(body.default_tax_rate)
+      if (Number.isNaN(n) || n < 0 || n > 100) {
+        throw new AppError("default_tax_rate must be 0–100", 400)
+      }
+      store.default_tax_rate = n
+    }
+  }
 
   return { rates, store }
 }

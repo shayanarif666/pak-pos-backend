@@ -11,6 +11,27 @@ import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
 
+export function publicLocation(location) {
+  if (!location) return null
+  const json = location.toJSON ? location.toJSON() : location
+  return {
+    id: json.id,
+    store_id: json.store_id,
+    store_number: json.store_id_int,
+    location_number: json.location_id_int,
+    name: json.name,
+    address_line: json.address_line,
+    city: json.city,
+    country: json.country,
+    postal_code: json.postal_code,
+    phone: json.phone,
+    is_default: json.is_default,
+    is_active: json.is_active,
+    created_at: json.created_at,
+    updated_at: json.updated_at,
+  }
+}
+
 export async function createMainCounter(store, fields, { transaction }) {
   const location = await Location.create(
     {
@@ -41,12 +62,13 @@ async function unsetOtherDefaults(storeId, keepId, transaction) {
 }
 
 export async function listLocations(storeId) {
-  return Location.findAll({
+  const rows = await Location.findAll({
     where: { store_id: storeId },
     order: [
       ["location_id_int", "ASC"],
     ],
   })
+  return rows.map(publicLocation)
 }
 
 export async function getLocation(storeId, locationId) {

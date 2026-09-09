@@ -2,20 +2,15 @@ import crypto from "crypto"
 import { StoreLicense } from "./storeLicense.model.js"
 import { Store } from "./store.model.js"
 import { Plan } from "../plans/plan.model.js"
-import { User } from "../auth/user.model.js"
 import { PosDevice } from "../pos/posDevice.model.js"
 import { Location } from "../locations/location.model.js"
 import { addOneMonth, isExpired } from "../../shared/utils/date.util.js"
-import { comparePassword } from "../../shared/utils/hash.util.js"
 import { writeAudit } from "../../shared/utils/audit.util.js"
 import { assertPlan } from "../../shared/utils/plan.util.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
-import { UnauthorizedError } from "../../shared/errors/UnauthorizedError.js"
-
-const ACTIVATOR_ROLES = new Set(["store_admin", "manager"])
 
 export function generateLicenseKey() {
   const raw = crypto.randomBytes(8).toString("hex").toUpperCase()
@@ -27,7 +22,7 @@ export function publicLicense(license, extras = {}) {
   return {
     id: license.id,
     store_id: license.store_id,
-    store_id_int: license.store_id_int,
+    store_number: license.store_id_int,
     plan_id: license.plan_id,
     license_key: license.license_key,
     status: license.status,
@@ -73,7 +68,7 @@ async function loadLicenseByKey(licenseKey) {
     where: { license_key: key },
     include: [
       { model: Store, attributes: ["id", "name", "slug", "is_active", "pos_enabled", "default_location_id"] },
-      { model: Plan, attributes: ["id", "code", "name", "max_devices", "max_locations"] },
+      { model: Plan, attributes: ["id", "code", "name", "max_devices", "max_locations", "features"] },
       { model: PosDevice, as: "device" },
     ],
   })
@@ -113,6 +108,7 @@ function licenseExtras(license) {
           name: license.Plan.name,
           max_devices: license.Plan.max_devices,
           max_locations: license.Plan.max_locations,
+          features: Array.isArray(license.Plan.features) ? license.Plan.features : [],
         }
       : null,
     device: license.device || null,
@@ -137,38 +133,17 @@ export async function validateLicenseKey(licenseKey) {
   return publicLicense(license, licenseExtras(license))
 }
 
-async function assertActivator(storeId, { email, password, pin }) {
-  const user = await User.findOne({
-    where: { email: email.toLowerCase(), store_id: storeId },
-  })
-  if (!user || !user.is_active) {
-    throw new UnauthorizedError("Invalid email or credentials")
-  }
-  if (!ACTIVATOR_ROLES.has(user.role)) {
-    throw new ForbiddenError("Only store admin or manager can activate a POS device")
-  }
-
-  if (password) {
-    const ok = await comparePassword(password, user.password)
-    if (!ok) throw new UnauthorizedError("Invalid email or credentials")
-    return user
-  }
-
-  if (!user.pin || user.pin !== pin) {
-    throw new UnauthorizedError("Invalid email or credentials")
-  }
-  return user
-}
-
-async function resolveActivateLocation(user, store, locationId) {
-  if (locationId) {
-    if (user.role === "manager" && locationId !== user.location_id) {
-      throw new ForbiddenError("Managers can only activate a device at their location")
-    }
-    return locationId
-  }
-  if (user.role === "manager" && user.location_id) return user.location_id
+async function resolveActivateLocation(store, locationId) {
+  if (locationId) return locationId
   if (store?.default_location_id) return store.default_location_id
+  const first = await Location.findOne({
+    where: { store_id: store.id, is_active: true },
+    order: [
+      ["is_default", "DESC"],
+      ["location_id_int", "ASC"],
+    ],
+  })
+  if (first) return first.id
   throw new AppError("location_id is required to register this POS", 400)
 }
 
@@ -179,8 +154,7 @@ export async function activateLicenseKey(input, meta = {}) {
 
   const license = await loadLicenseByKey(input.license_key)
   assertStoreUsable(license)
-  const user = await assertActivator(license.store_id, input)
-  const location_id = await resolveActivateLocation(user, license.Store, input.location_id)
+  const location_id = await resolveActivateLocation(license.Store, input.location_id)
 
   if (license.status === "active") {
     const bound = license.device || (license.device_id ? await PosDevice.findByPk(license.device_id) : null)
@@ -188,13 +162,6 @@ export async function activateLicenseKey(input, meta = {}) {
       return publicLicense(license, {
         ...licenseExtras(license),
         device: bound,
-        activated_by: {
-          id: user.id,
-          name: user.name,
-          email: user.email,
-          role: user.role,
-          location_id: user.location_id,
-        },
       })
     }
     throw new ConflictError("This license key is already activated on another device")
@@ -221,12 +188,12 @@ export async function activateLicenseKey(input, meta = {}) {
   const device = await registerDevice(
     {
       device_uid: input.device_uid,
-      name: input.name,
+      name: input.name || `POS ${input.device_uid}`,
       location_id,
       platform: input.platform,
       app_version: input.app_version,
     },
-    user,
+    null,
     { store }
   )
 
@@ -244,7 +211,7 @@ export async function activateLicenseKey(input, meta = {}) {
     location_id: device.location_id,
     location_id_int: device.location_id_int,
     device_id: device.id,
-    user_id: user.id,
+    user_id: null,
     channel: "pos",
     ip_address: meta.ip,
     user_agent: meta.userAgent,
@@ -254,13 +221,6 @@ export async function activateLicenseKey(input, meta = {}) {
   return publicLicense(license, {
     ...licenseExtras(license),
     device,
-    activated_by: {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      location_id: user.location_id,
-    },
   })
 }
 

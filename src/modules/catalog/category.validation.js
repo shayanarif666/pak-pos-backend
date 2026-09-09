@@ -1,5 +1,5 @@
 import { AppError } from "../../shared/errors/AppError.js"
-import { TAX_AMOUNT_TYPE } from "../../db/enums.js"
+import { DISCOUNT_TYPE, TAX_AMOUNT_TYPE } from "../../db/enums.js"
 
 function requireString(body, key) {
   const value = body[key]
@@ -55,17 +55,37 @@ function optionalUuid(body, key) {
   return body[key]
 }
 
-function optionalTaxType(body, key) {
+function optionalEnum(body, key, allowed, label) {
   if (body[key] === undefined) return undefined
   if (body[key] === null || body[key] === "") return null
-  if (!TAX_AMOUNT_TYPE.includes(body[key])) {
-    throw new AppError(`${key} must be percentage or fixed`, 400)
+  if (!allowed.includes(body[key])) {
+    throw new AppError(`${key} must be ${label}`, 400)
   }
   return body[key]
 }
 
+function optionalTaxType(body, key) {
+  return optionalEnum(body, key, TAX_AMOUNT_TYPE, "percentage or fixed")
+}
+
+function optionalDiscountType(body, key) {
+  return optionalEnum(body, key, DISCOUNT_TYPE, "percentage or fixed")
+}
+
+function assertPair(type, value, label) {
+  if (type && (value == null || value === "")) {
+    throw new AppError(`${label}_value is required when ${label}_type is set`, 400)
+  }
+  if (!type && value != null) {
+    throw new AppError(`${label}_type is required when ${label}_value is set`, 400)
+  }
+  if (type === "percentage" && Number(value) > 100) {
+    throw new AppError(`${label}_value cannot exceed 100 for percentage`, 400)
+  }
+}
+
 export function parseCreateCategory(body) {
-  return {
+  const fields = {
     name: requireString(body, "name"),
     slug: optionalString(body, "slug"),
     parent_category_id: optionalUuid(body, "parent_category_id") ?? null,
@@ -73,6 +93,8 @@ export function parseCreateCategory(body) {
     description: optionalString(body, "description") ?? null,
     tax_type: optionalTaxType(body, "tax_type") ?? null,
     tax_value: optionalNumber(body, "tax_value") ?? null,
+    discount_type: optionalDiscountType(body, "discount_type") ?? null,
+    discount_value: optionalNumber(body, "discount_value") ?? null,
     is_active: body.is_active === undefined ? true : Boolean(body.is_active),
     sort_order:
       body.sort_order === undefined || body.sort_order === null
@@ -81,6 +103,9 @@ export function parseCreateCategory(body) {
     pos_visible: body.pos_visible === undefined ? true : Boolean(body.pos_visible),
     web_visible: body.web_visible === undefined ? true : Boolean(body.web_visible),
   }
+  assertPair(fields.tax_type, fields.tax_value, "tax")
+  assertPair(fields.discount_type, fields.discount_value, "discount")
+  return fields
 }
 
 export function parsePatchCategory(body) {
@@ -96,6 +121,26 @@ export function parsePatchCategory(body) {
   }
   if (body.tax_type !== undefined) fields.tax_type = optionalTaxType(body, "tax_type")
   if (body.tax_value !== undefined) fields.tax_value = optionalNumber(body, "tax_value")
+  if (body.discount_type !== undefined) {
+    fields.discount_type = optionalDiscountType(body, "discount_type")
+  }
+  if (body.discount_value !== undefined) {
+    fields.discount_value = optionalNumber(body, "discount_value")
+  }
+  if (body.tax_type !== undefined || body.tax_value !== undefined) {
+    assertPair(
+      fields.tax_type !== undefined ? fields.tax_type : body.tax_type,
+      fields.tax_value !== undefined ? fields.tax_value : body.tax_value,
+      "tax"
+    )
+  }
+  if (body.discount_type !== undefined || body.discount_value !== undefined) {
+    assertPair(
+      fields.discount_type !== undefined ? fields.discount_type : body.discount_type,
+      fields.discount_value !== undefined ? fields.discount_value : body.discount_value,
+      "discount"
+    )
+  }
   if (body.is_active !== undefined) fields.is_active = optionalBool(body, "is_active")
   if (body.sort_order !== undefined) fields.sort_order = optionalInt(body, "sort_order")
   if (body.pos_visible !== undefined) {

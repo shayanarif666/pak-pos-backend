@@ -29,8 +29,10 @@ export async function authMiddleware(req, res, next) {
     req.auth = {
       id: user.id,
       role: user.role,
-      store_id: user.store_id,
-      location_id: user.location_id,
+      store_id: user.store_id || payload.store_id || null,
+      location_id: user.location_id || payload.location_id || null,
+      store_number: user.store_id_int ?? payload.store_number ?? null,
+      location_number: user.location_id_int ?? payload.location_number ?? null,
     }
     next()
   } catch (err) {

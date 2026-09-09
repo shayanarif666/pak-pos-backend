@@ -41,7 +41,9 @@ export function parseCreateCustomer(body) {
     email: optionalString(body, "email"),
     phone: optionalString(body, "phone"),
     location_id: optionalUuid(body, "location_id"),
-    credit_limit: optionalNumber(body, "credit_limit"),
+    remaining_debt: optionalNumber(body, "remaining_debt"),
+    total_debt: optionalNumber(body, "total_debt"),
+    debt_notes: optionalString(body, "debt_notes", { max: 4000 }),
   }
 }
 
@@ -51,7 +53,7 @@ export function parsePatchCustomer(body) {
   if (body.email !== undefined) patch.email = optionalString(body, "email")
   if (body.phone !== undefined) patch.phone = optionalString(body, "phone")
   if (body.location_id !== undefined) patch.location_id = optionalUuid(body, "location_id")
-  if (body.credit_limit !== undefined) patch.credit_limit = optionalNumber(body, "credit_limit")
+  if (body.debt_notes !== undefined) patch.debt_notes = optionalString(body, "debt_notes", { max: 4000 })
   if (body.is_active !== undefined) patch.is_active = Boolean(body.is_active)
   if (!Object.keys(patch).length) throw new AppError("No fields to update", 400)
   return patch

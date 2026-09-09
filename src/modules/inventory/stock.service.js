@@ -42,6 +42,7 @@ export async function createMovement(actor, fields) {
 
   const product = await getProduct(actor.store_id, fields.product_id)
   const locationId = resolveLocationId(actor, fields.location_id)
+  if (!locationId) throw new ForbiddenError("No location on this account")
   const location = await loadLocation(actor.store_id, locationId)
 
   return sequelize.transaction(async (transaction) => {

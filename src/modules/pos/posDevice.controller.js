@@ -3,12 +3,22 @@ import { asyncHandler } from "../../shared/utils/asyncHandler.js"
 import * as deviceService from "./posDevice.service.js"
 
 export const register = asyncHandler(async (req, res) => {
-  const data = await deviceService.registerDevice(req.body, req.user)
+  const actor = {
+    ...req.user.get({ plain: true }),
+    store_id: req.auth?.store_id || req.user.store_id,
+    location_id: req.auth?.location_id || req.user.location_id,
+  }
+  const data = await deviceService.registerDevice(req.body, actor)
   return apiResponse(res, 201, "Device registered", data)
 })
 
 export const list = asyncHandler(async (req, res) => {
-  const data = await deviceService.listDevices(req.user, req.query)
+  const actor = {
+    ...req.user.get({ plain: true }),
+    store_id: req.auth?.store_id || req.user.store_id,
+    location_id: req.auth?.location_id || req.user.location_id,
+  }
+  const data = await deviceService.listDevices(actor, req.query)
   return apiResponse(res, 200, "OK", data)
 })
 

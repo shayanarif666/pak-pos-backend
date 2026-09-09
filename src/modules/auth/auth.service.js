@@ -34,9 +34,9 @@ export function publicUser(user) {
     phone: user.phone,
     role: user.role,
     store_id: user.store_id,
-    store_id_int: user.store_id_int,
+    store_number: user.store_id_int,
     location_id: user.location_id,
-    location_id_int: user.location_id_int,
+    location_number: user.location_id_int,
     is_verified: user.is_verified,
     is_active: user.is_active,
     last_login_at: user.last_login_at,
@@ -48,7 +48,7 @@ function publicLocation(row) {
   return {
     id: row.id,
     store_id: row.store_id,
-    location_id_int: row.location_id_int,
+    location_number: row.location_id_int,
     name: row.name,
     address_line: row.address_line,
     city: row.city,
@@ -65,7 +65,7 @@ function publicDevice(row) {
   return {
     id: row.id,
     location_id: row.location_id,
-    location_id_int: row.location_id_int,
+    location_number: row.location_id_int,
     device_uid: row.device_uid,
     name: row.name,
     platform: row.platform,
@@ -148,13 +148,33 @@ async function buildStaffSession(user) {
   }
 }
 
-function signTokens(user) {
+async function tokenClaims(user) {
+  if (!user.store_id) {
+    return {
+      store_id: null,
+      location_id: null,
+      store_number: null,
+      location_number: null,
+    }
+  }
+  const store = await Store.findByPk(user.store_id)
+  return {
+    store_id: user.store_id,
+    location_id: user.location_id || store?.default_location_id || null,
+    store_number: user.store_id_int ?? null,
+    location_number: user.location_id_int ?? store?.default_location_id_int ?? null,
+  }
+}
+
+function signTokens(user, extras = {}) {
   const access_token = jwt.sign(
     {
       sub: user.id,
       role: user.role,
-      store_id: user.store_id,
-      location_id: user.location_id,
+      store_id: extras.store_id ?? user.store_id ?? null,
+      location_id: extras.location_id ?? user.location_id ?? null,
+      store_number: extras.store_number ?? user.store_id_int ?? null,
+      location_number: extras.location_number ?? user.location_id_int ?? null,
       type: "access",
     },
     env.JWT_SECRET,
@@ -245,7 +265,45 @@ async function resolveUserByStoreScope({ email, store_slug, license_key }) {
   return matches[0] || null
 }
 
+async function findUserByPin(pin, storeId) {
+  const where = { pin }
+  if (storeId !== undefined) where.store_id = storeId
+  return User.findOne({ where })
+}
+
+async function resolvePinLoginUser(input) {
+  if (input.channel === "pos") {
+    const license = await validateLicenseKey(input.license_key)
+    const user = await findUserByPin(input.pin, license.store_id)
+    return { user, channel: "pos" }
+  }
+
+  if (input.license_key) {
+    const license = await StoreLicense.findOne({
+      where: { license_key: input.license_key },
+    })
+    if (!license) return { user: null, channel: input.channel || "web" }
+    const user = await findUserByPin(input.pin, license.store_id)
+    return { user, channel: input.channel || "web" }
+  }
+
+  if (input.store_slug) {
+    const store = await Store.findOne({ where: { slug: input.store_slug } })
+    if (!store) return { user: null, channel: input.channel || "web" }
+    const user = await findUserByPin(input.pin, store.id)
+    return { user, channel: input.channel || "web" }
+  }
+
+  const matches = await User.findAll({ where: { pin: input.pin } })
+  if (matches.length > 1) {
+    throw new AppError("license_key or store_slug is required", 400)
+  }
+  return { user: matches[0] || null, channel: input.channel || "web" }
+}
+
 async function resolveLoginUser(input) {
+  if (input.pin) return resolvePinLoginUser(input)
+
   const email = input.email.toLowerCase()
 
   if (input.channel === "pos") {
@@ -266,17 +324,17 @@ async function resolveLoginUser(input) {
 
 async function verifyCredentials(user, { password, pin }) {
   if (!user || !user.is_active) {
-    throw new UnauthorizedError("Invalid email or credentials")
+    throw new UnauthorizedError("Invalid credentials")
   }
 
   if (password) {
     const ok = await comparePassword(password, user.password)
-    if (!ok) throw new UnauthorizedError("Invalid email or credentials")
+    if (!ok) throw new UnauthorizedError("Invalid credentials")
     return
   }
 
-  if (!STAFF_ROLES.has(user.role) || !user.pin || user.pin !== pin) {
-    throw new UnauthorizedError("Invalid email or credentials")
+  if (!user.pin || user.pin !== pin) {
+    throw new UnauthorizedError("Invalid credentials")
   }
 }
 
@@ -285,7 +343,7 @@ export async function login(input, meta = {}) {
   await verifyCredentials(user, input)
 
   const last_login_at = new Date()
-  const tokens = signTokens(user)
+  const tokens = signTokens(user, await tokenClaims(user))
   await user.update({
     last_login_at,
     refresh_token_hash: await hashPassword(tokens.refresh_token),
@@ -333,7 +391,7 @@ export async function refreshSession(refreshToken) {
   const match = await comparePassword(refreshToken, user.refresh_token_hash)
   if (!match) throw new UnauthorizedError("Invalid refresh token")
 
-  const tokens = signTokens(user)
+  const tokens = signTokens(user, await tokenClaims(user))
   await persistRefreshToken(user, tokens.refresh_token)
   return {
     ...tokens,
@@ -443,7 +501,9 @@ export async function registerCustomer(input) {
         name: input.name,
         email,
         phone: input.phone,
-        credit_balance: 0,
+        total_debt: 0,
+        remaining_debt: 0,
+        debt_notes: null,
         is_active: true,
       },
       { transaction }
@@ -455,7 +515,7 @@ export async function registerCustomer(input) {
       VERIFY_TTL_MS,
       transaction
     )
-    const tokens = signTokens(user)
+    const tokens = signTokens(user, await tokenClaims(user))
     await persistRefreshToken(user, tokens.refresh_token, transaction)
 
     return {

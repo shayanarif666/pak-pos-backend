@@ -76,7 +76,6 @@ export function parseRegisterStore(body) {
   return {
     plan_id: requireUuid(body, "plan_id"),
     name: requireString(body, "name"),
-    slug: body.slug,
     legal_name: optionalString(body, "legal_name"),
     owner_name: optionalString(body, "owner_name"),
     business_type,

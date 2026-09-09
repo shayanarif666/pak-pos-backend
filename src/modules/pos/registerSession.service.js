@@ -3,6 +3,7 @@ import { RegisterSession } from "./registerSession.model.js"
 import { PosDevice } from "./posDevice.model.js"
 import { getLocation } from "../locations/location.service.js"
 import { getStoreForManager, getStorePlan } from "../stores/store.service.js"
+import { planHasFeature } from "../plans/plan.service.js"
 import { money } from "../commerce/pricing.service.js"
 import { writeAudit } from "../../shared/utils/audit.util.js"
 import { AppError } from "../../shared/errors/AppError.js"
@@ -39,8 +40,11 @@ function countedFromNotes(fields) {
 function publicSession(row) {
   const json = row.toJSON ? row.toJSON() : row
   const expected = expectedCash(json)
+  const { store_id_int, location_id_int, ...rest } = json
   return {
-    ...json,
+    ...rest,
+    store_number: store_id_int,
+    location_number: location_id_int,
     opening_cash: Number(json.opening_cash),
     cash_in: Number(json.cash_in),
     cash_out: Number(json.cash_out),
@@ -140,7 +144,7 @@ export async function clockIn(actor, fields) {
     location_id: location.id,
     status: "clock_in",
   }
-  if (plan.multi_branch_enabled && device) openWhere.device_id = device.id
+  if (planHasFeature(plan, "multi_branch_enabled") && device) openWhere.device_id = device.id
 
   const open = await RegisterSession.findOne({ where: openWhere })
   if (open) {

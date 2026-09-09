@@ -10,7 +10,7 @@ function publicBilling(row) {
   return {
     id: row.id,
     store_id: row.store_id,
-    store_id_int: row.store_id_int,
+    store_number: row.store_id_int,
     plan_id: row.plan_id,
     amount: row.amount,
     currency: row.currency,

@@ -10,9 +10,9 @@ function publicAudit(row) {
   return {
     id: json.id,
     store_id: json.store_id,
-    store_id_int: json.store_id_int,
+    store_number: json.store_id_int,
     location_id: json.location_id,
-    location_id_int: json.location_id_int,
+    location_number: json.location_id_int,
     device_id: json.device_id,
     actor_type: json.actor_type,
     user_id: json.user_id,

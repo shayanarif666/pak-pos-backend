@@ -19,6 +19,7 @@ export const OrderItem = sequelize.define(
     unit_price: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
     cost_price: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
     quantity: { type: DataTypes.DECIMAL(12, 4), allowNull: false },
+    refunded_qty: { type: DataTypes.DECIMAL(12, 4), allowNull: false, defaultValue: 0 },
     discount_amount: {
       type: DataTypes.DECIMAL(12, 2),
       allowNull: false,

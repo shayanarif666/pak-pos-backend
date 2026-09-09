@@ -4,6 +4,7 @@ import { StoreTheme } from "./storeTheme.model.js"
 import { WebsiteContent } from "./websiteContent.model.js"
 import { ShippingRule } from "./shippingRule.model.js"
 import { Plan } from "../plans/plan.model.js"
+import { publicPlan } from "../plans/plan.service.js"
 import { nextStoreID } from "../../shared/utils/counter.util.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
@@ -80,18 +81,14 @@ const STORE_PATCH_FIELDS = [
 
 function publicPlanLimits(plan) {
   if (!plan) return null
+  const view = publicPlan(plan)
   return {
-    id: plan.id,
-    code: plan.code,
-    name: plan.name,
-    max_devices: plan.max_devices,
-    max_locations: plan.max_locations,
-    backup_restore_enabled: plan.backup_restore_enabled,
-    multi_branch_enabled: plan.multi_branch_enabled,
-    offline_enabled: plan.offline_enabled,
-    pin_override_enabled: plan.pin_override_enabled,
-    approval_enabled: plan.approval_enabled,
-    advanced_reports: plan.advanced_reports,
+    id: view.id,
+    code: view.code,
+    name: view.name,
+    max_devices: view.max_devices,
+    max_locations: view.max_locations,
+    features: view.features,
   }
 }
 
@@ -99,7 +96,7 @@ export function publicStore(store) {
   if (!store) return null
   return {
     id: store.id,
-    store_id_int: store.store_id_int,
+    store_number: store.store_id_int,
     plan_id: store.plan_id,
     name: store.name,
     slug: store.slug,
@@ -124,9 +121,9 @@ export function publicStore(store) {
     receipt_footer: store.receipt_footer,
     admin_id: store.admin_id,
     default_location_id: store.default_location_id,
-    default_location_id_int: store.default_location_id_int,
+    default_location_number: store.default_location_id_int,
     location_id: store.default_location_id,
-    location_id_int: store.default_location_id_int,
+    location_number: store.default_location_id_int,
     pos_enabled: store.pos_enabled,
     web_enabled: store.web_enabled,
     is_live: store.is_live,

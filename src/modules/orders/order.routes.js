@@ -9,6 +9,7 @@ import { validate } from "../../shared/middlewares/validate.middleware.js"
 import {
   parseAddPayment,
   parseCreateOrder,
+  parseRefundItem,
   parseVoidCancel,
 } from "./order.validation.js"
 import {
@@ -19,8 +20,11 @@ import {
   list,
   listCancelled,
   listCustom,
+  listRefunds,
   listPayments,
   receipt,
+  refundItem,
+  refundReceipt,
   voidOne,
 } from "./order.controller.js"
 
@@ -42,6 +46,7 @@ router.post("/", ...place, validate(parseCreateOrder), create)
 router.get("/", ...listRoles, list)
 router.get("/custom", ...staff, listCustom)
 router.get("/cancelled", ...cancelled, listCancelled)
+router.get("/refunds", ...staff, listRefunds)
 router.get("/:id/payments", ...staff, listPayments)
 router.post(
   "/:id/payments",
@@ -51,6 +56,8 @@ router.post(
   addPayment
 )
 router.get("/:id/receipt", ...staff, receipt)
+router.post("/:id/refund", ...manage, validate(parseRefundItem), refundItem)
+router.get("/:id/refunds/:refundId/receipt", ...staff, refundReceipt)
 router.post("/:id/void", ...manage, validate(parseVoidCancel), voidOne)
 router.post("/:id/cancel", ...manage, validate(parseVoidCancel), cancel)
 router.get(

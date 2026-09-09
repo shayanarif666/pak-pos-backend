@@ -5,6 +5,7 @@ async function run() {
   await sequelize.authenticate()
   const cleared = await clearAllBusinessTables(sequelize)
   console.log("Cleared tables:", cleared.join(", ") || "(none)")
+  console.log("Kept: superadmin user(s), plans, SequelizeMeta")
   await sequelize.close()
 }
 

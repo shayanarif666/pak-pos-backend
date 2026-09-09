@@ -33,6 +33,8 @@ import { Coupon } from "../modules/coupons/coupon.model.js"
 import { CouponRedemption } from "../modules/coupons/couponRedemption.model.js"
 import { Order } from "../modules/orders/order.model.js"
 import { OrderItem } from "../modules/orders/orderItem.model.js"
+import { OrderRefund } from "../modules/orders/orderRefund.model.js"
+import { OrderRefundItem } from "../modules/orders/orderRefundItem.model.js"
 import { Receipt } from "../modules/payments/receipt.model.js"
 import { Payment } from "../modules/payments/payment.model.js"
 import { Review } from "../modules/reviews/review.model.js"
@@ -149,6 +151,13 @@ export function registerModels() {
   Order.hasMany(OrderItem, { foreignKey: "order_id" })
   OrderItem.belongsTo(Order, { foreignKey: "order_id" })
   OrderItem.belongsTo(Product, { foreignKey: "product_id" })
+  Order.hasMany(OrderRefund, { foreignKey: "order_id" })
+  OrderRefund.belongsTo(Order, { foreignKey: "order_id" })
+  OrderRefund.belongsTo(User, { foreignKey: "cashier_id", as: "cashier" })
+  OrderRefund.belongsTo(Receipt, { foreignKey: "receipt_id" })
+  OrderRefund.hasMany(OrderRefundItem, { foreignKey: "refund_id" })
+  OrderRefundItem.belongsTo(OrderRefund, { foreignKey: "refund_id" })
+  OrderRefundItem.belongsTo(OrderItem, { foreignKey: "order_item_id" })
 
   Receipt.belongsTo(Store, { foreignKey: "store_id" })
   Receipt.belongsTo(Location, { foreignKey: "location_id" })
@@ -249,6 +258,8 @@ export {
   CouponRedemption,
   Order,
   OrderItem,
+  OrderRefund,
+  OrderRefundItem,
   Receipt,
   Payment,
   Review,

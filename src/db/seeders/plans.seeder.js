@@ -8,13 +8,7 @@ const PLANS = [
     price_pkr: 2500,
     max_devices: 1,
     max_locations: 1,
-    offline_enabled: false,
-    pin_override_enabled: false,
-    approval_enabled: false,
-    advanced_reports: false,
-    backup_restore_enabled: false,
-    multi_branch_enabled: false,
-    has_dedicated_am: false,
+    features: ["1 POS device", "1 location", "Basic sales reports"],
   },
   {
     code: "package_2",
@@ -22,13 +16,15 @@ const PLANS = [
     price_pkr: 4000,
     max_devices: 3,
     max_locations: 1,
-    offline_enabled: true,
-    pin_override_enabled: true,
-    approval_enabled: true,
-    advanced_reports: true,
-    backup_restore_enabled: true,
-    multi_branch_enabled: false,
-    has_dedicated_am: false,
+    features: [
+      "offline_enabled",
+      "pin_override_enabled",
+      "approval_enabled",
+      "advanced_reports",
+      "backup_restore_enabled",
+      "3 POS devices",
+      "1 location",
+    ],
   },
   {
     code: "package_3",
@@ -36,13 +32,17 @@ const PLANS = [
     price_pkr: 8000,
     max_devices: 10,
     max_locations: 99,
-    offline_enabled: true,
-    pin_override_enabled: true,
-    approval_enabled: true,
-    advanced_reports: true,
-    backup_restore_enabled: true,
-    multi_branch_enabled: true,
-    has_dedicated_am: true,
+    features: [
+      "offline_enabled",
+      "pin_override_enabled",
+      "approval_enabled",
+      "advanced_reports",
+      "backup_restore_enabled",
+      "multi_branch_enabled",
+      "has_dedicated_am",
+      "10 POS devices",
+      "Multi-location",
+    ],
   },
 ]
 
@@ -54,7 +54,12 @@ export async function seedPlans() {
       where: { code: plan.code },
       defaults: { id: randomUUID(), ...plan, is_active: true },
     })
-    if (!wasCreated) {
+    if (wasCreated) {
+      created.push(row.code)
+      continue
+    }
+    const features = row.features
+    if (!Array.isArray(features) || !features.length) {
       await row.update(plan)
     }
     created.push(row.code)

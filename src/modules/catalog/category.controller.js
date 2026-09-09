@@ -9,7 +9,7 @@ export const list = asyncHandler(async (req, res) => {
 })
 
 export const getOne = asyncHandler(async (req, res) => {
-  const data = await categoryService.getCategory(req.storeId, req.params.id)
+  const data = await categoryService.getCategoryView(req.storeId, req.params.id)
   return apiResponse(res, 200, "OK", data)
 })
 

@@ -41,10 +41,19 @@ import {
 
 export function publicOrder(order, extras = {}) {
   const json = order.toJSON ? order.toJSON() : order
+  const gross_amount = json.gross_amount == null ? null : Number(json.gross_amount)
+  const line_discount_amount =
+    json.line_discount_amount == null ? null : Number(json.line_discount_amount)
+  const subtotal = Number(json.subtotal)
+  const order_discount = Number(json.discount_amount || 0)
+  const coupon_discount = Number(json.coupon_discount_amount || 0)
+  const tax_amount = Number(json.tax_amount)
   return {
     id: json.id,
     store_id: json.store_id,
+    store_number: json.store_id_int ?? json.store_number ?? null,
     location_id: json.location_id,
+    location_number: json.location_id_int ?? json.location_number ?? null,
     channel: json.channel,
     is_custom: json.is_custom,
     order_number: json.order_number,
@@ -52,25 +61,62 @@ export function publicOrder(order, extras = {}) {
     customer_id: json.customer_id,
     register_session_id: json.register_session_id,
     client_local_id: json.client_local_id,
-    subtotal: Number(json.subtotal),
+    gross_amount: gross_amount ?? subtotal,
+    line_discount_amount: line_discount_amount ?? 0,
+    subtotal,
     is_order_discounted: json.is_order_discounted,
     order_discount_type: json.order_discount_type,
-    discount_amount: Number(json.discount_amount),
+    discount_amount: order_discount,
     coupon_id: json.coupon_id,
     coupon_code: json.coupon_code,
-    coupon_discount_amount: Number(json.coupon_discount_amount),
-    tax_amount: Number(json.tax_amount),
+    coupon_discount_amount: coupon_discount,
+    tax_amount,
     shipping_fee: Number(json.shipping_fee),
     total_amount: Number(json.total_amount),
     cost_total: Number(json.cost_total),
     payment_method: json.payment_method,
     payment_status: json.payment_status,
     order_status: json.order_status,
+    void_reason: json.void_reason || null,
+    cancel_reason: json.cancel_reason || null,
     amount_paid: Number(json.amount_paid),
     change_due: json.change_due == null ? null : Number(json.change_due),
     shipping_address: json.shipping_address,
     placed_at: json.placed_at,
     ...extras,
+  }
+}
+
+export function publicOrderItem(item) {
+  const json = item.toJSON ? item.toJSON() : item
+  const quantity = Number(json.quantity)
+  const unit_price = Number(json.unit_price)
+  const discount_amount = Number(json.discount_amount || 0)
+  const after_discount = Number(json.subtotal)
+  const tax_amount = Number(json.tax_amount || 0)
+  const list_amount = money(unit_price * quantity)
+  return {
+    id: json.id,
+    order_id: json.order_id,
+    product_id: json.product_id,
+    title: json.title,
+    sku: json.sku,
+    barcode: json.barcode,
+    unit: json.unit,
+    is_weight_based: json.is_weight_based,
+    weight: json.weight == null ? null : Number(json.weight),
+    qty_packs: json.qty_packs == null ? null : Number(json.qty_packs),
+    quantity,
+    unit_price,
+    cost_price: Number(json.cost_price || 0),
+    list_amount,
+    discount_amount,
+    after_discount,
+    tax_amount,
+    line_total: money(after_discount + tax_amount),
+    refunded_qty: Number(json.refunded_qty || 0),
+    remaining_qty: money(Math.max(0, quantity - Number(json.refunded_qty || 0))),
+    pricing_source: json.pricing_source || null,
   }
 }
 
@@ -93,7 +139,7 @@ async function orderView(order, transaction) {
     (await Receipt.findOne({ where: { order_id: order.id }, transaction }))
   return {
     order: publicOrder(order),
-    items,
+    items: items.map(publicOrderItem),
     payments,
     receipt,
     idempotent: true,
@@ -120,6 +166,10 @@ function normalizeClientLocalId(value) {
   return trimmed || null
 }
 
+function resolveSaleLocation(actor, store, session) {
+  return session?.location_id || actor.location_id || store.default_location_id
+}
+
 export async function createOrder(actor, input) {
   const channel = String(input.channel || "")
   if (!ORDER_CHANNEL.includes(channel)) {
@@ -134,34 +184,33 @@ export async function createOrder(actor, input) {
   const store = await getStoreForManager(actor.store_id)
   if (client_local_id) await assertPlan(store, "offline_enabled")
 
-  const locationId =
-    input.location_id ||
-    actor.location_id ||
-    store.default_location_id
-  if (!is_custom && !locationId) {
-    throw new AppError("location_id is required to deduct stock", 400)
-  }
-  const location = locationId
-    ? await getLocation(store.id, locationId)
-    : null
-
   return sequelize.transaction(async (transaction) => {
     const existing = await loadExisting(store.id, client_local_id, transaction)
     if (existing) return { ...(await orderView(existing, transaction)), idempotent: true }
 
     let session = null
     if (channel === "pos") {
-      if (!location) throw new AppError("location_id is required for POS sales", 400)
       session = await requireOpenSession(
         store.id,
         {
-          locationId: location.id,
+          locationId: actor.location_id || store.default_location_id,
           deviceId: input.device_id,
           sessionId: input.register_session_id,
         },
         { transaction }
       )
     }
+
+    const locationId = resolveSaleLocation(actor, store, session)
+    if (!is_custom && !locationId) {
+      throw new AppError("location_id is required to deduct stock", 400)
+    }
+    if (channel === "pos" && !locationId) {
+      throw new AppError("location_id is required for POS sales", 400)
+    }
+    const location = locationId
+      ? await getLocation(store.id, locationId)
+      : null
 
     const now = new Date()
     const { offers, taxRates, shippingRule } = await loadPricingContext(store.id, {
@@ -195,7 +244,9 @@ export async function createOrder(actor, input) {
           throw new AppError("Custom lines require unit_price", 400)
         }
         const line = priceCustomLine(item)
-        line.tax_amount = lineTaxAmount(store, null, null, line.subtotal)
+        line.tax_amount = input.tax_exempt
+          ? 0
+          : lineTaxAmount(store, null, null, line.subtotal)
         return line
       }
       const product = productMap.get(item.product_id)
@@ -210,12 +261,14 @@ export async function createOrder(actor, input) {
         locationId: location?.id,
         now,
       })
-      line.tax_amount = lineTaxAmount(
-        store,
-        product,
-        product.Category,
-        line.subtotal
-      )
+      line.tax_amount = input.tax_exempt
+        ? 0
+        : lineTaxAmount(
+            store,
+            product,
+            product.Category,
+            line.subtotal
+          )
       return line
     })
 
@@ -223,6 +276,27 @@ export async function createOrder(actor, input) {
       priced.reduce((sum, line) => sum + Number(line.subtotal), 0)
     )
     const orderDiscount = resolveOrderDiscount(lineSubtotal, input)
+    if (!input.tax_exempt && orderDiscount > 0 && lineSubtotal > 0) {
+      const taxableShare = money((lineSubtotal - orderDiscount) / lineSubtotal)
+      for (const line of priced) {
+        if (!line.product_id) {
+          line.tax_amount = lineTaxAmount(
+            store,
+            null,
+            null,
+            money(Number(line.subtotal) * taxableShare)
+          )
+          continue
+        }
+        const product = productMap.get(line.product_id)
+        line.tax_amount = lineTaxAmount(
+          store,
+          product,
+          product?.Category,
+          money(Number(line.subtotal) * taxableShare)
+        )
+      }
+    }
 
     let coupon = null
     let couponDiscount = 0
@@ -269,6 +343,7 @@ export async function createOrder(actor, input) {
       paymentMethod: payment_method,
       paymentSplits: paymentSplits.length ? paymentSplits : null,
       taxRates,
+      taxExempt: Boolean(input.tax_exempt),
     })
 
     let customer = null
@@ -302,6 +377,8 @@ export async function createOrder(actor, input) {
           customer_id: customer?.id || null,
           register_session_id: session?.id || null,
           client_local_id,
+          gross_amount: totals.gross_amount,
+          line_discount_amount: totals.line_discount_amount,
           subtotal: totals.subtotal,
           is_order_discounted: orderDiscount > 0,
           order_discount_type: orderDiscount > 0 ? input.order_discount_type : null,
@@ -376,7 +453,9 @@ export async function createOrder(actor, input) {
     const paidSum = money(
       plannedPayments.reduce((sum, row) => sum + Number(row.amount || 0), 0)
     )
-    let creditAmount = money(totals.total_amount - paidSum)
+    const tendered = money(input.amount_paid != null ? input.amount_paid : paidSum)
+    const collected = money(Math.max(paidSum, tendered))
+    let creditAmount = money(totals.total_amount - collected)
     if (creditAmount < 0) creditAmount = 0
     if (creditAmount > 0 && !customer) {
       throw new AppError("A customer is required for credit / udhaar", 400)
@@ -422,7 +501,7 @@ export async function createOrder(actor, input) {
       )
     }
 
-    const amount_paid = money(input.amount_paid != null ? input.amount_paid : paidSum)
+    const amount_paid = tendered
     const change_due =
       amount_paid > totals.total_amount
         ? money(amount_paid - totals.total_amount)
@@ -498,11 +577,41 @@ export async function createOrder(actor, input) {
       },
     })
 
+    const cashier = actor
+      ? {
+          id: actor.id,
+          name: actor.name,
+          email: actor.email,
+          phone: actor.phone,
+          role: actor.role,
+        }
+      : null
+    const customerLite = customer
+      ? {
+          id: customer.id,
+          name: customer.name,
+          email: customer.email,
+          phone: customer.phone,
+        }
+      : null
+
     return {
-      order: publicOrder(order, { amount_paid, change_due }),
-      items: savedItems,
+      order: publicOrder(order, {
+        amount_paid,
+        change_due,
+        cashier,
+        customer: customerLite,
+      }),
+      items: savedItems.map((row, index) =>
+        publicOrderItem({
+          ...(row.toJSON ? row.toJSON() : row),
+          pricing_source: priced[index]?.pricing_source || null,
+        })
+      ),
       payments,
       receipt,
+      cashier,
+      customer: customerLite,
       idempotent: false,
     }
   })

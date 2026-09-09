@@ -1,45 +1,4 @@
-export const BUSINESS_TABLES = [
-  "audit_logs",
-  "store_backups",
-  "reviews",
-  "stock_transfers",
-  "stock_movements",
-  "receipts",
-  "payments",
-  "order_items",
-  "coupon_redemptions",
-  "customer_credit_entries",
-  "approval_requests",
-  "orders",
-  "register_sessions",
-  "coupons",
-  "offer_targets",
-  "offers",
-  "addresses",
-  "cart_items",
-  "carts",
-  "customers",
-  "supplier_ledger",
-  "suppliers",
-  "product_bulk_tiers",
-  "product_stocks",
-  "products",
-  "categories",
-  "payment_method_tax_rates",
-  "shipping_rules",
-  "store_banners",
-  "website_content",
-  "store_themes",
-  "pos_devices",
-  "billings",
-  "store_licenses",
-  "auth_tokens",
-  "users",
-  "locations",
-  "stores",
-  "counters",
-  "plans",
-]
+const KEEP_TABLES = new Set(["sequelizemeta", "plans"])
 
 export async function clearAllBusinessTables(sequelize) {
   await sequelize.query("SET FOREIGN_KEY_CHECKS = 0")
@@ -47,11 +6,19 @@ export async function clearAllBusinessTables(sequelize) {
   const cleared = []
 
   try {
-    for (const table of BUSINESS_TABLES) {
-      const [rows] = await sequelize.query("SHOW TABLES LIKE ?", {
-        replacements: [table],
-      })
-      if (!rows.length) continue
+    const [tables] = await sequelize.query("SHOW TABLES")
+    const names = tables.map((row) => Object.values(row)[0])
+
+    for (const table of names) {
+      if (KEEP_TABLES.has(String(table).toLowerCase())) continue
+
+      if (String(table).toLowerCase() === "users") {
+        await sequelize.query(
+          "DELETE FROM `users` WHERE role <> 'superadmin'"
+        )
+        cleared.push("users (non-superadmin)")
+        continue
+      }
 
       await sequelize.query(`DELETE FROM \`${table}\``)
       cleared.push(table)

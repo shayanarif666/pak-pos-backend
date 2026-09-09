@@ -20,6 +20,7 @@ export async function getTaxRates(storeId) {
     ntn: store.ntn,
     strn: store.strn,
     charge_tax_on_sales: store.charge_tax_on_sales,
+    default_tax_rate: store.default_tax_rate,
     fbr_invoice_enabled: store.fbr_invoice_enabled,
     rates: rates.map(publicTax),
   }

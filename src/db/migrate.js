@@ -6,6 +6,12 @@ import * as storeDefaultLocation from "./migrations/20260830180000-stores-defaul
 import * as posStaffRoleManager from "./migrations/20260830190000-pos-staff-role-manager.js"
 import * as schemaV2 from "./migrations/20260904120000-schema-v2.js"
 import * as licensePendingDevice from "./migrations/20260905180000-license-pending-device.js"
+import * as orderItemRefunds from "./migrations/20260906180000-order-item-refunds.js"
+import * as dropCustomerCreditFields from "./migrations/20260906210000-drop-customer-credit-fields.js"
+import * as customerDebtFields from "./migrations/20260906213000-customer-debt-fields.js"
+import * as categoryDiscountFields from "./migrations/20260906220000-category-discount-fields.js"
+import * as orderPricingBreakdown from "./migrations/20260908120000-order-pricing-breakdown.js"
+import * as planFeaturesArray from "./migrations/20260908220000-plan-features-array.js"
 
 const migrations = [
   initSchema,
@@ -13,6 +19,12 @@ const migrations = [
   posStaffRoleManager,
   schemaV2,
   licensePendingDevice,
+  orderItemRefunds,
+  dropCustomerCreditFields,
+  customerDebtFields,
+  categoryDiscountFields,
+  orderPricingBreakdown,
+  planFeaturesArray,
 ]
 
 async function migrate() {

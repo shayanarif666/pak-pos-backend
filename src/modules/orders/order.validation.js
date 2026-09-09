@@ -87,6 +87,7 @@ export function parseCreateOrder(body) {
     order_discount_type: optionalString(body, "order_discount_type"),
     order_discount_value:
       body.order_discount_value == null ? undefined : Number(body.order_discount_value),
+    tax_exempt: Boolean(body.tax_exempt),
     amount_paid: body.amount_paid == null ? undefined : Number(body.amount_paid),
     total_amount: body.total_amount == null ? undefined : Number(body.total_amount),
   }
@@ -101,4 +102,16 @@ export function parseVoidCancel(body) {
 
 export function parseAddPayment(body) {
   return parsePayment(body)
+}
+
+export function parseRefundItem(body) {
+  const order_item_id = optionalUuid(body, "order_item_id")
+  if (!order_item_id) throw new AppError("order_item_id is required", 400)
+  const quantity = Number(body.quantity)
+  if (Number.isNaN(quantity) || quantity <= 0) {
+    throw new AppError("quantity must be > 0", 400)
+  }
+  const reason = optionalString(body, "reason")
+  if (!reason) throw new AppError("reason is required", 400)
+  return { order_item_id, quantity, reason }
 }

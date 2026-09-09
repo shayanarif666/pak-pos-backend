@@ -18,7 +18,7 @@ import {
 const router = Router()
 const tenant = [authMiddleware, tenantMiddleware, requireTenantStore]
 const staff = [...tenant, authorize("store_admin", "manager", "cashier")]
-const till = [...tenant, authorize("manager", "cashier")]
+const till = [...tenant, authorize("store_admin", "manager", "cashier")]
 
 router.get("/", ...staff, list)
 router.get("/current", ...till, current)

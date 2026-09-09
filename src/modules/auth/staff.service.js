@@ -82,7 +82,7 @@ export async function createStaff(actor, input) {
     }
     location = await resolveLocation(actor.store_id, actor.location_id)
   } else {
-    location = await resolveLocation(actor.store_id, input.location_id)
+    location = await resolveLocation(actor.store_id, input.location_id || actor.location_id)
   }
 
   await assertEmailFree(actor.store_id, input.email)

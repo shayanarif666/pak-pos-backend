@@ -4,7 +4,7 @@ import { Product } from "./product.model.js"
 import { Category } from "./category.model.js"
 import { ProductStock } from "./productStock.model.js"
 import { ProductBulkTier } from "./productBulkTier.model.js"
-import { slugify } from "../../shared/utils/slugify.js"
+import { ensureUniqueSlug } from "../../shared/utils/slugify.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { AppError } from "../../shared/errors/AppError.js"
@@ -12,7 +12,17 @@ import { findLiveStoreBySlug, getStoreForManager } from "../stores/store.service
 
 const categoryInclude = {
   model: Category,
-  attributes: ["id", "name", "slug", "web_visible", "is_active"],
+  attributes: [
+    "id",
+    "name",
+    "slug",
+    "web_visible",
+    "is_active",
+    "tax_type",
+    "tax_value",
+    "discount_type",
+    "discount_value",
+  ],
 }
 
 function assertPackRules(fields, current = {}) {
@@ -60,7 +70,7 @@ function publicStock(row, product) {
   return {
     id: row.id,
     location_id: row.location_id,
-    location_id_int: row.location_id_int,
+    location_number: row.location_id_int,
     product_id: row.product_id,
     qty,
     low_stock_threshold: row.low_stock_threshold,
@@ -78,7 +88,16 @@ function publicProduct(product, extras = {}) {
     store_id: json.store_id,
     category_id: json.category_id,
     category: json.Category
-      ? { id: json.Category.id, name: json.Category.name, slug: json.Category.slug }
+      ? {
+          id: json.Category.id,
+          name: json.Category.name,
+          slug: json.Category.slug,
+          tax_type: json.Category.tax_type || null,
+          tax_value: json.Category.tax_value == null ? null : Number(json.Category.tax_value),
+          discount_type: json.Category.discount_type || null,
+          discount_value:
+            json.Category.discount_value == null ? null : Number(json.Category.discount_value),
+        }
       : null,
     title: json.title,
     slug: json.slug,
@@ -210,11 +229,15 @@ export async function getProductView(actor, id, query = {}) {
 
 export async function createProduct(store, fields) {
   assertPackRules(fields)
-  const slug = slugify(fields.slug || fields.title)
-  if (!slug) throw new AppError("slug is required", 400)
+  const slug = await ensureUniqueSlug(fields.title, async (candidate) => {
+    const existing = await Product.findOne({
+      where: { store_id: store.id, slug: candidate },
+    })
+    return Boolean(existing)
+  })
+  if (!slug) throw new AppError("title must contain letters or numbers for a slug", 400)
 
   await resolveCategory(store.id, fields.category_id)
-  await assertUnique(store.id, "slug", slug)
   await assertUnique(store.id, "sku", fields.sku)
   await assertUnique(store.id, "barcode", fields.barcode)
 
@@ -263,10 +286,14 @@ export async function updateProduct(storeId, id, fields) {
   assertPackRules(fields, product)
   const patch = { ...fields }
 
-  if (fields.slug !== undefined || fields.title !== undefined) {
-    const slug = slugify(fields.slug || fields.title || product.title)
-    if (!slug) throw new AppError("slug is required", 400)
-    await assertUnique(storeId, "slug", slug, product.id)
+  if (fields.title !== undefined) {
+    const slug = await ensureUniqueSlug(fields.title, async (candidate) => {
+      const existing = await Product.findOne({
+        where: { store_id: storeId, slug: candidate, id: { [Op.ne]: product.id } },
+      })
+      return Boolean(existing)
+    })
+    if (!slug) throw new AppError("title must contain letters or numbers for a slug", 400)
     patch.slug = slug
   }
   if (fields.sku !== undefined) await assertUnique(storeId, "sku", fields.sku, product.id)

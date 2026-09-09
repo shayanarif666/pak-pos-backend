@@ -8,6 +8,17 @@ import { AppError } from "../../shared/errors/AppError.js"
 import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 
+export function publicDevice(row) {
+  if (!row) return null
+  const json = row.toJSON ? row.toJSON() : row
+  const { store_id_int, location_id_int, ...rest } = json
+  return {
+    ...rest,
+    store_number: store_id_int,
+    location_number: location_id_int,
+  }
+}
+
 const STAFF_ROLES = new Set(["store_admin", "manager", "cashier"])
 
 async function resolveLocation(storeId, locationId) {
@@ -34,11 +45,13 @@ async function resolveStoreFromInput(input, user) {
 
 export async function registerDevice(input, user, { store: existingStore } = {}) {
   const store = existingStore || (await resolveStoreFromInput(input, user))
-  if (user?.role === "manager" && input.location_id !== user.location_id) {
+  const locationId = input.location_id || user?.location_id
+  if (!locationId) throw new AppError("location_id is required", 400)
+  if (user?.role === "manager" && locationId !== user.location_id) {
     throw new ForbiddenError("Managers can only register a device at their location")
   }
 
-  const location = await resolveLocation(store.id, input.location_id)
+  const location = await resolveLocation(store.id, locationId)
   const existing = await PosDevice.findOne({
     where: { store_id: store.id, device_uid: input.device_uid },
   })
@@ -57,22 +70,24 @@ export async function registerDevice(input, user, { store: existingStore } = {})
       last_seen_at: new Date(),
       is_active: true,
     })
-    return existing
+    return publicDevice(existing)
   }
 
   await assertDeviceCap(store, 1)
-  return PosDevice.create({
-    store_id: store.id,
-    store_id_int: store.store_id_int,
-    location_id: location.id,
-    location_id_int: location.location_id_int,
-    device_uid: input.device_uid,
-    name: input.name,
-    platform: input.platform,
-    app_version: input.app_version,
-    last_seen_at: new Date(),
-    is_active: true,
-  })
+  return publicDevice(
+    await PosDevice.create({
+      store_id: store.id,
+      store_id_int: store.store_id_int,
+      location_id: location.id,
+      location_id_int: location.location_id_int,
+      device_uid: input.device_uid,
+      name: input.name,
+      platform: input.platform,
+      app_version: input.app_version,
+      last_seen_at: new Date(),
+      is_active: true,
+    })
+  )
 }
 
 async function assertDeviceCap(store, extra) {
@@ -86,10 +101,11 @@ export async function listDevices(actor, query = {}) {
   const where = { store_id: actor.store_id }
   if (actor.role === "manager") where.location_id = actor.location_id
   else if (query.locationId) where.location_id = query.locationId
-  return PosDevice.findAll({
+  const rows = await PosDevice.findAll({
     where,
     order: [["created_at", "ASC"]],
   })
+  return rows.map(publicDevice)
 }
 
 export async function listAllDevices() {
@@ -116,7 +132,7 @@ export async function heartbeat(actor, id) {
   const device = await PosDevice.findOne({ where })
   if (!device || !device.is_active) throw new NotFoundError("Device not found")
   await device.update({ last_seen_at: new Date() })
-  return device
+  return publicDevice(device)
 }
 
 export async function patchDevice(actor, id, fields) {
@@ -136,5 +152,5 @@ export async function patchDevice(actor, id, fields) {
     await assertDeviceCap(store, 1)
   }
   await device.update(patch)
-  return device
+  return publicDevice(device)
 }

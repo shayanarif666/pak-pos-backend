@@ -1,29 +1,15 @@
 import { getStorePlan } from "../../modules/stores/store.service.js"
+import { planHasFeature, resolveFeatureKey } from "../../modules/plans/plan.service.js"
 import { ConflictError } from "../errors/ConflictError.js"
 import { ForbiddenError } from "../errors/ForbiddenError.js"
-import { AppError } from "../errors/AppError.js"
 
 const FLAG_MESSAGES = {
-  approval_enabled: "Approvals require Package 2 or 3",
-  pin_override_enabled: "PIN override requires Package 2 or 3",
+  approval_enabled: "Approvals are not enabled on this plan",
+  pin_override_enabled: "PIN override is not enabled on this plan",
   backup_restore_enabled: "Backup is not enabled on this plan",
-  multi_branch_enabled: "Stock transfers require Package 3",
-  offline_enabled: "Offline sync requires Package 2 or 3",
-  advanced_reports: "Advanced reports require Package 2 or 3",
-}
-
-const ALIASES = {
-  approval: "approval_enabled",
-  pin_override: "pin_override_enabled",
-  backup: "backup_restore_enabled",
-  multi_branch: "multi_branch_enabled",
-  offline: "offline_enabled",
-  locations: "max_locations",
-  devices: "max_devices",
-}
-
-function resolveFeature(feature) {
-  return ALIASES[feature] || feature
+  multi_branch_enabled: "Stock transfers are not enabled on this plan",
+  offline_enabled: "Offline sync is not enabled on this plan",
+  advanced_reports: "Advanced reports are not enabled on this plan",
 }
 
 export async function loadPlan(store) {
@@ -32,13 +18,12 @@ export async function loadPlan(store) {
 
 export async function hasPlanFeature(store, feature) {
   const plan = await loadPlan(store)
-  const key = resolveFeature(feature)
-  return { plan, enabled: Boolean(plan[key]) }
+  return { plan, enabled: planHasFeature(plan, feature) }
 }
 
 export async function assertPlan(store, feature, opts = {}) {
   const plan = await loadPlan(store)
-  const key = resolveFeature(feature)
+  const key = resolveFeatureKey(feature)
 
   if (key === "max_locations") {
     const count = Number(opts.count || 0)
@@ -59,8 +44,8 @@ export async function assertPlan(store, feature, opts = {}) {
     return plan
   }
 
-  const message = FLAG_MESSAGES[key]
-  if (!message) throw new AppError(`Unknown plan feature: ${feature}`, 500)
-  if (!plan[key]) throw new ForbiddenError(message)
+  if (!planHasFeature(plan, key)) {
+    throw new ForbiddenError(FLAG_MESSAGES[key] || `${key} is not enabled on this plan`)
+  }
   return plan
 }

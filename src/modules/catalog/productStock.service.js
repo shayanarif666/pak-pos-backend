@@ -10,8 +10,7 @@ import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 
 function resolveLocationId(actor, requested) {
-  if (actor.role === "store_admin") return requested || null
-  return actor.location_id
+  return requested || actor.location_id || null
 }
 
 async function loadLocation(storeId, locationId) {

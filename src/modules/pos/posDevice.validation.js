@@ -19,8 +19,10 @@ function optionalString(body, key) {
 }
 
 export function parseRegisterDevice(body) {
-  const location_id = requireString(body, "location_id")
-  if (!UUID_RE.test(location_id)) throw new AppError("location_id must be a UUID", 400)
+  let location_id = optionalString(body, "location_id")
+  if (location_id && !UUID_RE.test(location_id)) {
+    throw new AppError("location_id must be a UUID", 400)
+  }
   return {
     device_uid: requireString(body, "device_uid"),
     name: requireString(body, "name"),

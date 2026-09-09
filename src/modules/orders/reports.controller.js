@@ -1,6 +1,7 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js"
 import { asyncHandler } from "../../shared/utils/asyncHandler.js"
 import * as reportsService from "./reports.service.js"
+import { posBreakdownReport } from "./reports.pos.service.js"
 
 export const sales = asyncHandler(async (req, res) => {
   const data = await reportsService.salesReport(req.user, req.query)
@@ -14,6 +15,16 @@ export const payments = asyncHandler(async (req, res) => {
 
 export const profit = asyncHandler(async (req, res) => {
   const data = await reportsService.profitReport(req.user, req.query)
+  return apiResponse(res, 200, "OK", data)
+})
+
+export const dashboard = asyncHandler(async (req, res) => {
+  const data = await reportsService.dashboardReport(req.user, req.query)
+  return apiResponse(res, 200, "OK", data)
+})
+
+export const breakdown = asyncHandler(async (req, res) => {
+  const data = await posBreakdownReport(req.user, req.query)
   return apiResponse(res, 200, "OK", data)
 })
 
