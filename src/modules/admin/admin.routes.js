@@ -12,6 +12,7 @@ import {
   parsePatchLicense,
   parsePatchStore,
   parseRegisterStore,
+  parseRegisterSuperAdmin,
   parseRevoke,
 } from "./admin.validation.js"
 import {
@@ -25,6 +26,7 @@ import {
   patchLicense,
   patchStore,
   registerStore,
+  registerSuperAdmin,
   renewLicense,
   revokeLicense,
 } from "./admin.controller.js"
@@ -46,6 +48,11 @@ const storeImages = [
   ]),
 ]
 
+router.post(
+  "/superadmins",
+  validate(parseRegisterSuperAdmin),
+  registerSuperAdmin
+)
 router.post(
   "/stores",
   ...storeImages,

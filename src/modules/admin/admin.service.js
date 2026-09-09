@@ -85,6 +85,31 @@ function publicStore(store) {
   }
 }
 
+export async function registerSuperAdmin(input) {
+  const email = input.email.toLowerCase()
+  const existing = await User.findOne({
+    where: { email, role: "superadmin" },
+  })
+  if (existing) throw new ConflictError("Super Admin email already exists")
+
+  const user = await User.create({
+    name: input.name,
+    email,
+    password: await hashPassword(input.password),
+    pin: input.pin,
+    role: "superadmin",
+    store_id: null,
+    store_id_int: null,
+    location_id: null,
+    location_id_int: null,
+    is_verified: true,
+    is_active: true,
+    refresh_token_hash: null,
+  })
+
+  return publicUser(user)
+}
+
 export async function registerStore(input, superadmin) {
   const slug = await ensureUniqueSlug(input.name, async (candidate) => {
     const taken = await Store.findOne({ where: { slug: candidate } })

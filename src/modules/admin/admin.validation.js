@@ -38,6 +38,15 @@ function requireUuid(body, key) {
   return value
 }
 
+export function parseRegisterSuperAdmin(body) {
+  return {
+    name: requireString(body, "name"),
+    email: requireString(body, "email").toLowerCase(),
+    password: requireString(body, "password", { min: 6, max: 128 }),
+    pin: requirePin(body, "pin"),
+  }
+}
+
 export function parseRegisterStore(body) {
   const admin_email = requireString(body, "admin_email").toLowerCase()
   const manager_email = requireString(body, "manager_email").toLowerCase()
