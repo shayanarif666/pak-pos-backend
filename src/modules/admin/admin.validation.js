@@ -38,6 +38,18 @@ function requireUuid(body, key) {
   return value
 }
 
+export function parseBulkDelete(body) {
+  if (!Array.isArray(body.ids) || !body.ids.length) {
+    throw new AppError("ids must be a non-empty array of UUIDs", 400)
+  }
+  const ids = [...new Set(body.ids.map((id) => String(id).trim()).filter(Boolean))]
+  if (!ids.length) throw new AppError("ids must be a non-empty array of UUIDs", 400)
+  for (const id of ids) {
+    if (!UUID_RE.test(id)) throw new AppError("each id must be a UUID", 400)
+  }
+  return { ids }
+}
+
 export function parseRegisterSuperAdmin(body) {
   return {
     name: requireString(body, "name"),

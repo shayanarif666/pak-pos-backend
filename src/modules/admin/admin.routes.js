@@ -13,13 +13,19 @@ import {
   parsePatchStore,
   parseRegisterStore,
   parseRegisterSuperAdmin,
+  parseBulkDelete,
   parseRevoke,
 } from "./admin.validation.js"
 import {
+  bulkDeleteModule,
   createDevice,
   createLicense,
+  deleteAllDbData,
+  deleteModuleAll,
+  deleteModuleById,
   getLicense,
   getStore,
+  listDataModules,
   listDevices,
   listLicenses,
   listStores,
@@ -76,5 +82,11 @@ router.get("/pos-devices", listDevices)
 
 router.get("/audit-logs", listAdmin)
 router.use("/billings", adminBillingRoutes)
+
+router.get("/data/modules", listDataModules)
+router.delete("/data", deleteAllDbData)
+router.delete("/data/:module", deleteModuleAll)
+router.post("/data/:module/bulk-delete", validate(parseBulkDelete), bulkDeleteModule)
+router.delete("/data/:module/:id", deleteModuleById)
 
 export default router

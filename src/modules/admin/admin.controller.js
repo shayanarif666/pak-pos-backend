@@ -1,12 +1,41 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js"
 import { asyncHandler } from "../../shared/utils/asyncHandler.js"
 import * as adminService from "./admin.service.js"
+import * as adminDataService from "./adminData.service.js"
 import * as licenseService from "../stores/license.service.js"
 import * as deviceService from "../pos/posDevice.service.js"
 
 export const registerSuperAdmin = asyncHandler(async (req, res) => {
   const data = await adminService.registerSuperAdmin(req.body)
   return apiResponse(res, 201, "Super Admin created", data)
+})
+
+export const listDataModules = asyncHandler(async (_req, res) => {
+  const data = adminDataService.listDataModules()
+  return apiResponse(res, 200, "OK", data)
+})
+
+export const deleteAllDbData = asyncHandler(async (_req, res) => {
+  const data = await adminDataService.deleteAllDbData()
+  return apiResponse(res, 200, "All database rows deleted", data)
+})
+
+export const deleteModuleAll = asyncHandler(async (req, res) => {
+  const data = await adminDataService.deleteModuleAll(req.params.module)
+  return apiResponse(res, 200, `${req.params.module} rows deleted`, data)
+})
+
+export const deleteModuleById = asyncHandler(async (req, res) => {
+  const data = await adminDataService.deleteModuleById(req.params.module, req.params.id)
+  return apiResponse(res, 200, "Row deleted", data)
+})
+
+export const bulkDeleteModule = asyncHandler(async (req, res) => {
+  const data = await adminDataService.bulkDeleteModule(
+    req.params.module,
+    req.body.ids
+  )
+  return apiResponse(res, 200, "Rows deleted", data)
 })
 
 export const registerStore = asyncHandler(async (req, res) => {

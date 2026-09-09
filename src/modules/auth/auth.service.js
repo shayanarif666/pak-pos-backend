@@ -195,6 +195,15 @@ async function persistRefreshToken(user, refreshToken, transaction) {
   await user.update({ refresh_token_hash }, { transaction })
 }
 
+export async function issueUserSession(user) {
+  const tokens = signTokens(user, await tokenClaims(user))
+  await persistRefreshToken(user, tokens.refresh_token)
+  return {
+    ...tokens,
+    user: publicUser(user),
+  }
+}
+
 async function issueAuthToken(user, type, ttlMs, transaction) {
   await AuthToken.update(
     { used_at: new Date() },

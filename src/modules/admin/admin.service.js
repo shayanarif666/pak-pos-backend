@@ -18,6 +18,7 @@ import { createBilling } from "../billings/billing.service.js"
 import { hashPassword } from "../../shared/utils/hash.util.js"
 import { ensureUniqueSlug } from "../../shared/utils/slugify.js"
 import { ensureSequenceAtLeast } from "../../shared/utils/counter.util.js"
+import { issueUserSession } from "../auth/auth.service.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
@@ -107,7 +108,7 @@ export async function registerSuperAdmin(input) {
     refresh_token_hash: null,
   })
 
-  return publicUser(user)
+  return issueUserSession(user)
 }
 
 export async function registerStore(input, superadmin) {
