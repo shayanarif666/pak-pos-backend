@@ -35,6 +35,12 @@ import { listAdmin } from "../audit/audit.controller.js"
 
 const router = Router()
 
+router.post(
+  "/superadmins",
+  validate(parseRegisterSuperAdmin),
+  registerSuperAdmin
+)
+
 router.use(authMiddleware, authorize("superadmin"))
 
 const storeImages = [
@@ -48,11 +54,6 @@ const storeImages = [
   ]),
 ]
 
-router.post(
-  "/superadmins",
-  validate(parseRegisterSuperAdmin),
-  registerSuperAdmin
-)
 router.post(
   "/stores",
   ...storeImages,
