@@ -18,8 +18,14 @@ export const getOne = asyncHandler(async (req, res) => {
 })
 
 export const put = asyncHandler(async (req, res) => {
+  const actor = {
+    ...req.user.get({ plain: true }),
+    store_id: req.auth?.store_id || req.user.store_id,
+    location_id: req.auth?.location_id || req.user.location_id,
+    store_id_int: req.user.store_id_int,
+  }
   const data = await stockService.putStock(
-    req.user,
+    actor,
     req.params.productId,
     req.body
   )

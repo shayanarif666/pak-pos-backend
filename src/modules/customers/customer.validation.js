@@ -54,6 +54,10 @@ export function parsePatchCustomer(body) {
   if (body.phone !== undefined) patch.phone = optionalString(body, "phone")
   if (body.location_id !== undefined) patch.location_id = optionalUuid(body, "location_id")
   if (body.debt_notes !== undefined) patch.debt_notes = optionalString(body, "debt_notes", { max: 4000 })
+  if (body.total_debt !== undefined) patch.total_debt = optionalNumber(body, "total_debt")
+  if (body.remaining_debt !== undefined) {
+    patch.remaining_debt = optionalNumber(body, "remaining_debt")
+  }
   if (body.is_active !== undefined) patch.is_active = Boolean(body.is_active)
   if (!Object.keys(patch).length) throw new AppError("No fields to update", 400)
   return patch

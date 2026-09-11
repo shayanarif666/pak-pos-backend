@@ -9,6 +9,7 @@ import { validate } from "../../shared/middlewares/validate.middleware.js"
 import {
   parseAddPayment,
   parseCreateOrder,
+  parseRefundComplete,
   parseRefundItem,
   parseVoidCancel,
 } from "./order.validation.js"
@@ -16,6 +17,7 @@ import {
   addPayment,
   cancel,
   create,
+  createBulk,
   getOne,
   list,
   listCancelled,
@@ -23,7 +25,10 @@ import {
   listRefunds,
   listPayments,
   receipt,
+  refundComplete,
+  refundCompleteBulk,
   refundItem,
+  refundItemsBulk,
   refundReceipt,
   voidOne,
 } from "./order.controller.js"
@@ -43,10 +48,13 @@ const manage = [...tenant, authorize("store_admin", "manager", "cashier")]
 const cancelled = [...tenant, authorize("store_admin", "manager")]
 
 router.post("/", ...place, validate(parseCreateOrder), create)
+router.post("/bulk", ...place, createBulk)
 router.get("/", ...listRoles, list)
 router.get("/custom", ...staff, listCustom)
 router.get("/cancelled", ...cancelled, listCancelled)
 router.get("/refunds", ...staff, listRefunds)
+router.post("/refunds/bulk", ...manage, refundItemsBulk)
+router.post("/refunds/complete/bulk", ...manage, refundCompleteBulk)
 router.get("/:id/payments", ...staff, listPayments)
 router.post(
   "/:id/payments",
@@ -57,6 +65,12 @@ router.post(
 )
 router.get("/:id/receipt", ...staff, receipt)
 router.post("/:id/refund", ...manage, validate(parseRefundItem), refundItem)
+router.post(
+  "/:id/refund/complete",
+  ...manage,
+  validate(parseRefundComplete),
+  refundComplete
+)
 router.get("/:id/refunds/:refundId/receipt", ...staff, refundReceipt)
 router.post("/:id/void", ...manage, validate(parseVoidCancel), voidOne)
 router.post("/:id/cancel", ...manage, validate(parseVoidCancel), cancel)

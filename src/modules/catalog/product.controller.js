@@ -1,6 +1,8 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js"
 import { asyncHandler } from "../../shared/utils/asyncHandler.js"
 import { getStoreForManager } from "../stores/store.service.js"
+import { bulkStatus, extractBulkItems, runBulk } from "../../shared/utils/bulk.util.js"
+import { parseCreateProduct } from "./product.validation.js"
 import * as productService from "./product.service.js"
 
 export const list = asyncHandler(async (req, res) => {
@@ -17,6 +19,14 @@ export const create = asyncHandler(async (req, res) => {
   const store = await getStoreForManager(req.storeId)
   const product = await productService.createProduct(store, req.body)
   return apiResponse(res, 201, "Product created", product)
+})
+
+export const createBulk = asyncHandler(async (req, res) => {
+  const store = await getStoreForManager(req.storeId)
+  const data = await runBulk(extractBulkItems(req.body), async (item) => {
+    return productService.createProduct(store, parseCreateProduct(item))
+  })
+  return apiResponse(res, bulkStatus(data), "Bulk products processed", data)
 })
 
 export const patch = asyncHandler(async (req, res) => {

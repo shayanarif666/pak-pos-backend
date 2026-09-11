@@ -1,5 +1,11 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js"
 import { asyncHandler } from "../../shared/utils/asyncHandler.js"
+import { bulkStatus, extractBulkItems, runBulk } from "../../shared/utils/bulk.util.js"
+import {
+  parseBulkRefundComplete,
+  parseBulkRefundItem,
+  parseCreateOrder,
+} from "./order.validation.js"
 import * as orderService from "./order.service.js"
 
 function actorFromReq(req) {
@@ -21,6 +27,14 @@ export const create = asyncHandler(async (req, res) => {
   const data = await orderService.placeOrder(actorFromReq(req), req.body)
   const message = data.idempotent ? "Existing order" : "Order created"
   return apiResponse(res, data.idempotent ? 200 : 201, message, data)
+})
+
+export const createBulk = asyncHandler(async (req, res) => {
+  const actor = actorFromReq(req)
+  const data = await runBulk(extractBulkItems(req.body), async (item) => {
+    return orderService.placeOrder(actor, parseCreateOrder(item))
+  })
+  return apiResponse(res, bulkStatus(data), "Bulk orders processed", data)
 })
 
 export const list = asyncHandler(async (req, res) => {
@@ -84,6 +98,33 @@ export const refundItem = asyncHandler(async (req, res) => {
     req.body
   )
   return apiResponse(res, 201, "Item refunded", data)
+})
+
+export const refundComplete = asyncHandler(async (req, res) => {
+  const data = await orderService.refundEntireOrder(
+    actorFromReq(req),
+    req.params.id,
+    req.body
+  )
+  return apiResponse(res, 201, "Order refunded", data)
+})
+
+export const refundItemsBulk = asyncHandler(async (req, res) => {
+  const actor = actorFromReq(req)
+  const data = await runBulk(extractBulkItems(req.body), async (item) => {
+    const parsed = parseBulkRefundItem(item)
+    return orderService.refundOrderItem(actor, parsed.order_id, parsed)
+  })
+  return apiResponse(res, bulkStatus(data), "Bulk item refunds processed", data)
+})
+
+export const refundCompleteBulk = asyncHandler(async (req, res) => {
+  const actor = actorFromReq(req)
+  const data = await runBulk(extractBulkItems(req.body), async (item) => {
+    const parsed = parseBulkRefundComplete(item)
+    return orderService.refundEntireOrder(actor, parsed.order_id, parsed)
+  })
+  return apiResponse(res, bulkStatus(data), "Bulk order refunds processed", data)
 })
 
 export const refundReceipt = asyncHandler(async (req, res) => {

@@ -7,7 +7,7 @@ import {
 } from "../../shared/middlewares/tenant.middleware.js"
 import { validate } from "../../shared/middlewares/validate.middleware.js"
 import { parseCreateMovement } from "./stock.validation.js"
-import { create, list } from "./stock.controller.js"
+import { create, createBulk, list } from "./stock.controller.js"
 
 const router = Router()
 
@@ -20,5 +20,6 @@ router.use(
 
 router.get("/", list)
 router.post("/", validate(parseCreateMovement), create)
+router.post("/bulk", createBulk)
 
 export default router

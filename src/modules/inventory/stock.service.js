@@ -88,6 +88,7 @@ export async function createMovement(actor, fields) {
         reason: fields.reason,
         reason_note: fields.reason_note,
         staff_id: actor.id,
+        expiry_date: fields.expiry_date,
       },
       { transaction }
     )

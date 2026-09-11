@@ -115,3 +115,21 @@ export function parseRefundItem(body) {
   if (!reason) throw new AppError("reason is required", 400)
   return { order_item_id, quantity, reason }
 }
+
+export function parseRefundComplete(body) {
+  const reason = optionalString(body, "reason")
+  if (!reason) throw new AppError("reason is required", 400)
+  return { reason }
+}
+
+export function parseBulkRefundItem(body) {
+  const order_id = optionalUuid(body, "order_id")
+  if (!order_id) throw new AppError("order_id is required", 400)
+  return { order_id, ...parseRefundItem(body) }
+}
+
+export function parseBulkRefundComplete(body) {
+  const order_id = optionalUuid(body, "order_id")
+  if (!order_id) throw new AppError("order_id is required", 400)
+  return { order_id, ...parseRefundComplete(body) }
+}

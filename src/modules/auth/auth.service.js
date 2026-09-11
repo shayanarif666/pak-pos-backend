@@ -128,8 +128,6 @@ async function buildStaffSession(user) {
     return {
       store: storeInfo,
       locations: locationsInfo,
-      licenses: locationsInfo.map((row) => row.license).filter(Boolean),
-      devices: locationsInfo.flatMap((row) => row.devices),
     }
   }
 
@@ -143,9 +141,14 @@ async function buildStaffSession(user) {
 
   return {
     store: storeInfo,
-    location: publicLocation(location),
-    license,
-    devices,
+    location: location
+      ? {
+          ...publicLocation(location),
+          license,
+          devices,
+          device_count: devices.length,
+        }
+      : null,
   }
 }
 

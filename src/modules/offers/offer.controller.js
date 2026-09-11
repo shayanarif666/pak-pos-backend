@@ -1,6 +1,8 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js"
 import { asyncHandler } from "../../shared/utils/asyncHandler.js"
 import { getStoreForManager } from "../stores/store.service.js"
+import { bulkStatus, extractBulkItems, runBulk } from "../../shared/utils/bulk.util.js"
+import { parseCreateOffer } from "./offer.validation.js"
 import * as offerService from "./offer.service.js"
 
 export const list = asyncHandler(async (req, res) => {
@@ -17,6 +19,14 @@ export const create = asyncHandler(async (req, res) => {
   const store = await getStoreForManager(req.storeId)
   const data = await offerService.createOffer(store, req.body, req.user)
   return apiResponse(res, 201, "Offer created", data)
+})
+
+export const createBulk = asyncHandler(async (req, res) => {
+  const store = await getStoreForManager(req.storeId)
+  const data = await runBulk(extractBulkItems(req.body), async (item) => {
+    return offerService.createOffer(store, parseCreateOffer(item), req.user)
+  })
+  return apiResponse(res, bulkStatus(data), "Bulk offers processed", data)
 })
 
 export const patch = asyncHandler(async (req, res) => {

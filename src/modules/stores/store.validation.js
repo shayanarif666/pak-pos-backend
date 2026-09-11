@@ -1,4 +1,8 @@
 import { AppError } from "../../shared/errors/AppError.js"
+import { BUSINESS_TYPE } from "../../db/enums.js"
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 function optionalString(body, key, { max = 500 } = {}) {
   if (body[key] === undefined || body[key] === null) return undefined
@@ -56,6 +60,29 @@ export function parsePatchStore(body) {
     pos_enabled: optionalBool(body, "pos_enabled"),
     web_enabled: optionalBool(body, "web_enabled"),
     is_live: optionalBool(body, "is_live"),
+    is_active: optionalBool(body, "is_active"),
+    slug: optionalString(body, "slug"),
+    business_type:
+      body.business_type === undefined || body.business_type === null || body.business_type === ""
+        ? undefined
+        : BUSINESS_TYPE.includes(String(body.business_type))
+          ? String(body.business_type)
+          : (() => {
+              throw new AppError("business_type is invalid", 400)
+            })(),
+    account_manager_name: optionalString(body, "account_manager_name"),
+    account_manager_phone: optionalString(body, "account_manager_phone"),
+    suspend_reason: optionalString(body, "suspend_reason", { max: 20000 }),
+    default_location_id:
+      body.default_location_id === undefined
+        ? undefined
+        : body.default_location_id === null || body.default_location_id === ""
+          ? null
+          : UUID_RE.test(String(body.default_location_id))
+            ? String(body.default_location_id)
+            : (() => {
+                throw new AppError("default_location_id must be a UUID", 400)
+              })(),
   }
 }
 

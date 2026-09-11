@@ -13,6 +13,7 @@ import {
 } from "./offer.validation.js"
 import {
   create,
+  createBulk,
   getOne,
   list,
   listTargets,
@@ -29,6 +30,7 @@ const detail = [...tenant, authorize("store_admin", "manager")]
 
 router.get("/", ...read, list)
 router.post("/", ...write, validate(parseCreateOffer), create)
+router.post("/bulk", ...write, createBulk)
 router.get("/:id/targets", ...read, listTargets)
 router.put(
   "/:id/targets",

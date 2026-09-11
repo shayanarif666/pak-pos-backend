@@ -14,7 +14,7 @@ import {
   parseCreateCategory,
   parsePatchCategory,
 } from "./category.validation.js"
-import { create, getOne, list, patch, remove } from "./category.controller.js"
+import { create, createBulk, getOne, list, patch, remove } from "./category.controller.js"
 
 const router = Router()
 const tenant = [authMiddleware, tenantMiddleware, requireTenantStore]
@@ -43,6 +43,12 @@ router.post(
   ...categoryImages,
   validate(parseCreateCategory),
   create
+)
+router.post(
+  "/bulk",
+  ...tenant,
+  authorize("store_admin", "manager"),
+  createBulk
 )
 router.get(
   "/:id",

@@ -134,11 +134,25 @@ export async function createCustomer(store, fields) {
 export async function updateCustomer(storeId, id, fields) {
   const row = await getCustomer(storeId, id)
   const patch = { ...fields }
-  delete patch.total_debt
-  delete patch.remaining_debt
   if (fields.location_id !== undefined) {
     patch.location_id = await resolveLocation(storeId, fields.location_id)
   }
+  let total =
+    fields.total_debt !== undefined ? Number(fields.total_debt) : Number(row.total_debt || 0)
+  let remaining =
+    fields.remaining_debt !== undefined
+      ? Number(fields.remaining_debt)
+      : Number(row.remaining_debt || 0)
+  if (remaining > total) {
+    if (fields.total_debt === undefined && fields.remaining_debt !== undefined) {
+      total = remaining
+      patch.total_debt = total
+    } else {
+      throw new AppError("remaining_debt cannot be greater than total_debt", 400)
+    }
+  }
+  if (fields.total_debt !== undefined) patch.total_debt = total
+  if (fields.remaining_debt !== undefined) patch.remaining_debt = remaining
   await row.update(patch)
   await row.reload({ include: [locationInclude] })
   return publicCustomer(row)

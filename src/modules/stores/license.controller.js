@@ -13,7 +13,7 @@ export const validate = asyncHandler(async (req, res) => {
     : data.status === "pending"
       ? "License is pending activation"
       : "License is active"
-  return apiResponse(res, 200, message, data)
+  return res.status(200).json({ success: true, message })
 })
 
 export const listMine = asyncHandler(async (req, res) => {

@@ -14,6 +14,7 @@ import {
 import {
   addCredit,
   create,
+  createBulk,
   getOne,
   list,
   listCredit,
@@ -31,6 +32,7 @@ router.use(
 
 router.get("/", list)
 router.post("/", validate(parseCreateCustomer), create)
+router.post("/bulk", createBulk)
 router.get("/:id/credit", listCredit)
 router.post("/:id/credit", validate(parseCreditEntry), addCredit)
 router.get("/:id", getOne)

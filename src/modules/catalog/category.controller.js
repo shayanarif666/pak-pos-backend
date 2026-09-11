@@ -1,6 +1,8 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js"
 import { asyncHandler } from "../../shared/utils/asyncHandler.js"
 import { getStoreForManager } from "../stores/store.service.js"
+import { bulkStatus, extractBulkItems, runBulk } from "../../shared/utils/bulk.util.js"
+import { parseCreateCategory } from "./category.validation.js"
 import * as categoryService from "./category.service.js"
 
 export const list = asyncHandler(async (req, res) => {
@@ -17,6 +19,14 @@ export const create = asyncHandler(async (req, res) => {
   const store = await getStoreForManager(req.storeId)
   const category = await categoryService.createCategory(store, req.body)
   return apiResponse(res, 201, "Category created", category)
+})
+
+export const createBulk = asyncHandler(async (req, res) => {
+  const store = await getStoreForManager(req.storeId)
+  const data = await runBulk(extractBulkItems(req.body), async (item) => {
+    return categoryService.createCategory(store, parseCreateCategory(item))
+  })
+  return apiResponse(res, bulkStatus(data), "Bulk categories processed", data)
 })
 
 export const patch = asyncHandler(async (req, res) => {

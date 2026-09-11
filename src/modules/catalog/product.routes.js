@@ -18,6 +18,7 @@ import {
 } from "./product.validation.js"
 import {
   create,
+  createBulk,
   getOne,
   list,
   listBulkTiers,
@@ -43,6 +44,7 @@ router.post(
   validate(parseCreateProduct),
   create
 )
+router.post("/bulk", ...catalogWrite, createBulk)
 router.get("/weight", ...catalogWrite, listWeight)
 router.get("/expiry", ...catalogWrite, listExpiry)
 router.get("/:id/bulk-tiers", ...catalogRead, listBulkTiers)

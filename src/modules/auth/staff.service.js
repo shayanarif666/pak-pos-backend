@@ -48,6 +48,10 @@ async function assertEmailFree(storeId, email, exceptId) {
   if (taken) throw new ConflictError("Email already registered in this store")
 }
 
+function staffPayload(user, plaintextPassword = null) {
+  return { ...publicUser(user), password: plaintextPassword }
+}
+
 async function assertPinFree(storeId, pin, exceptId) {
   const where = { store_id: storeId, pin }
   if (exceptId) where.id = { [Op.ne]: exceptId }
@@ -63,11 +67,11 @@ export async function listStaff(actor) {
       ["created_at", "ASC"],
     ],
   })
-  return rows.map(publicUser)
+  return rows.map((row) => staffPayload(row))
 }
 
 export async function getStaff(actor, id) {
-  return publicUser(await findVisibleStaff(actor, id))
+  return staffPayload(await findVisibleStaff(actor, id))
 }
 
 export async function createStaff(actor, input) {
@@ -103,7 +107,7 @@ export async function createStaff(actor, input) {
       is_verified: true,
       is_active: true,
     })
-    return publicUser(user)
+    return staffPayload(user, input.password)
   } catch (err) {
     if (err instanceof UniqueConstraintError) {
       const fields = err.errors?.map((e) => e.path) || []
@@ -164,7 +168,7 @@ export async function patchStaff(actor, id, fields) {
     throw err
   }
 
-  return publicUser(user)
+  return staffPayload(user, fields.password || null)
 }
 
 export async function getStaffSales(actor, id, query = {}) {

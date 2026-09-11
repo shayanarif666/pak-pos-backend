@@ -246,7 +246,6 @@ function decorate(row) {
     order: publicOrder(row, { cashier, customer }),
     items: (row.OrderItems || []).map(decorateItem),
     payments: row.Payments || [],
-    cashier,
     customer,
   }
 }
@@ -614,7 +613,6 @@ export async function refundOrderItem(actor, id, fields) {
         receipt,
       }),
       receipt,
-      cashier,
       customer: customerLite(order.customer),
       items: [
         {
@@ -639,6 +637,30 @@ export async function refundOrderItem(actor, id, fields) {
       }),
     }
   })
+}
+
+export async function refundEntireOrder(actor, id, fields) {
+  const store = await getStoreForManager(actor.store_id)
+  const order = await findOrder(store.id, id)
+  assertCanSee(actor, order)
+  if (!["completed", "refunded"].includes(order.order_status)) {
+    throw new ConflictError("Only a completed sale can be refunded")
+  }
+
+  const refunds = []
+  for (const item of order.OrderItems || []) {
+    const remaining = Number(item.quantity) - Number(item.refunded_qty || 0)
+    if (remaining <= 1e-6) continue
+    refunds.push(
+      await refundOrderItem(actor, id, {
+        order_item_id: item.id,
+        quantity: remaining,
+        reason: fields.reason,
+      })
+    )
+  }
+  if (!refunds.length) throw new AppError("Nothing left to refund", 400)
+  return { order_id: id, refunds }
 }
 
 export async function getRefundReceipt(actor, orderId, refundId) {
@@ -682,7 +704,6 @@ export async function getRefundReceipt(actor, orderId, refundId) {
       change_due: 0,
       cashier,
     },
-    cashier,
     customer: view.customer,
   }
 }

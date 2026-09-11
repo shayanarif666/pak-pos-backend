@@ -14,6 +14,7 @@ import {
 import {
   addLedger,
   create,
+  createBulk,
   getOne,
   list,
   listLedger,
@@ -32,6 +33,7 @@ router.use(
 
 router.get("/", list)
 router.post("/", validate(parseCreateSupplier), create)
+router.post("/bulk", createBulk)
 router.get("/:id/ledger", listLedger)
 router.post("/:id/ledger", validate(parseLedgerEntry), addLedger)
 router.get("/:id", getOne)

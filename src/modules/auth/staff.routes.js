@@ -7,7 +7,7 @@ import {
 } from "../../shared/middlewares/tenant.middleware.js"
 import { validate } from "../../shared/middlewares/validate.middleware.js"
 import { parseCreateStaff, parsePatchStaff } from "./staff.validation.js"
-import { create, getOne, list, patch, sales } from "./staff.controller.js"
+import { create, createBulk, getOne, list, patch, sales } from "./staff.controller.js"
 
 const router = Router()
 
@@ -20,6 +20,7 @@ router.use(
 
 router.get("/", list)
 router.post("/", validate(parseCreateStaff), create)
+router.post("/bulk", createBulk)
 router.get("/:id/sales", sales)
 router.get("/:id", getOne)
 router.patch("/:id", validate(parsePatchStaff), patch)

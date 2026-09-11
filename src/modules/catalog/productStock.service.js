@@ -3,6 +3,7 @@ import { sequelize } from "../../db/sequelize.js"
 import { ProductStock } from "./productStock.model.js"
 import { Product } from "./product.model.js"
 import { Location } from "../locations/location.model.js"
+import { Store } from "../stores/store.model.js"
 import { StockMovement } from "../inventory/stockMovement.model.js"
 import { getProduct, publicStock } from "./product.service.js"
 import { AppError } from "../../shared/errors/AppError.js"
@@ -144,7 +145,11 @@ export async function applyStockDelta(
 
 export async function putStock(actor, productId, fields) {
   const product = await getProduct(actor.store_id, productId)
-  const locationId = resolveLocationId(actor, fields.location_id)
+  let locationId = resolveLocationId(actor, fields.location_id)
+  if (!locationId) {
+    const store = await Store.findByPk(actor.store_id)
+    locationId = store?.default_location_id || null
+  }
   if (actor.role !== "store_admin" && fields.location_id && fields.location_id !== actor.location_id) {
     throw new ForbiddenError("You can only change stock at your location")
   }

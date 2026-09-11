@@ -610,7 +610,6 @@ export async function createOrder(actor, input) {
       ),
       payments,
       receipt,
-      cashier,
       customer: customerLite,
       idempotent: false,
     }

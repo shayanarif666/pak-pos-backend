@@ -53,5 +53,15 @@ export function parseCreateMovement(body) {
       body.reason_note === undefined || body.reason_note === null
         ? null
         : String(body.reason_note).trim(),
+    expiry_date:
+      body.expiry_date === undefined || body.expiry_date === null || body.expiry_date === ""
+        ? undefined
+        : (() => {
+            const date = new Date(body.expiry_date)
+            if (Number.isNaN(date.getTime())) {
+              throw new AppError("expiry_date is invalid", 400)
+            }
+            return date
+          })(),
   }
 }

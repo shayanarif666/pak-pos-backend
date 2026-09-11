@@ -1,5 +1,6 @@
 import { UniqueConstraintError } from "sequelize"
 import { Store } from "./store.model.js"
+import { Location } from "../locations/location.model.js"
 import { StoreTheme } from "./storeTheme.model.js"
 import { WebsiteContent } from "./websiteContent.model.js"
 import { ShippingRule } from "./shippingRule.model.js"
@@ -77,6 +78,13 @@ const STORE_PATCH_FIELDS = [
   "pos_enabled",
   "web_enabled",
   "is_live",
+  "is_active",
+  "slug",
+  "business_type",
+  "account_manager_name",
+  "account_manager_phone",
+  "suspend_reason",
+  "default_location_id",
 ]
 
 function publicPlanLimits(plan) {
@@ -128,6 +136,9 @@ export function publicStore(store) {
     web_enabled: store.web_enabled,
     is_live: store.is_live,
     is_active: store.is_active,
+    account_manager_name: store.account_manager_name,
+    account_manager_phone: store.account_manager_phone,
+    suspend_reason: store.suspend_reason,
   }
 }
 
@@ -165,7 +176,21 @@ export async function updateStoreForManager(storeId, fields) {
   for (const key of STORE_PATCH_FIELDS) {
     if (fields[key] !== undefined) patch[key] = fields[key]
   }
-  await store.update(patch)
+  if (patch.default_location_id) {
+    const location = await Location.findOne({
+      where: { id: patch.default_location_id, store_id: storeId },
+    })
+    if (!location) throw new NotFoundError("Location not found")
+    patch.default_location_id_int = location.location_id_int
+  }
+  try {
+    await store.update(patch)
+  } catch (err) {
+    if (err instanceof UniqueConstraintError) {
+      throw new ConflictError("Store slug already exists")
+    }
+    throw err
+  }
   return publicStore(store)
 }
 

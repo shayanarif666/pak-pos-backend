@@ -317,17 +317,9 @@ export async function profitReport(actor, query = {}) {
   const period = resolvePeriod(query)
   const orders = await loadCompletedOrders(actor, query)
   const refunds = await refundsByOrder(orders.map((row) => row.id))
-  const { rows, totals } = summarizeOrders(orders, refunds, period)
+  const { totals } = summarizeOrders(orders, refunds, period)
   return {
     period,
-    cost_source: "order_items.cost_price",
-    rows: rows.map((row) => ({
-      bucket: row.bucket,
-      orders: row.orders,
-      revenue: row.revenue,
-      cost: row.cost,
-      gross_profit: row.gross_profit,
-    })),
     totals: {
       orders: totals.orders,
       revenue: totals.revenue,
@@ -473,8 +465,8 @@ function tableFromReport(type, report) {
     return { title: "Payments", headers, rows: report.rows }
   }
   if (type === "profit") {
-    const headers = ["bucket", "orders", "revenue", "cost", "gross_profit"]
-    return { title: "Profit", headers, rows: report.rows }
+    const headers = ["orders", "revenue", "cost", "gross_profit"]
+    return { title: "Profit", headers, rows: report.totals ? [report.totals] : [] }
   }
   const headers = ["bucket", "orders", "revenue", "tax", "discount", "shipping"]
   return { title: "Sales", headers, rows: report.rows }
