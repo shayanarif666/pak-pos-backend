@@ -12,6 +12,7 @@ function publicCategory(row) {
   return {
     id: json.id,
     store_id: json.store_id,
+    store_number: json.store_id_int,
     name: json.name,
     slug: json.slug,
     parent_category_id: json.parent_category_id,

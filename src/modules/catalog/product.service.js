@@ -9,6 +9,7 @@ import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { findLiveStoreBySlug, getStoreForManager } from "../stores/store.service.js"
+import { Location } from "../locations/location.model.js"
 
 const categoryInclude = {
   model: Category,
@@ -72,6 +73,7 @@ function publicStock(row, product) {
     location_id: row.location_id,
     location_number: row.location_id_int,
     product_id: row.product_id,
+    expiry_date: row.expiry_date || null,
     qty,
     low_stock_threshold: row.low_stock_threshold,
     effective_threshold: threshold == null ? null : Number(threshold),
@@ -86,6 +88,7 @@ function publicProduct(product, extras = {}) {
   return {
     id: json.id,
     store_id: json.store_id,
+    store_number: json.store_id_int,
     category_id: json.category_id,
     category: json.Category
       ? {
@@ -118,7 +121,6 @@ function publicProduct(product, extras = {}) {
     sell_loose: json.sell_loose,
     is_weight_based: json.is_weight_based,
     has_bulk_discount: json.has_bulk_discount,
-    expiry_date: json.expiry_date,
     low_stock_threshold: json.low_stock_threshold,
     is_published: json.is_published,
     pos_visible: json.pos_visible,
@@ -265,7 +267,6 @@ export async function createProduct(store, fields) {
       sell_loose: fields.sell_loose,
       is_weight_based: fields.is_weight_based,
       has_bulk_discount: fields.has_bulk_discount,
-      expiry_date: fields.expiry_date,
       low_stock_threshold: fields.low_stock_threshold,
       is_published: fields.is_published,
       pos_visible: fields.pos_visible,
@@ -304,6 +305,7 @@ export async function updateProduct(storeId, id, fields) {
     await resolveCategory(storeId, fields.category_id)
   }
   if (fields.is_pack_product === false) patch.pack_size = null
+  delete patch.expiry_date
 
   try {
     await product.update(patch)
@@ -340,18 +342,29 @@ export async function patchWeight(storeId, id, fields) {
 
 export async function listExpiryProducts(storeId) {
   const store = await getStoreForManager(storeId)
-  const rows = await Product.findAll({
+  const rows = await ProductStock.findAll({
     where: {
       store_id: storeId,
       expiry_date: { [Op.ne]: null },
     },
-    include: [categoryInclude],
+    include: [
+      { model: Product, include: [categoryInclude] },
+      { model: Location, attributes: ["id", "name", "location_id_int"] },
+    ],
     order: [["expiry_date", "ASC"]],
   })
-  return rows.map((row) =>
-    publicProduct(row, {
+  return rows
+    .filter((stock) => stock.Product)
+    .map((stock) =>
+    publicProduct(stock.Product, {
+      stocks: [publicStock(stock, stock.Product)],
+      store_id: stock.store_id,
+      store_number: stock.store_id_int,
+      location_id: stock.location_id,
+      location_number: stock.location_id_int,
+      expiry_date: stock.expiry_date,
       expiry_status: expiryStatus(
-        row.expiry_date,
+        stock.expiry_date,
         store.expiry_warning_days,
         store.expiry_critical_days
       ),

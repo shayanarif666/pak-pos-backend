@@ -32,6 +32,7 @@ export function publicUser(user) {
     name: user.name,
     email: user.email,
     phone: user.phone,
+    pin: user.pin || null,
     role: user.role,
     store_id: user.store_id,
     store_number: user.store_id_int,

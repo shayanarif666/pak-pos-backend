@@ -98,9 +98,14 @@ async function assertDeviceCap(store, extra) {
 }
 
 export async function listDevices(actor, query = {}) {
-  const where = { store_id: actor.store_id }
-  if (actor.role === "manager") where.location_id = actor.location_id
-  else if (query.locationId) where.location_id = query.locationId
+  const where = {}
+  if (actor.role === "store_admin") {
+    if (query.locationId || query.location_id) {
+      where.location_id = query.locationId || query.location_id
+    }
+  } else {
+    where.store_id = actor.store_id
+  }
   const rows = await PosDevice.findAll({
     where,
     order: [["created_at", "ASC"]],
@@ -109,13 +114,14 @@ export async function listDevices(actor, query = {}) {
 }
 
 export async function listAllDevices() {
-  return PosDevice.findAll({
+  const rows = await PosDevice.findAll({
     include: [
       { model: Store, attributes: ["id", "name", "slug"] },
       { model: Location, attributes: ["id", "name"] },
     ],
     order: [["created_at", "ASC"]],
   })
+  return rows.map(publicDevice)
 }
 
 export async function adminCreateDevice(input) {

@@ -43,7 +43,9 @@ function publicSession(row) {
   const { store_id_int, location_id_int, ...rest } = json
   return {
     ...rest,
+    store_id: json.store_id,
     store_number: store_id_int,
+    location_id: json.location_id,
     location_number: location_id_int,
     opening_cash: Number(json.opening_cash),
     cash_in: Number(json.cash_in),

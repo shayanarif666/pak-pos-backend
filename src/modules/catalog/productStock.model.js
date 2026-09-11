@@ -13,6 +13,7 @@ export const ProductStock = sequelize.define(
     product_id: uuidCol(false),
     qty: { type: DataTypes.DECIMAL(12, 4), allowNull: false, defaultValue: 0 },
     low_stock_threshold: { type: DataTypes.DECIMAL(12, 4), allowNull: true },
+    expiry_date: { type: DataTypes.DATEONLY, allowNull: true },
   },
   {
     ...modelOptions,

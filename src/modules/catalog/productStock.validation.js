@@ -30,8 +30,13 @@ export function parsePutStock(body) {
   if (delta !== undefined && Number.isNaN(delta)) {
     throw new AppError("delta must be a number", 400)
   }
-  if (qty === undefined && delta === undefined && body.low_stock_threshold === undefined) {
-    throw new AppError("qty, delta, or low_stock_threshold is required", 400)
+  if (
+    qty === undefined &&
+    delta === undefined &&
+    body.low_stock_threshold === undefined &&
+    body.expiry_date === undefined
+  ) {
+    throw new AppError("qty, delta, low_stock_threshold, or expiry_date is required", 400)
   }
 
   let reason
@@ -57,5 +62,11 @@ export function parsePutStock(body) {
         : body.low_stock_threshold === null || body.low_stock_threshold === ""
           ? null
           : optionalNumber(body, "low_stock_threshold"),
+    expiry_date:
+      body.expiry_date === undefined
+        ? undefined
+        : body.expiry_date === null || body.expiry_date === ""
+          ? null
+          : String(body.expiry_date).trim(),
   }
 }

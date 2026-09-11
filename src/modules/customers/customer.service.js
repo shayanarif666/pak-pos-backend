@@ -10,21 +10,29 @@ function money(value) {
   return Math.round(Number(value || 0) * 100) / 100
 }
 
+const locationInclude = {
+  model: Location,
+  attributes: ["id", "name", "location_id_int"],
+}
+
 function publicCustomer(row) {
+  const json = row.toJSON ? row.toJSON() : row
   return {
-    id: row.id,
-    store_id: row.store_id,
-    location_id: row.location_id,
-    user_id: row.user_id,
-    name: row.name,
-    email: row.email,
-    phone: row.phone,
-    total_debt: Number(row.total_debt || 0),
-    remaining_debt: Number(row.remaining_debt || 0),
-    debt_notes: row.debt_notes || null,
-    is_active: row.is_active,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
+    id: json.id,
+    store_id: json.store_id,
+    store_number: json.store_id_int,
+    location_id: json.location_id,
+    location_number: json.Location?.location_id_int ?? null,
+    user_id: json.user_id,
+    name: json.name,
+    email: json.email,
+    phone: json.phone,
+    total_debt: Number(json.total_debt || 0),
+    remaining_debt: Number(json.remaining_debt || 0),
+    debt_notes: json.debt_notes || null,
+    is_active: json.is_active,
+    created_at: json.created_at,
+    updated_at: json.updated_at,
   }
 }
 
@@ -49,13 +57,17 @@ export async function listCustomers(storeId, query = {}) {
   }
   const rows = await Customer.findAll({
     where,
+    include: [locationInclude],
     order: [["created_at", "DESC"]],
   })
   return rows.map(publicCustomer)
 }
 
 export async function getCustomer(storeId, id) {
-  const row = await Customer.findOne({ where: { id, store_id: storeId } })
+  const row = await Customer.findOne({
+    where: { id, store_id: storeId },
+    include: [locationInclude],
+  })
   if (!row) throw new NotFoundError("Customer not found")
   return row
 }
@@ -112,7 +124,9 @@ export async function createCustomer(store, fields) {
         )
       }
     })
-    await row.reload()
+    await row.reload({ include: [locationInclude] })
+  } else {
+    await row.reload({ include: [locationInclude] })
   }
   return publicCustomer(row)
 }
@@ -126,6 +140,7 @@ export async function updateCustomer(storeId, id, fields) {
     patch.location_id = await resolveLocation(storeId, fields.location_id)
   }
   await row.update(patch)
+  await row.reload({ include: [locationInclude] })
   return publicCustomer(row)
 }
 

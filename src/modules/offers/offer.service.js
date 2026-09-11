@@ -5,12 +5,17 @@ import { OfferTarget } from "./offerTarget.model.js"
 import { getProduct } from "../catalog/product.service.js"
 import { getCategory } from "../catalog/category.service.js"
 import { getLocation } from "../locations/location.service.js"
+import { Location } from "../locations/location.model.js"
 import { assertOfferRules } from "./offer.validation.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 
 const targetInclude = { model: OfferTarget }
+const locationInclude = {
+  model: Location,
+  attributes: ["id", "name", "location_id_int"],
+}
 
 function publicTarget(row) {
   const json = row.toJSON ? row.toJSON() : row
@@ -29,7 +34,9 @@ function publicOffer(row) {
   return {
     id: json.id,
     store_id: json.store_id,
+    store_number: json.store_id_int,
     location_id: json.location_id,
+    location_number: json.Location?.location_id_int ?? null,
     name: json.name,
     type: json.type,
     apply_to: json.apply_to,
@@ -102,7 +109,7 @@ export async function listOffers(actor, query = {}) {
 
   const rows = await Offer.findAll({
     where,
-    include: [targetInclude],
+    include: [targetInclude, locationInclude],
     order: [["created_at", "DESC"]],
   })
   return rows.map(publicOffer)
@@ -111,7 +118,7 @@ export async function listOffers(actor, query = {}) {
 export async function getOffer(storeId, id) {
   const row = await Offer.findOne({
     where: { id, store_id: storeId },
-    include: [targetInclude],
+    include: [targetInclude, locationInclude],
   })
   if (!row) throw new NotFoundError("Offer not found")
   return row

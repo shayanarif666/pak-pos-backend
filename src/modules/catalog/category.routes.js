@@ -7,8 +7,8 @@ import {
 } from "../../shared/middlewares/tenant.middleware.js"
 import { validate } from "../../shared/middlewares/validate.middleware.js"
 import {
-  applyCloudinaryImage,
-  uploadSingleImage,
+  applyCloudinaryImages,
+  uploadImageFields,
 } from "../../shared/middlewares/upload.middleware.js"
 import {
   parseCreateCategory,
@@ -25,16 +25,22 @@ router.get(
   authorize("store_admin", "manager", "cashier"),
   list
 )
+const categoryImages = [
+  uploadImageFields([
+    { name: "image", maxCount: 1 },
+    { name: "icon", maxCount: 1 },
+  ]),
+  applyCloudinaryImages([
+    { fileField: "image", bodyField: "image_url", kind: "categories" },
+    { fileField: "icon", bodyField: "image_url", kind: "categories" },
+  ]),
+]
+
 router.post(
   "/",
   ...tenant,
   authorize("store_admin", "manager"),
-  uploadSingleImage("image"),
-  applyCloudinaryImage({
-    fileField: "image",
-    bodyField: "image_url",
-    kind: "categories",
-  }),
+  ...categoryImages,
   validate(parseCreateCategory),
   create
 )
@@ -48,12 +54,7 @@ router.patch(
   "/:id",
   ...tenant,
   authorize("store_admin", "manager"),
-  uploadSingleImage("image"),
-  applyCloudinaryImage({
-    fileField: "image",
-    bodyField: "image_url",
-    kind: "categories",
-  }),
+  ...categoryImages,
   validate(parsePatchCategory),
   patch
 )

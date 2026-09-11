@@ -81,6 +81,7 @@ export async function applyStockDelta(
     supplier_id,
     order_id,
     low_stock_threshold,
+    expiry_date,
   },
   { transaction }
 ) {
@@ -97,6 +98,7 @@ export async function applyStockDelta(
 
   const patch = { qty: newQty }
   if (low_stock_threshold !== undefined) patch.low_stock_threshold = low_stock_threshold
+  if (expiry_date !== undefined) patch.expiry_date = expiry_date
 
   if (!row) {
     row = await ProductStock.create(
@@ -176,6 +178,7 @@ export async function putStock(actor, productId, fields) {
         reason_note: fields.reason_note,
         staff_id: actor.id,
         low_stock_threshold: fields.low_stock_threshold,
+        expiry_date: fields.expiry_date,
       },
       { transaction }
     )
