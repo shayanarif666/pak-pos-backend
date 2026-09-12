@@ -1,5 +1,5 @@
 import { AppError } from "../../shared/errors/AppError.js"
-import { PLAN_CODE } from "../../db/enums.js"
+import { PLAN_TYPE } from "../../db/enums.js"
 
 function requireString(body, key, { max = 255 } = {}) {
   const value = body[key]
@@ -13,10 +13,26 @@ function requireString(body, key, { max = 255 } = {}) {
 
 function requireCode(body) {
   const code = String(body.code || "").trim()
-  if (!PLAN_CODE.includes(code)) {
-    throw new AppError("code must be package_1, package_2, or package_3", 400)
+  if (!code) throw new AppError("code is required", 400)
+  if (code.length > 64) throw new AppError("code is too long", 400)
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/.test(code)) {
+    throw new AppError(
+      "code must start with a letter or number and use only letters, numbers, hyphens, or underscores",
+      400
+    )
   }
   return code
+}
+
+function requireType(body, { optional = false } = {}) {
+  if (body.type === undefined || body.type === null || body.type === "") {
+    return optional ? undefined : "monthly"
+  }
+  const type = String(body.type)
+  if (!PLAN_TYPE.includes(type)) {
+    throw new AppError("type must be monthly or yearly", 400)
+  }
+  return type
 }
 
 function requireNumber(body, key, { min = 0, integer = false } = {}) {
@@ -77,6 +93,7 @@ export function parseFeatures(value, { required = false } = {}) {
 export function parseCreatePlan(body) {
   const fields = {
     code: requireCode(body),
+    type: requireType(body),
     name: requireString(body, "name"),
     price_pkr: requireNumber(body, "price_pkr", { min: 0 }),
     max_devices: requireNumber(body, "max_devices", { min: 1, integer: true }),
@@ -91,6 +108,8 @@ export function parseCreatePlan(body) {
 export function parsePatchPlan(body) {
   const fields = {}
   if (body.name !== undefined) fields.name = requireString(body, "name")
+  const type = requireType(body, { optional: true })
+  if (type !== undefined) fields.type = type
   const price = optionalNumber(body, "price_pkr", { min: 0 })
   if (price !== undefined) fields.price_pkr = price
   const devices = optionalNumber(body, "max_devices", { min: 1, integer: true })

@@ -4,7 +4,7 @@ import { Product } from "./product.model.js"
 import { Category } from "./category.model.js"
 import { ProductStock } from "./productStock.model.js"
 import { ProductBulkTier } from "./productBulkTier.model.js"
-import { ensureUniqueSlug } from "../../shared/utils/slugify.js"
+import { ensureUniqueSlug, slugify } from "../../shared/utils/slugify.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { AppError } from "../../shared/errors/AppError.js"
@@ -24,6 +24,28 @@ const categoryInclude = {
     "discount_type",
     "discount_value",
   ],
+}
+
+function skuFromTitle(title) {
+  return slugify(title).toUpperCase()
+}
+
+async function ensureUniqueSku(storeId, title, excludeId) {
+  const root = skuFromTitle(title)
+  if (!root) throw new AppError("title must contain letters or numbers for a SKU", 400)
+  let sku = root
+  let n = 2
+  while (true) {
+    const existing = await Product.findOne({
+      where: {
+        store_id: storeId,
+        sku,
+        ...(excludeId ? { id: { [Op.ne]: excludeId } } : {}),
+      },
+    })
+    if (!existing) return sku
+    sku = `${root}-${n++}`
+  }
 }
 
 function assertPackRules(fields, current = {}) {
@@ -240,7 +262,7 @@ export async function createProduct(store, fields) {
   if (!slug) throw new AppError("title must contain letters or numbers for a slug", 400)
 
   await resolveCategory(store.id, fields.category_id)
-  await assertUnique(store.id, "sku", fields.sku)
+  const sku = await ensureUniqueSku(store.id, fields.title)
   await assertUnique(store.id, "barcode", fields.barcode)
 
   try {
@@ -250,7 +272,7 @@ export async function createProduct(store, fields) {
       category_id: fields.category_id,
       title: fields.title,
       slug,
-      sku: fields.sku,
+      sku,
       barcode: fields.barcode,
       image_url: fields.image_url,
       description: fields.description,
@@ -296,6 +318,9 @@ export async function updateProduct(storeId, id, fields) {
     })
     if (!slug) throw new AppError("title must contain letters or numbers for a slug", 400)
     patch.slug = slug
+    if (fields.sku === undefined) {
+      patch.sku = await ensureUniqueSku(storeId, fields.title, product.id)
+    }
   }
   if (fields.sku !== undefined) await assertUnique(storeId, "sku", fields.sku, product.id)
   if (fields.barcode !== undefined) {

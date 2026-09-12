@@ -1,4 +1,4 @@
-export const PLAN_CODE = ["package_1", "package_2", "package_3"]
+export const PLAN_TYPE = ["monthly", "yearly"]
 export const BUSINESS_TYPE = ["grocery", "boutique", "retail", "pharmacy"]
 export const LICENSE_STATUS = ["pending", "active", "expired", "revoked"]
 export const USER_ROLE = [

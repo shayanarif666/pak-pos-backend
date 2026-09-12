@@ -47,6 +47,7 @@ export function publicPlan(plan) {
   return {
     id: json.id,
     code: json.code,
+    type: json.type || "monthly",
     name: json.name,
     price_pkr: Number(json.price_pkr),
     max_devices: json.max_devices,

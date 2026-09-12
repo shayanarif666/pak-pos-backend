@@ -75,7 +75,6 @@ export function parseCreateProduct(body) {
 
   const fields = {
     title: requireString(body, "title"),
-    sku: requireString(body, "sku"),
     barcode: optionalString(body, "barcode") ?? null,
     image_url: optionalString(body, "image_url") ?? null,
     description: optionalString(body, "description") ?? null,

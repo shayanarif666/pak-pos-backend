@@ -13,6 +13,7 @@ import * as categoryDiscountFields from "./migrations/20260906220000-category-di
 import * as orderPricingBreakdown from "./migrations/20260908120000-order-pricing-breakdown.js"
 import * as planFeaturesArray from "./migrations/20260908220000-plan-features-array.js"
 import * as stockExpiryDate from "./migrations/20260911120000-stock-expiry-date.js"
+import * as planCodeAndType from "./migrations/20260912120000-plan-code-and-type.js"
 
 const migrations = [
   initSchema,
@@ -27,6 +28,7 @@ const migrations = [
   orderPricingBreakdown,
   planFeaturesArray,
   stockExpiryDate,
+  planCodeAndType,
 ]
 
 async function migrate() {

@@ -4,6 +4,7 @@ import { Plan } from "../../modules/plans/plan.model.js"
 const PLANS = [
   {
     code: "package_1",
+    type: "monthly",
     name: "Package 1",
     price_pkr: 2500,
     max_devices: 1,
@@ -12,6 +13,7 @@ const PLANS = [
   },
   {
     code: "package_2",
+    type: "monthly",
     name: "Package 2",
     price_pkr: 4000,
     max_devices: 3,
@@ -28,6 +30,7 @@ const PLANS = [
   },
   {
     code: "package_3",
+    type: "monthly",
     name: "Package 3",
     price_pkr: 8000,
     max_devices: 10,

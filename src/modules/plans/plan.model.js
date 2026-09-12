@@ -1,13 +1,18 @@
 import { DataTypes } from "sequelize"
 import { sequelize } from "../../db/sequelize.js"
 import { modelOptions, uuidPk } from "../../db/columnTypes.js"
-import { PLAN_CODE } from "../../db/enums.js"
+import { PLAN_TYPE } from "../../db/enums.js"
 
 export const Plan = sequelize.define(
   "Plan",
   {
     id: uuidPk(),
-    code: { type: DataTypes.ENUM(...PLAN_CODE), allowNull: false, unique: true },
+    code: { type: DataTypes.STRING(64), allowNull: false, unique: true },
+    type: {
+      type: DataTypes.ENUM(...PLAN_TYPE),
+      allowNull: false,
+      defaultValue: "monthly",
+    },
     name: { type: DataTypes.STRING(255), allowNull: false },
     price_pkr: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
     max_devices: { type: DataTypes.INTEGER, allowNull: false },
