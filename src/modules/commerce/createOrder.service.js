@@ -182,7 +182,7 @@ export async function createOrder(actor, input) {
   const is_custom = Boolean(input.is_custom)
   const client_local_id = normalizeClientLocalId(input.client_local_id)
   const store = await getStoreForManager(actor.store_id)
-  if (client_local_id) await assertPlan(store, "offline_enabled")
+  // if (client_local_id) await assertPlan(store, "offline_enabled")
 
   return sequelize.transaction(async (transaction) => {
     const existing = await loadExisting(store.id, client_local_id, transaction)
