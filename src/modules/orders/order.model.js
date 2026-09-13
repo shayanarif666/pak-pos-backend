@@ -46,6 +46,38 @@ export const Order = sequelize.define(
       defaultValue: 0,
     },
     tax_amount: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
+    default_tax_rate: { type: DataTypes.DECIMAL(5, 2), allowNull: true },
+    default_tax_amount: {
+      type: DataTypes.DECIMAL(12, 2),
+      allowNull: false,
+      defaultValue: 0,
+    },
+    product_tax_amount: {
+      type: DataTypes.DECIMAL(12, 2),
+      allowNull: false,
+      defaultValue: 0,
+    },
+    category_tax_amount: {
+      type: DataTypes.DECIMAL(12, 2),
+      allowNull: false,
+      defaultValue: 0,
+    },
+    payment_gst_amount: {
+      type: DataTypes.DECIMAL(12, 2),
+      allowNull: false,
+      defaultValue: 0,
+    },
+    fbr_invoice_enabled: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
+    fbr_tax_amount: {
+      type: DataTypes.DECIMAL(12, 2),
+      allowNull: false,
+      defaultValue: 0,
+    },
+    tax_breakdown: { type: DataTypes.JSON, allowNull: true },
     shipping_fee: {
       type: DataTypes.DECIMAL(12, 2),
       allowNull: false,

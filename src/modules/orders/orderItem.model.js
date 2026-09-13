@@ -26,6 +26,25 @@ export const OrderItem = sequelize.define(
       defaultValue: 0,
     },
     tax_amount: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
+    product_tax_amount: {
+      type: DataTypes.DECIMAL(12, 2),
+      allowNull: false,
+      defaultValue: 0,
+    },
+    category_tax_amount: {
+      type: DataTypes.DECIMAL(12, 2),
+      allowNull: false,
+      defaultValue: 0,
+    },
+    default_tax_amount: {
+      type: DataTypes.DECIMAL(12, 2),
+      allowNull: false,
+      defaultValue: 0,
+    },
+    product_tax_type: { type: DataTypes.STRING(32), allowNull: true },
+    product_tax_value: { type: DataTypes.DECIMAL(5, 2), allowNull: true },
+    category_tax_type: { type: DataTypes.STRING(32), allowNull: true },
+    category_tax_value: { type: DataTypes.DECIMAL(5, 2), allowNull: true },
     subtotal: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
   },
   { ...noTimestamps, tableName: "order_items" }

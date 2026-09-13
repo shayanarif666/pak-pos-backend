@@ -18,6 +18,9 @@ import {
   applyDateRange,
   bucketKey,
   dateBound,
+  emptyTaxCollection,
+  mergeTaxCollection,
+  orderTaxCollection,
   orderWhere,
   remainingQty,
   reportScope,
@@ -75,6 +78,7 @@ function salesSummary(completed, extras, query) {
   let gross_sales = 0
   let discounts = 0
   let tax = 0
+  const tax_collection = emptyTaxCollection()
   for (const { order, refund } of completed) {
     const remainingSold = (order.OrderItems || []).reduce((sum, item) => sum + remainingQty(item), 0)
     if (remainingSold <= 0 && refund.amount >= Number(order.total_amount)) continue
@@ -86,6 +90,7 @@ function salesSummary(completed, extras, query) {
     gross_sales = money(gross_sales + orderGross)
     discounts = money(discounts + orderDiscount)
     tax = money(tax + orderTax)
+    mergeTaxCollection(tax_collection, orderTaxCollection(order, refund))
     const bucket = trendBucket(order.placed_at, query)
     if (!trend.has(bucket)) trend.set(bucket, { bucket, sales: 0, orders: 0 })
     const row = trend.get(bucket)
@@ -101,6 +106,18 @@ function salesSummary(completed, extras, query) {
   }).length
   const payments = paymentBreakdown(completed, extras.refunded_amount)
   const total_collected = money(payments.rows.reduce((sum, row) => sum + Number(row.net_amount), 0))
+  const cost = money(
+    completed.reduce((sum, { order }) => {
+      return money(
+        sum +
+          (order.OrderItems || []).reduce(
+            (lineSum, item) =>
+              money(lineSum + Number(item.cost_price || 0) * remainingQty(item)),
+            0
+          )
+      )
+    }, 0)
+  )
 
   return {
     totals: {
@@ -108,8 +125,11 @@ function salesSummary(completed, extras, query) {
       discounts,
       refunds,
       net_sales,
+      cost,
       tax,
+      tax_collection,
       total_collected,
+      gross_profit: money(net_sales - cost),
       orders,
       avg_order_value: orders ? money(net_sales / orders) : 0,
     },
@@ -238,98 +258,33 @@ function byCashier(completed) {
   return { rows: [...groups.values()].sort((a, b) => Number(b.net_sales) - Number(a.net_sales)) }
 }
 
-function taxRuleForItem(item) {
-  const product = item.Product
-  const category = product?.Category
-  if (product?.tax_type === "percentage" && Number(product.tax_value) > 0) {
-    const rate = Number(product.tax_value)
-    return { key: `product:${rate}`, tax_rule: `Standard Tax (${rate.toFixed(1)}%)`, rate }
-  }
-  if (category?.tax_type === "percentage" && Number(category.tax_value) > 0) {
-    const rate = Number(category.tax_value)
-    return { key: `category:${rate}`, tax_rule: `Standard Tax (${rate.toFixed(1)}%)`, rate }
-  }
-  const taxable = Number(item.subtotal || 0)
-  const tax = Number(item.tax_amount || 0)
-  const rate = taxable > 0 && tax > 0 ? money((tax / taxable) * 100) : 0
-  if (rate > 0) {
-    return { key: `inferred:${rate}`, tax_rule: `Standard Tax (${rate.toFixed(1)}%)`, rate }
-  }
-  return { key: "none", tax_rule: "No tax", rate: 0 }
-}
-
 function taxBreakdown(completed) {
-  const groups = new Map()
+  const totals = emptyTaxCollection()
   const orderIds = new Set()
   let total_sales = 0
-  let taxable_amount = 0
-  let tax_collected = 0
   for (const { order, refund } of completed) {
     const net = money(Math.max(0, Number(order.total_amount) - Number(refund.amount || 0)))
     total_sales = money(total_sales + net)
     orderIds.add(order.id)
-    for (const item of order.OrderItems || []) {
-      const share = itemShare(item)
-      if (share <= 0) continue
-      const rule = taxRuleForItem(item)
-      if (!groups.has(rule.key)) {
-        groups.set(rule.key, {
-          id: rule.key,
-          tax_rule: rule.tax_rule,
-          rate: rule.rate,
-          taxable_amount: 0,
-          tax_collected: 0,
-          orders: new Set(),
-        })
-      }
-      const row = groups.get(rule.key)
-      addMoney(row, "taxable_amount", Number(item.subtotal) * share)
-      addMoney(row, "tax_collected", Number(item.tax_amount || 0) * share)
-      row.orders.add(order.id)
-    }
-    for (const payment of order.Payments || []) {
-      const gst = Number(payment.tax_amount || 0)
-      if (gst <= 0) continue
-      const amount = Number(payment.amount || 0)
-      const rate = amount > 0 ? money((gst / amount) * 100) : 0
-      const key = `gst:${payment.method}:${rate}`
-      if (!groups.has(key)) {
-        groups.set(key, {
-          id: key,
-          tax_rule: `Payment GST · ${String(payment.method).toUpperCase()} (${rate.toFixed(1)}%)`,
-          rate,
-          taxable_amount: 0,
-          tax_collected: 0,
-          orders: new Set(),
-        })
-      }
-      const row = groups.get(key)
-      addMoney(row, "taxable_amount", amount)
-      addMoney(row, "tax_collected", gst)
-      row.orders.add(order.id)
-    }
+    mergeTaxCollection(totals, orderTaxCollection(order, refund))
   }
-  const rows = [...groups.values()]
-    .filter((row) => Number(row.tax_collected) > 0 || Number(row.rate) > 0)
-    .map((row) => {
-      taxable_amount = money(taxable_amount + Number(row.taxable_amount))
-      tax_collected = money(tax_collected + Number(row.tax_collected))
-      return {
-        id: row.id,
-        tax_rule: row.tax_rule,
-        rate: row.rate,
-        taxable_amount: row.taxable_amount,
-        tax_collected: row.tax_collected,
-        orders: row.orders.size,
-      }
-    })
-    .sort((a, b) => Number(b.tax_collected) - Number(a.tax_collected))
+  const rows = [
+    { id: "product_tax", tax_rule: "Product tax", tax_collected: totals.product_tax },
+    { id: "category_tax", tax_rule: "Category tax", tax_collected: totals.category_tax },
+    {
+      id: "default_store_tax",
+      tax_rule: "Default store tax",
+      tax_collected: totals.default_store_tax,
+    },
+    { id: "payment_gst", tax_rule: "Payment method GST", tax_collected: totals.payment_gst },
+    { id: "fbr", tax_rule: "FBR collections", tax_collected: totals.fbr },
+  ].filter((row) => Number(row.tax_collected) > 0)
 
   return {
     totals: {
       total_sales,
-      taxable_amount,
-      tax_collected,
+      tax_collected: totals.total,
+      tax_collection: totals,
       orders: orderIds.size,
     },
     rows,

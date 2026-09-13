@@ -29,7 +29,7 @@ import {
 } from "../pos/registerSession.service.js"
 import { deductSaleStock } from "./stock.service.js"
 import {
-  lineTaxAmount,
+  lineTaxBreakdown,
   loadBulkTiers,
   loadPricingContext,
   money,
@@ -71,6 +71,14 @@ export function publicOrder(order, extras = {}) {
     coupon_code: json.coupon_code,
     coupon_discount_amount: coupon_discount,
     tax_amount,
+    default_tax_rate:
+      json.default_tax_rate == null ? null : Number(json.default_tax_rate),
+    default_tax_amount: Number(json.default_tax_amount || 0),
+    product_tax_amount: Number(json.product_tax_amount || 0),
+    category_tax_amount: Number(json.category_tax_amount || 0),
+    payment_gst_amount: Number(json.payment_gst_amount || 0),
+    fbr_invoice_enabled: Boolean(json.fbr_invoice_enabled),
+    fbr_tax_amount: Number(json.fbr_tax_amount || 0),
     shipping_fee: Number(json.shipping_fee),
     total_amount: Number(json.total_amount),
     cost_total: Number(json.cost_total),
@@ -84,6 +92,7 @@ export function publicOrder(order, extras = {}) {
     shipping_address: json.shipping_address,
     placed_at: json.placed_at,
     ...extras,
+    tax: json.tax_breakdown || extras.tax || null,
   }
 }
 
@@ -113,6 +122,15 @@ export function publicOrderItem(item) {
     discount_amount,
     after_discount,
     tax_amount,
+    product_tax_amount: Number(json.product_tax_amount || 0),
+    category_tax_amount: Number(json.category_tax_amount || 0),
+    default_tax_amount: Number(json.default_tax_amount || 0),
+    product_tax_type: json.product_tax_type || null,
+    product_tax_value:
+      json.product_tax_value == null ? null : Number(json.product_tax_value),
+    category_tax_type: json.category_tax_type || null,
+    category_tax_value:
+      json.category_tax_value == null ? null : Number(json.category_tax_value),
     line_total: money(after_discount + tax_amount),
     refunded_qty: Number(json.refunded_qty || 0),
     remaining_qty: money(Math.max(0, quantity - Number(json.refunded_qty || 0))),
@@ -244,9 +262,12 @@ export async function createOrder(actor, input) {
           throw new AppError("Custom lines require unit_price", 400)
         }
         const line = priceCustomLine(item)
-        line.tax_amount = input.tax_exempt
-          ? 0
-          : lineTaxAmount(store, null, null, line.subtotal)
+        Object.assign(
+          line,
+          input.tax_exempt
+            ? lineTaxBreakdown({ ...store, charge_tax_on_sales: false }, null, null, 0)
+            : lineTaxBreakdown(store, null, null, line.subtotal)
+        )
         return line
       }
       const product = productMap.get(item.product_id)
@@ -261,14 +282,12 @@ export async function createOrder(actor, input) {
         locationId: location?.id,
         now,
       })
-      line.tax_amount = input.tax_exempt
-        ? 0
-        : lineTaxAmount(
-            store,
-            product,
-            product.Category,
-            line.subtotal
-          )
+      Object.assign(
+        line,
+        input.tax_exempt
+          ? lineTaxBreakdown({ ...store, charge_tax_on_sales: false }, null, null, 0)
+          : lineTaxBreakdown(store, product, product.Category, line.subtotal)
+      )
       return line
     })
 
@@ -280,20 +299,26 @@ export async function createOrder(actor, input) {
       const taxableShare = money((lineSubtotal - orderDiscount) / lineSubtotal)
       for (const line of priced) {
         if (!line.product_id) {
-          line.tax_amount = lineTaxAmount(
-            store,
-            null,
-            null,
-            money(Number(line.subtotal) * taxableShare)
+          Object.assign(
+            line,
+            lineTaxBreakdown(
+              store,
+              null,
+              null,
+              money(Number(line.subtotal) * taxableShare)
+            )
           )
           continue
         }
         const product = productMap.get(line.product_id)
-        line.tax_amount = lineTaxAmount(
-          store,
-          product,
-          product?.Category,
-          money(Number(line.subtotal) * taxableShare)
+        Object.assign(
+          line,
+          lineTaxBreakdown(
+            store,
+            product,
+            product?.Category,
+            money(Number(line.subtotal) * taxableShare)
+          )
         )
       }
     }
@@ -387,6 +412,24 @@ export async function createOrder(actor, input) {
           coupon_code: coupon?.code || null,
           coupon_discount_amount: totals.coupon_discount_amount,
           tax_amount: totals.tax_amount,
+          default_tax_rate: totals.default_tax_rate,
+          default_tax_amount: totals.default_tax_amount,
+          product_tax_amount: totals.product_tax_amount,
+          category_tax_amount: totals.category_tax_amount,
+          payment_gst_amount: totals.payment_gst_amount,
+          fbr_invoice_enabled: totals.fbr_invoice_enabled,
+          fbr_tax_amount: totals.fbr_tax_amount,
+          tax_breakdown: {
+            default_tax_rate: totals.default_tax_rate,
+            default_tax_amount: totals.default_tax_amount,
+            product_tax_amount: totals.product_tax_amount,
+            category_tax_amount: totals.category_tax_amount,
+            payment_gst_amount: totals.payment_gst_amount,
+            payment_gst: totals.payment_gst_splits,
+            fbr_invoice_enabled: totals.fbr_invoice_enabled,
+            fbr_tax_amount: totals.fbr_tax_amount,
+            total: totals.tax_amount,
+          },
           shipping_fee: totals.shipping_fee,
           total_amount: totals.total_amount,
           cost_total: totals.cost_total,
@@ -425,6 +468,13 @@ export async function createOrder(actor, input) {
         quantity: line.quantity,
         discount_amount: line.discount_amount,
         tax_amount: line.tax_amount,
+        product_tax_amount: line.product_tax_amount || 0,
+        category_tax_amount: line.category_tax_amount || 0,
+        default_tax_amount: line.default_tax_amount || 0,
+        product_tax_type: line.product_tax_type || null,
+        product_tax_value: line.product_tax_value ?? null,
+        category_tax_type: line.category_tax_type || null,
+        category_tax_value: line.category_tax_value ?? null,
         subtotal: line.subtotal,
       })),
       { transaction }
@@ -465,8 +515,12 @@ export async function createOrder(actor, input) {
     for (const row of plannedPayments) {
       const amount = money(row.amount)
       if (amount <= 0) throw new AppError("payment amount must be > 0", 400)
+      const matched = (totals.payment_gst_splits || []).find(
+        (entry) => entry.method === row.method
+      )
       const tax_amount = money(
-        totals.gst * (paidSum > 0 ? amount / paidSum : 1)
+        matched?.gst_amount ??
+          (totals.gst * (paidSum > 0 ? amount / paidSum : 1))
       )
       const payment = await Payment.create(
         {

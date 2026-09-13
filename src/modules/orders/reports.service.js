@@ -98,8 +98,67 @@ function emptyTotals() {
     discount: 0,
     shipping: 0,
     cost: 0,
+    refunds: 0,
+    total_collected: 0,
     gross_profit: 0,
+    tax_collection: emptyTaxCollection(),
   }
+}
+
+export function emptyTaxCollection() {
+  return {
+    product_tax: 0,
+    category_tax: 0,
+    default_store_tax: 0,
+    payment_gst: 0,
+    fbr: 0,
+    total: 0,
+  }
+}
+
+export function orderTaxCollection(order, refund = { amount: 0, tax: 0 }) {
+  const collected = emptyTaxCollection()
+  for (const item of order.OrderItems || []) {
+    const qty = Number(item.quantity || 0)
+    const share = qty > 0 ? remainingQty(item) / qty : 0
+    if (share <= 0) continue
+    const product = Number(item.product_tax_amount || 0) * share
+    const category = Number(item.category_tax_amount || 0) * share
+    const storeDefault = Number(item.default_tax_amount || 0) * share
+    if (product || category || storeDefault) {
+      addMoney(collected, "product_tax", product)
+      addMoney(collected, "category_tax", category)
+      addMoney(collected, "default_store_tax", storeDefault)
+    } else {
+      addMoney(collected, "default_store_tax", Number(item.tax_amount || 0) * share)
+    }
+  }
+  const total = Number(order.total_amount || 0)
+  const orderShare =
+    total > 0 ? Math.max(0, (total - Number(refund.amount || 0)) / total) : 0
+  addMoney(collected, "payment_gst", Number(order.payment_gst_amount || 0) * orderShare)
+  if (order.fbr_invoice_enabled) {
+    addMoney(collected, "fbr", Number(order.fbr_tax_amount || 0) * orderShare)
+  }
+  collected.total = money(
+    collected.product_tax +
+      collected.category_tax +
+      collected.default_store_tax +
+      collected.payment_gst
+  )
+  return collected
+}
+
+export function mergeTaxCollection(target, next) {
+  addMoney(target, "product_tax", next.product_tax)
+  addMoney(target, "category_tax", next.category_tax)
+  addMoney(target, "default_store_tax", next.default_store_tax)
+  addMoney(target, "payment_gst", next.payment_gst)
+  addMoney(target, "fbr", next.fbr)
+  target.total = money(
+    target.product_tax + target.category_tax + target.default_store_tax + target.payment_gst
+  )
+  return target
 }
 
 export function addMoney(target, key, value) {
@@ -158,12 +217,16 @@ export function summarizeOrders(orders, refundMap, period) {
     const cost = netCost(order)
     const revenue = money(Math.max(0, Number(order.total_amount) - refund.amount))
     const tax = money(Math.max(0, Number(order.tax_amount) - refund.tax))
+    const taxes = orderTaxCollection(order, refund)
     row.orders += 1
     addMoney(row, "revenue", revenue)
     addMoney(row, "tax", tax)
     addMoney(row, "discount", Number(order.discount_amount) + Number(order.coupon_discount_amount))
     addMoney(row, "shipping", order.shipping_fee)
     addMoney(row, "cost", cost)
+    addMoney(row, "refunds", refund.amount)
+    addMoney(row, "total_collected", revenue)
+    mergeTaxCollection(row.tax_collection, taxes)
     row.gross_profit = money(row.revenue - row.cost)
     totals.orders += 1
     addMoney(totals, "revenue", revenue)
@@ -171,6 +234,9 @@ export function summarizeOrders(orders, refundMap, period) {
     addMoney(totals, "discount", Number(order.discount_amount) + Number(order.coupon_discount_amount))
     addMoney(totals, "shipping", order.shipping_fee)
     addMoney(totals, "cost", cost)
+    addMoney(totals, "refunds", refund.amount)
+    addMoney(totals, "total_collected", revenue)
+    mergeTaxCollection(totals.tax_collection, taxes)
   }
   totals.gross_profit = money(totals.revenue - totals.cost)
   const rows = [...groups.entries()]
@@ -304,10 +370,15 @@ export async function salesReport(actor, query = {}) {
     })),
     totals: {
       orders: totals.orders,
+      sales_collected: totals.total_collected,
       revenue: totals.revenue,
-      tax: totals.tax,
-      discount: totals.discount,
+      cost: totals.cost,
+      discounts: totals.discount,
+      refunds: totals.refunds,
+      tax: totals.tax_collection.total,
+      tax_collection: totals.tax_collection,
       shipping: totals.shipping,
+      gross_profit: totals.gross_profit,
     },
   }
 }
@@ -322,8 +393,12 @@ export async function profitReport(actor, query = {}) {
     period,
     totals: {
       orders: totals.orders,
-      revenue: totals.revenue,
+      sales_collected: totals.total_collected,
       cost: totals.cost,
+      discounts: totals.discount,
+      refunds: totals.refunds,
+      tax_collection: totals.tax_collection,
+      tax: totals.tax_collection.total,
       gross_profit: totals.gross_profit,
     },
   }

@@ -4,6 +4,7 @@ import {
   applyDiscount,
   bogoFreeQty,
   lineTaxAmount,
+  lineTaxBreakdown,
   money,
   priceAfterProductDiscount,
   priceCatalogLine,
@@ -80,6 +81,52 @@ describe("pricing.service", () => {
     assert.equal(line.pricing_source, "product")
     assert.equal(line.discount_amount, 30.6)
     assert.equal(line.subtotal, 149.4)
+  })
+
+  it("records product and category tax separately", () => {
+    const store = { charge_tax_on_sales: true, default_tax_rate: 17 }
+    const product = { tax_type: "percentage", tax_value: 5 }
+    const category = { tax_type: "percentage", tax_value: 5 }
+    const row = lineTaxBreakdown(store, product, category, 100)
+    assert.equal(row.product_tax_amount, 5)
+    assert.equal(row.category_tax_amount, 5)
+    assert.equal(row.default_tax_amount, 0)
+    assert.equal(row.tax_amount, 10)
+  })
+
+  it("adds payment GST on mixed POS tenders", () => {
+    const quoted = quoteOrderTotals({
+      lines: [
+        {
+          unit_price: 250,
+          quantity: 1,
+          discount_amount: 0,
+          subtotal: 250,
+          tax_amount: 12.5,
+          product_tax_amount: 5,
+          category_tax_amount: 7.5,
+          default_tax_amount: 0,
+          cost_price: 125,
+        },
+      ],
+      store: { charge_tax_on_sales: true, fbr_invoice_enabled: true },
+      channel: "pos",
+      paymentMethod: "mixed",
+      paymentSplits: [
+        { method: "cash", amount: 131.25 },
+        { method: "card", amount: 131.25 },
+      ],
+      taxRates: [
+        { payment_method: "cash", gst_percent: 16 },
+        { payment_method: "card", gst_percent: 5 },
+      ],
+    })
+    assert.equal(quoted.product_tax_amount, 5)
+    assert.equal(quoted.category_tax_amount, 7.5)
+    assert.equal(quoted.payment_gst_splits.length, 2)
+    assert.equal(quoted.fbr_invoice_enabled, true)
+    assert.ok(quoted.payment_gst_amount > 0)
+    assert.equal(quoted.fbr_tax_amount, quoted.tax_amount)
   })
 
   it("adds 17% tax after 17% product discount", () => {

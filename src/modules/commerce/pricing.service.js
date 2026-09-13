@@ -229,18 +229,55 @@ export function priceCustomLine(item) {
   }
 }
 
-export function lineTaxAmount(store, product, category, taxable) {
-  if (!store.charge_tax_on_sales) return 0
+export function lineTaxBreakdown(store, product, category, taxable) {
+  const breakdown = {
+    product_tax_type: product?.tax_type || null,
+    product_tax_value: product?.tax_value == null ? null : Number(product.tax_value),
+    category_tax_type: category?.tax_type || null,
+    category_tax_value: category?.tax_value == null ? null : Number(category.tax_value),
+    default_tax_rate:
+      store?.default_tax_rate == null ? null : Number(store.default_tax_rate),
+    product_tax_amount: 0,
+    category_tax_amount: 0,
+    default_tax_amount: 0,
+    tax_amount: 0,
+  }
+  if (!store?.charge_tax_on_sales) return breakdown
   if (product?.tax_type && product.tax_value != null) {
-    return applyDiscount(taxable, product.tax_type, product.tax_value)
+    breakdown.product_tax_amount = applyDiscount(
+      taxable,
+      product.tax_type,
+      product.tax_value
+    )
   }
   if (category?.tax_type && category.tax_value != null) {
-    return applyDiscount(taxable, category.tax_type, category.tax_value)
+    breakdown.category_tax_amount = applyDiscount(
+      taxable,
+      category.tax_type,
+      category.tax_value
+    )
   }
-  if (store.default_tax_rate != null) {
-    return applyDiscount(taxable, "percentage", store.default_tax_rate)
+  if (
+    !breakdown.product_tax_amount &&
+    !breakdown.category_tax_amount &&
+    store.default_tax_rate != null
+  ) {
+    breakdown.default_tax_amount = applyDiscount(
+      taxable,
+      "percentage",
+      store.default_tax_rate
+    )
   }
-  return 0
+  breakdown.tax_amount = money(
+    breakdown.product_tax_amount +
+      breakdown.category_tax_amount +
+      breakdown.default_tax_amount
+  )
+  return breakdown
+}
+
+export function lineTaxAmount(store, product, category, taxable) {
+  return lineTaxBreakdown(store, product, category, taxable).tax_amount
 }
 
 export function quoteShipping(channel, rule, afterDiscounts) {
@@ -285,23 +322,44 @@ export function quoteOrderTotals({
   const shipping_fee = quoteShipping(channel, shippingRule, goods)
   const pre_gst = money(goods + line_tax + shipping_fee)
 
+  const product_tax_amount = taxExempt
+    ? 0
+    : money(lines.reduce((sum, line) => sum + Number(line.product_tax_amount || 0), 0))
+  const category_tax_amount = taxExempt
+    ? 0
+    : money(lines.reduce((sum, line) => sum + Number(line.category_tax_amount || 0), 0))
+  const default_tax_amount = taxExempt
+    ? 0
+    : money(lines.reduce((sum, line) => sum + Number(line.default_tax_amount || 0), 0))
+
   let gst = 0
-  if (taxExempt || channel === "pos") {
-    gst = 0
-  } else if (paymentSplits?.length) {
-    const splitSum = paymentSplits.reduce((sum, row) => sum + Number(row.amount), 0)
-    if (splitSum > 0) {
-      gst = money(
-        paymentSplits.reduce((sum, row) => {
-          const share = (Number(row.amount) / splitSum) * pre_gst
-          return sum + paymentGst(store, taxRates, row.method, share)
-        }, 0)
+  const payment_gst_splits = []
+  if (!taxExempt) {
+    const splits = paymentSplits?.length
+      ? paymentSplits
+      : paymentMethod && paymentMethod !== "mixed"
+        ? [{ method: paymentMethod, amount: pre_gst }]
+        : []
+    const splitSum = splits.reduce((sum, row) => sum + Number(row.amount || 0), 0)
+    for (const row of splits) {
+      const share = splitSum > 0 ? (Number(row.amount) / splitSum) * pre_gst : 0
+      const gst_percent = Number(
+        (taxRates || []).find((rate) => rate.payment_method === row.method)
+          ?.gst_percent || 0
       )
+      const gst_amount = paymentGst(store, taxRates, row.method, share)
+      gst = money(gst + gst_amount)
+      payment_gst_splits.push({
+        method: row.method,
+        amount: money(row.amount),
+        gst_percent,
+        gst_amount,
+      })
     }
-  } else {
-    gst = paymentGst(store, taxRates, paymentMethod, pre_gst)
   }
 
+  const fbr_tax_amount =
+    !taxExempt && store.fbr_invoice_enabled ? money(line_tax + gst) : 0
   const tax_amount = money(line_tax + gst)
   const total_amount = money(pre_gst + gst)
   const cost_total = money(lines.reduce((sum, line) => sum + Number(line.cost_price) * Number(line.quantity), 0))
@@ -316,6 +374,15 @@ export function quoteOrderTotals({
     tax_amount,
     gst,
     line_tax,
+    product_tax_amount,
+    category_tax_amount,
+    default_tax_amount,
+    payment_gst_amount: gst,
+    payment_gst_splits,
+    fbr_invoice_enabled: Boolean(store.fbr_invoice_enabled),
+    fbr_tax_amount,
+    default_tax_rate:
+      store.default_tax_rate == null ? null : Number(store.default_tax_rate),
     total_amount,
     cost_total,
   }
