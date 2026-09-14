@@ -95,7 +95,7 @@ const product = await req("POST", "/products", {
     cost_price: 180,
     selling_price: 300,
     is_published: true,
-    web_visible: true,
+    is_web_visible: true,
   },
 })
 assert(product.status === 201, "product", product)

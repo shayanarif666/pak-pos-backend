@@ -1,4 +1,5 @@
 import { AppError } from "../../shared/errors/AppError.js"
+import { parseCatalogVisibility } from "../../db/channelVisibility.js"
 import { LEDGER_ENTRY_TYPE } from "../../db/enums.js"
 
 const UUID_RE =
@@ -35,6 +36,7 @@ export function parseCreateSupplier(body) {
     email: optionalString(body, "email"),
     address: optionalString(body, "address"),
     payment_terms: optionalString(body, "payment_terms"),
+    ...parseCatalogVisibility(body),
   }
 }
 
@@ -48,6 +50,7 @@ export function parsePatchSupplier(body) {
     patch.payment_terms = optionalString(body, "payment_terms")
   }
   if (body.is_active !== undefined) patch.is_active = Boolean(body.is_active)
+  Object.assign(patch, parseCatalogVisibility(body, { patch: true }))
   if (!Object.keys(patch).length) throw new AppError("No fields to update", 400)
   return patch
 }

@@ -1,4 +1,5 @@
 import { Op } from "sequelize"
+import { copyVisibility } from "../../db/channelVisibility.js"
 import { sequelize } from "../../db/sequelize.js"
 import { ProductStock } from "./productStock.model.js"
 import { Product } from "./product.model.js"
@@ -102,6 +103,7 @@ export async function applyStockDelta(
   if (expiry_date !== undefined) patch.expiry_date = expiry_date
 
   if (!row) {
+    const product = await Product.findByPk(productId, { transaction })
     row = await ProductStock.create(
       {
         store_id: storeId,
@@ -109,6 +111,7 @@ export async function applyStockDelta(
         location_id: location.id,
         location_id_int: location.location_id_int,
         product_id: productId,
+        ...copyVisibility(product),
         ...patch,
       },
       { transaction }
@@ -135,6 +138,7 @@ export async function applyStockDelta(
         staff_id: staff_id || null,
         supplier_id: supplier_id || null,
         order_id: order_id || null,
+        ...copyVisibility(row),
       },
       { transaction }
     )

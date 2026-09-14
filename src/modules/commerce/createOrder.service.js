@@ -1,5 +1,6 @@
 import { UniqueConstraintError } from "sequelize"
 import { sequelize } from "../../db/sequelize.js"
+import { visibilityFromOrderChannel, publicVisibility } from "../../db/channelVisibility.js"
 import { ORDER_CHANNEL, PAYMENT_METHOD } from "../../db/enums.js"
 import { Order } from "../orders/order.model.js"
 import { OrderItem } from "../orders/orderItem.model.js"
@@ -54,7 +55,7 @@ export function publicOrder(order, extras = {}) {
     store_number: json.store_id_int ?? json.store_number ?? null,
     location_id: json.location_id,
     location_number: json.location_id_int ?? json.location_number ?? null,
-    channel: json.channel,
+    ...publicVisibility(json),
     is_custom: json.is_custom,
     order_number: json.order_number,
     cashier_id: json.cashier_id,
@@ -135,6 +136,7 @@ export function publicOrderItem(item) {
     refunded_qty: Number(json.refunded_qty || 0),
     remaining_qty: money(Math.max(0, quantity - Number(json.refunded_qty || 0))),
     pricing_source: json.pricing_source || null,
+    ...publicVisibility(json),
   }
 }
 
@@ -395,7 +397,7 @@ export async function createOrder(actor, input) {
           store_id_int: store.store_id_int,
           location_id: location?.id || null,
           location_id_int: location?.location_id_int || null,
-          channel,
+          ...visibilityFromOrderChannel(channel),
           is_custom,
           order_number,
           cashier_id,
@@ -455,6 +457,7 @@ export async function createOrder(actor, input) {
     const savedItems = await OrderItem.bulkCreate(
       priced.map((line) => ({
         order_id: order.id,
+        ...visibilityFromOrderChannel(channel),
         product_id: line.product_id,
         title: line.title,
         sku: line.sku,
@@ -529,6 +532,7 @@ export async function createOrder(actor, input) {
           location_id: location?.id || null,
           location_id_int: location?.location_id_int || null,
           order_id: order.id,
+          ...visibilityFromOrderChannel(channel),
           method: row.method,
           amount,
           tax_amount,
@@ -569,6 +573,7 @@ export async function createOrder(actor, input) {
         location_id: location?.id || null,
         location_id_int: location?.location_id_int || null,
         order_id: order.id,
+        ...visibilityFromOrderChannel(channel),
         payment_id: payments[0]?.id || null,
         receipt_number,
         cashier_id,

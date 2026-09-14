@@ -5,7 +5,7 @@ import { slugify } from "../../shared/utils/slugify.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { AppError } from "../../shared/errors/AppError.js"
-import { findLiveStoreBySlug } from "../stores/store.service.js"
+import { parseCatalogVisibility, publicVisibility } from "../../db/channelVisibility.js"
 
 function publicCategory(row) {
   const json = row.toJSON ? row.toJSON() : row
@@ -24,8 +24,7 @@ function publicCategory(row) {
     discount_value: json.discount_value == null ? null : Number(json.discount_value),
     is_active: json.is_active,
     sort_order: json.sort_order,
-    pos_visible: json.pos_visible,
-    web_visible: json.web_visible,
+    ...publicVisibility(json),
     created_at: json.created_at,
     updated_at: json.updated_at,
   }
@@ -93,8 +92,9 @@ export async function createCategory(store, fields) {
       discount_value: fields.discount_value,
       is_active: fields.is_active,
       sort_order: fields.sort_order,
-      pos_visible: fields.pos_visible,
-      web_visible: fields.web_visible,
+      is_pos_visible: fields.is_pos_visible,
+      is_web_visible: fields.is_web_visible,
+      channel: fields.channel,
     })
     return publicCategory(row)
   } catch (err) {
@@ -164,7 +164,7 @@ export async function listPublicCategories(slug) {
     where: {
       store_id: store.id,
       is_active: true,
-      web_visible: true,
+      is_web_visible: true,
     },
     order: [
       ["sort_order", "ASC"],

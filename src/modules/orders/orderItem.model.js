@@ -1,6 +1,7 @@
 import { DataTypes } from "sequelize"
 import { sequelize } from "../../db/sequelize.js"
 import { noTimestamps, uuidCol, uuidPk } from "../../db/columnTypes.js"
+import { saleChannelVisibilityFields } from "../../db/channelVisibility.js"
 import { PRODUCT_UNIT } from "../../db/enums.js"
 
 export const OrderItem = sequelize.define(
@@ -8,6 +9,7 @@ export const OrderItem = sequelize.define(
   {
     id: uuidPk(),
     order_id: uuidCol(false),
+    ...saleChannelVisibilityFields(),
     product_id: uuidCol(true),
     title: { type: DataTypes.TEXT, allowNull: false },
     sku: { type: DataTypes.STRING(255), allowNull: true },

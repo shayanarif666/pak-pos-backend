@@ -9,6 +9,7 @@ import {
 } from "../catalog/productStock.service.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { AppError } from "../../shared/errors/AppError.js"
+import { copyVisibility, publicVisibility } from "../../db/channelVisibility.js"
 
 function publicSupplier(row, extras = {}) {
   return {
@@ -20,6 +21,7 @@ function publicSupplier(row, extras = {}) {
     address: row.address,
     payment_terms: row.payment_terms,
     is_active: row.is_active,
+    ...publicVisibility(row),
     created_at: row.created_at,
     updated_at: row.updated_at,
     ...extras,
@@ -67,6 +69,9 @@ export async function createSupplier(store, fields) {
     address: fields.address,
     payment_terms: fields.payment_terms,
     is_active: true,
+    is_pos_visible: fields.is_pos_visible,
+    is_web_visible: fields.is_web_visible,
+    channel: fields.channel,
   })
   return publicSupplier(row)
 }
@@ -141,6 +146,7 @@ export async function addLedgerEntry(store, supplierId, fields, actor) {
         stock_movement_id,
         note: fields.note,
         created_by: actor.id,
+        ...copyVisibility(supplier),
       },
       { transaction }
     )

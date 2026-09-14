@@ -8,7 +8,7 @@ import { ensureUniqueSlug, slugify } from "../../shared/utils/slugify.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { AppError } from "../../shared/errors/AppError.js"
-import { findLiveStoreBySlug, getStoreForManager } from "../stores/store.service.js"
+import { copyVisibility, publicVisibility } from "../../db/channelVisibility.js"
 import { Location } from "../locations/location.model.js"
 
 const categoryInclude = {
@@ -17,7 +17,7 @@ const categoryInclude = {
     "id",
     "name",
     "slug",
-    "web_visible",
+    "is_web_visible",
     "is_active",
     "tax_type",
     "tax_value",
@@ -102,6 +102,7 @@ function publicStock(row, product) {
     is_low:
       threshold == null ? false : qty <= Number(threshold),
     number_of_packs: numberOfPacks(qty, product?.pack_size),
+    ...publicVisibility(row),
   }
 }
 
@@ -145,8 +146,7 @@ function publicProduct(product, extras = {}) {
     has_bulk_discount: json.has_bulk_discount,
     low_stock_threshold: json.low_stock_threshold,
     is_published: json.is_published,
-    pos_visible: json.pos_visible,
-    web_visible: json.web_visible,
+    ...publicVisibility(json),
     is_active: json.is_active,
     created_at: json.created_at,
     updated_at: json.updated_at,
@@ -291,8 +291,9 @@ export async function createProduct(store, fields) {
       has_bulk_discount: fields.has_bulk_discount,
       low_stock_threshold: fields.low_stock_threshold,
       is_published: fields.is_published,
-      pos_visible: fields.pos_visible,
-      web_visible: fields.web_visible,
+      is_pos_visible: fields.is_pos_visible,
+      is_web_visible: fields.is_web_visible,
+      channel: fields.channel,
       is_active: fields.is_active,
     })
     return publicProduct(await getProduct(store.id, created.id), { stocks: [] })
@@ -345,7 +346,7 @@ export async function updateProduct(storeId, id, fields) {
 
 export async function deleteProduct(storeId, id) {
   const product = await getProduct(storeId, id)
-  await product.update({ is_active: false, is_published: false, pos_visible: false })
+  await product.update({ is_active: false, is_published: false, is_pos_visible: false })
   return publicProduct(product)
 }
 
@@ -417,6 +418,7 @@ export async function replaceBulkTiers(storeId, productId, tiers) {
         tiers.map((tier) => ({
           store_id: storeId,
           product_id: productId,
+          ...copyVisibility(product),
           ...tier,
         })),
         { transaction }
@@ -436,7 +438,7 @@ async function requireLiveStore(slug) {
 const publicCategoryInclude = {
   model: Category,
   attributes: ["id", "name", "slug"],
-  where: { web_visible: true, is_active: true },
+  where: { is_web_visible: true, is_active: true },
   required: true,
 }
 
@@ -445,7 +447,7 @@ export async function listPublicProducts(slug, { categoryId } = {}) {
   const where = {
     store_id: store.id,
     is_published: true,
-    web_visible: true,
+    is_web_visible: true,
     is_active: true,
   }
   if (categoryId) where.category_id = categoryId
@@ -465,7 +467,7 @@ export async function getPublicProduct(slug, id) {
       id,
       store_id: store.id,
       is_published: true,
-      web_visible: true,
+      is_web_visible: true,
       is_active: true,
     },
     include: [publicCategoryInclude],

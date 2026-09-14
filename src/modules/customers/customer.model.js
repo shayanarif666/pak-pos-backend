@@ -1,5 +1,6 @@
 import { DataTypes } from "sequelize"
 import { sequelize } from "../../db/sequelize.js"
+import { catalogChannelVisibilityFields } from "../../db/channelVisibility.js"
 import { modelOptions, uuidCol, uuidPk } from "../../db/columnTypes.js"
 
 export const Customer = sequelize.define(
@@ -17,6 +18,7 @@ export const Customer = sequelize.define(
     remaining_debt: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
     debt_notes: { type: DataTypes.TEXT, allowNull: true },
     is_active: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+    ...catalogChannelVisibilityFields(),
   },
   {
     ...modelOptions,

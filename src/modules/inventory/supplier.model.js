@@ -1,5 +1,6 @@
 import { DataTypes } from "sequelize"
 import { sequelize } from "../../db/sequelize.js"
+import { catalogChannelVisibilityFields } from "../../db/channelVisibility.js"
 import { modelOptions, uuidCol, uuidPk } from "../../db/columnTypes.js"
 
 export const Supplier = sequelize.define(
@@ -14,6 +15,7 @@ export const Supplier = sequelize.define(
     address: { type: DataTypes.TEXT, allowNull: true },
     payment_terms: { type: DataTypes.TEXT, allowNull: true },
     is_active: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+    ...catalogChannelVisibilityFields(),
   },
   { ...modelOptions, tableName: "suppliers" }
 )

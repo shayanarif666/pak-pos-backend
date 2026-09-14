@@ -1,4 +1,5 @@
 import { AppError } from "../../shared/errors/AppError.js"
+import { parseCatalogVisibility } from "../../db/channelVisibility.js"
 import { LEDGER_ENTRY_TYPE } from "../../db/enums.js"
 
 const UUID_RE =
@@ -44,6 +45,7 @@ export function parseCreateCustomer(body) {
     remaining_debt: optionalNumber(body, "remaining_debt"),
     total_debt: optionalNumber(body, "total_debt"),
     debt_notes: optionalString(body, "debt_notes", { max: 4000 }),
+    ...parseCatalogVisibility(body),
   }
 }
 
@@ -59,6 +61,7 @@ export function parsePatchCustomer(body) {
     patch.remaining_debt = optionalNumber(body, "remaining_debt")
   }
   if (body.is_active !== undefined) patch.is_active = Boolean(body.is_active)
+  Object.assign(patch, parseCatalogVisibility(body, { patch: true }))
   if (!Object.keys(patch).length) throw new AppError("No fields to update", 400)
   return patch
 }

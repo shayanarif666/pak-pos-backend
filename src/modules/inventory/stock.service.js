@@ -1,3 +1,4 @@
+import { publicVisibility } from "../../db/channelVisibility.js"
 import { Op } from "sequelize"
 import { sequelize } from "../../db/sequelize.js"
 import { StockMovement } from "./stockMovement.model.js"
@@ -34,6 +35,7 @@ function publicMovement(row, extras = {}) {
     staff_id: json.staff_id,
     order_id: json.order_id,
     created_at: json.created_at,
+    ...publicVisibility(json),
   }
 }
 

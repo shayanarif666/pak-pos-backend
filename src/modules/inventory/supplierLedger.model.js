@@ -1,6 +1,7 @@
 import { DataTypes } from "sequelize"
 import { sequelize } from "../../db/sequelize.js"
 import { createdOnly, uuidCol, uuidPk } from "../../db/columnTypes.js"
+import { catalogChannelVisibilityFields } from "../../db/channelVisibility.js"
 import { LEDGER_ENTRY_TYPE } from "../../db/enums.js"
 
 export const SupplierLedger = sequelize.define(
@@ -18,6 +19,7 @@ export const SupplierLedger = sequelize.define(
     stock_movement_id: uuidCol(true),
     note: { type: DataTypes.TEXT, allowNull: true },
     created_by: uuidCol(true),
+    ...catalogChannelVisibilityFields(),
   },
   { ...createdOnly, tableName: "supplier_ledger" }
 )

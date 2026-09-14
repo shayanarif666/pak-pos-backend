@@ -1,5 +1,6 @@
 import { DataTypes } from "sequelize"
 import { sequelize } from "../../db/sequelize.js"
+import { catalogChannelVisibilityFields } from "../../db/channelVisibility.js"
 import { modelOptions, uuidCol, uuidPk } from "../../db/columnTypes.js"
 
 export const ProductStock = sequelize.define(
@@ -14,6 +15,7 @@ export const ProductStock = sequelize.define(
     qty: { type: DataTypes.DECIMAL(12, 4), allowNull: false, defaultValue: 0 },
     low_stock_threshold: { type: DataTypes.DECIMAL(12, 4), allowNull: true },
     expiry_date: { type: DataTypes.DATEONLY, allowNull: true },
+    ...catalogChannelVisibilityFields(),
   },
   {
     ...modelOptions,

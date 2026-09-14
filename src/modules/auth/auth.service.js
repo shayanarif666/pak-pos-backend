@@ -10,6 +10,7 @@ import { StoreLicense } from "../stores/storeLicense.model.js"
 import { Location } from "../locations/location.model.js"
 import { PosDevice } from "../pos/posDevice.model.js"
 import { findLiveStoreBySlug, publicStore } from "../stores/store.service.js"
+import { visibilityFromRecordChannel } from "../../db/channelVisibility.js"
 import { publicLicense, validateLicenseKey } from "../stores/license.service.js"
 import { hashPassword, comparePassword } from "../../shared/utils/hash.util.js"
 import { hashToken, randomToken } from "../../shared/utils/token.util.js"
@@ -518,6 +519,7 @@ export async function registerCustomer(input) {
         remaining_debt: 0,
         debt_notes: null,
         is_active: true,
+        ...visibilityFromRecordChannel("web"),
       },
       { transaction }
     )

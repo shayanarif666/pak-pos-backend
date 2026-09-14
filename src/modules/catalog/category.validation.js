@@ -1,4 +1,5 @@
 import { AppError } from "../../shared/errors/AppError.js"
+import { parseCatalogVisibility } from "../../db/channelVisibility.js"
 import { DISCOUNT_TYPE, TAX_AMOUNT_TYPE } from "../../db/enums.js"
 
 function requireString(body, key) {
@@ -100,8 +101,7 @@ export function parseCreateCategory(body) {
       body.sort_order === undefined || body.sort_order === null
         ? 0
         : optionalInt(body, "sort_order"),
-    pos_visible: body.pos_visible === undefined ? true : Boolean(body.pos_visible),
-    web_visible: body.web_visible === undefined ? true : Boolean(body.web_visible),
+    ...parseCatalogVisibility(body),
   }
   assertPair(fields.tax_type, fields.tax_value, "tax")
   assertPair(fields.discount_type, fields.discount_value, "discount")
@@ -143,11 +143,6 @@ export function parsePatchCategory(body) {
   }
   if (body.is_active !== undefined) fields.is_active = optionalBool(body, "is_active")
   if (body.sort_order !== undefined) fields.sort_order = optionalInt(body, "sort_order")
-  if (body.pos_visible !== undefined) {
-    fields.pos_visible = optionalBool(body, "pos_visible")
-  }
-  if (body.web_visible !== undefined) {
-    fields.web_visible = optionalBool(body, "web_visible")
-  }
+  Object.assign(fields, parseCatalogVisibility(body, { patch: true }))
   return fields
 }

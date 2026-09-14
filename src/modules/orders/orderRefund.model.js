@@ -1,5 +1,6 @@
 import { DataTypes } from "sequelize"
 import { sequelize } from "../../db/sequelize.js"
+import { saleChannelVisibilityFields } from "../../db/channelVisibility.js"
 import { modelOptions, uuidCol, uuidPk } from "../../db/columnTypes.js"
 
 export const OrderRefund = sequelize.define(
@@ -16,6 +17,7 @@ export const OrderRefund = sequelize.define(
     reason: { type: DataTypes.TEXT, allowNull: false },
     amount: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
     tax_amount: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
+    ...saleChannelVisibilityFields(),
   },
   {
     ...modelOptions,

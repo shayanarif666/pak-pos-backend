@@ -1,5 +1,6 @@
 import { DataTypes } from "sequelize"
 import { sequelize } from "../../db/sequelize.js"
+import { saleChannelVisibilityFields } from "../../db/channelVisibility.js"
 import { modelOptions, uuidCol, uuidPk } from "../../db/columnTypes.js"
 
 export const Receipt = sequelize.define(
@@ -11,6 +12,7 @@ export const Receipt = sequelize.define(
     location_id: uuidCol(true),
     location_id_int: { type: DataTypes.INTEGER, allowNull: true },
     order_id: uuidCol(false),
+    ...saleChannelVisibilityFields(),
     payment_id: uuidCol(true),
     receipt_number: { type: DataTypes.INTEGER, allowNull: false },
     cashier_id: uuidCol(true),

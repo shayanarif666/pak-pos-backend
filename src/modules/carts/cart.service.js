@@ -50,7 +50,7 @@ function publicItem(row) {
           unit: product.unit,
           image_url: product.image_url,
           is_weight_based: product.is_weight_based,
-          web_visible: product.web_visible,
+          is_web_visible: product.is_web_visible,
           is_published: product.is_published,
         }
       : null,
@@ -225,7 +225,7 @@ async function requireWebProduct(storeId, productId) {
     include: [Category],
   })
   if (!product) throw new NotFoundError("Product not found")
-  if (!product.is_active || !product.is_published || !product.web_visible) {
+  if (!product.is_active || !product.is_published || !product.is_web_visible) {
     throw new AppError("Product is not available on the web store", 400)
   }
   return product

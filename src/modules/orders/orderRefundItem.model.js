@@ -1,5 +1,6 @@
 import { DataTypes } from "sequelize"
 import { sequelize } from "../../db/sequelize.js"
+import { saleChannelVisibilityFields } from "../../db/channelVisibility.js"
 import { noTimestamps, uuidCol, uuidPk } from "../../db/columnTypes.js"
 
 export const OrderRefundItem = sequelize.define(
@@ -7,6 +8,7 @@ export const OrderRefundItem = sequelize.define(
   {
     id: uuidPk(),
     refund_id: uuidCol(false),
+    ...saleChannelVisibilityFields(),
     order_item_id: uuidCol(false),
     product_id: uuidCol(true),
     title: { type: DataTypes.TEXT, allowNull: false },

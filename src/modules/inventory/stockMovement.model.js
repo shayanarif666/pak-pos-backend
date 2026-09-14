@@ -1,6 +1,7 @@
 import { DataTypes } from "sequelize"
 import { sequelize } from "../../db/sequelize.js"
 import { createdOnly, uuidCol, uuidPk } from "../../db/columnTypes.js"
+import { catalogChannelVisibilityFields } from "../../db/channelVisibility.js"
 import { STOCK_MOVEMENT_REASON, STOCK_MOVEMENT_TYPE } from "../../db/enums.js"
 
 export const StockMovement = sequelize.define(
@@ -20,6 +21,7 @@ export const StockMovement = sequelize.define(
     supplier_id: uuidCol(true),
     staff_id: uuidCol(true),
     order_id: uuidCol(true),
+    ...catalogChannelVisibilityFields(),
   },
   {
     ...createdOnly,

@@ -1,6 +1,7 @@
 import { DataTypes } from "sequelize"
 import { sequelize } from "../../db/sequelize.js"
 import { modelOptions, uuidCol, uuidPk } from "../../db/columnTypes.js"
+import { visibilityFlagFields } from "../../db/channelVisibility.js"
 import {
   DISCOUNT_TYPE,
   ORDER_CHANNEL,
@@ -18,6 +19,7 @@ export const Order = sequelize.define(
     location_id: uuidCol(true),
     location_id_int: { type: DataTypes.INTEGER, allowNull: true },
     channel: { type: DataTypes.ENUM(...ORDER_CHANNEL), allowNull: false },
+    ...visibilityFlagFields(),
     is_custom: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     order_number: { type: DataTypes.INTEGER, allowNull: false },
     cashier_id: uuidCol(true),

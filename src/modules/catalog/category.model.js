@@ -1,6 +1,7 @@
 import { DataTypes } from "sequelize"
 import { sequelize } from "../../db/sequelize.js"
 import { modelOptions, uuidCol, uuidPk } from "../../db/columnTypes.js"
+import { catalogChannelVisibilityFields } from "../../db/channelVisibility.js"
 import { DISCOUNT_TYPE, TAX_AMOUNT_TYPE } from "../../db/enums.js"
 
 export const Category = sequelize.define(
@@ -20,8 +21,7 @@ export const Category = sequelize.define(
     discount_value: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
     is_active: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
     sort_order: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
-    pos_visible: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
-    web_visible: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+    ...catalogChannelVisibilityFields(),
   },
   {
     ...modelOptions,

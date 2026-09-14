@@ -3,8 +3,9 @@ import { sequelize } from "../../db/sequelize.js"
 import { Customer } from "./customer.model.js"
 import { CustomerCreditEntry } from "./customerCreditEntry.model.js"
 import { Location } from "../locations/location.model.js"
-import { NotFoundError } from "../../shared/errors/NotFoundError.js"
+import { copyVisibility, publicVisibility } from "../../db/channelVisibility.js"
 import { AppError } from "../../shared/errors/AppError.js"
+import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 
 function money(value) {
   return Math.round(Number(value || 0) * 100) / 100
@@ -31,6 +32,7 @@ function publicCustomer(row) {
     remaining_debt: Number(json.remaining_debt || 0),
     debt_notes: json.debt_notes || null,
     is_active: json.is_active,
+    ...publicVisibility(json),
     created_at: json.created_at,
     updated_at: json.updated_at,
   }
@@ -99,6 +101,9 @@ export async function createCustomer(store, fields) {
     remaining_debt: 0,
     debt_notes: fields.debt_notes || null,
     is_active: true,
+    is_pos_visible: fields.is_pos_visible,
+    is_web_visible: fields.is_web_visible,
+    channel: fields.channel,
   })
   if (total > 0) {
     await sequelize.transaction(async (transaction) => {
@@ -202,6 +207,7 @@ export async function recordLedgerEntry(customer, fields, { transaction }) {
       due_date: fields.due_date || null,
       note: fields.note || null,
       created_by: fields.created_by || null,
+      ...copyVisibility(customer),
     },
     { transaction }
   )

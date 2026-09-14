@@ -50,7 +50,7 @@ export async function createReview(actor, fields) {
       store_id: store.id,
       is_active: true,
       is_published: true,
-      web_visible: true,
+      is_web_visible: true,
     },
   })
   if (!product) throw new NotFoundError("Product not found")
@@ -119,7 +119,7 @@ export async function listPublicReviews(slug, productId) {
       id: productId,
       store_id: store.id,
       is_published: true,
-      web_visible: true,
+      is_web_visible: true,
       is_active: true,
     },
   })

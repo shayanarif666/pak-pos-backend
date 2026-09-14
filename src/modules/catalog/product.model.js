@@ -1,6 +1,7 @@
 import { DataTypes } from "sequelize"
 import { sequelize } from "../../db/sequelize.js"
 import { modelOptions, uuidCol, uuidPk } from "../../db/columnTypes.js"
+import { catalogChannelVisibilityFields } from "../../db/channelVisibility.js"
 import { DISCOUNT_TYPE, PRODUCT_UNIT, TAX_AMOUNT_TYPE } from "../../db/enums.js"
 
 export const Product = sequelize.define(
@@ -44,8 +45,7 @@ export const Product = sequelize.define(
       defaultValue: 10,
     },
     is_published: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
-    pos_visible: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
-    web_visible: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+    ...catalogChannelVisibilityFields(),
     is_active: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
   },
   {

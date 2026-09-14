@@ -11,6 +11,8 @@ export const USER_ROLE = [
 export const AUTH_TOKEN_TYPE = ["email_verify", "password_reset"]
 export const BILLING_STATUS = ["pending", "paid", "failed", "refunded"]
 export const ORDER_CHANNEL = ["web", "pos"]
+/** Catalog / CRM / stock rows can exist on both channels at once. */
+export const RECORD_CHANNEL = ["web", "pos", "both"]
 export const ORDER_STATUS = [
   "pending",
   "completed",

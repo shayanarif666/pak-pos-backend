@@ -1,5 +1,6 @@
 import { Op } from "sequelize"
 import { sequelize } from "../../db/sequelize.js"
+import { visibilityFromOrderChannel, publicVisibility } from "../../db/channelVisibility.js"
 import { Order } from "./order.model.js"
 import { OrderItem } from "./orderItem.model.js"
 import { OrderRefund } from "./orderRefund.model.js"
@@ -268,6 +269,7 @@ export async function addOrderPayment(actor, id, fields) {
     location_id: order.location_id,
     location_id_int: order.location_id_int,
     order_id: order.id,
+    ...visibilityFromOrderChannel(order.channel),
     method: fields.method,
     amount: fields.amount,
     tax_amount: 0,
@@ -451,6 +453,7 @@ function publicRefund(refund, extras = {}) {
     amount: Number(json.amount),
     tax_amount: Number(json.tax_amount),
     created_at: json.created_at,
+    ...publicVisibility(json),
     cashier: extras.cashier || staffLite(refund.cashier),
     items: extras.items || (refund.OrderRefundItems || []).map((row) => {
       const line = row.toJSON ? row.toJSON() : row
@@ -516,6 +519,7 @@ export async function refundOrderItem(actor, id, fields) {
         location_id: order.location_id,
         location_id_int: order.location_id_int,
         order_id: order.id,
+        ...visibilityFromOrderChannel(order.channel),
         payment_id: null,
         receipt_number,
         cashier_id: actor.id,
@@ -536,6 +540,7 @@ export async function refundOrderItem(actor, id, fields) {
         location_id: order.location_id,
         location_id_int: order.location_id_int,
         order_id: order.id,
+        ...visibilityFromOrderChannel(order.channel),
         cashier_id: actor.id,
         receipt_id: receipt.id,
         reason: fields.reason,
@@ -548,6 +553,7 @@ export async function refundOrderItem(actor, id, fields) {
     const refundItem = await OrderRefundItem.create(
       {
         refund_id: refund.id,
+        ...visibilityFromOrderChannel(order.channel),
         order_item_id: item.id,
         product_id: item.product_id,
         title: item.title,

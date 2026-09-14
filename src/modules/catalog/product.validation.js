@@ -1,5 +1,5 @@
 import { AppError } from "../../shared/errors/AppError.js"
-import { DISCOUNT_TYPE, PRODUCT_UNIT, TAX_AMOUNT_TYPE } from "../../db/enums.js"
+import { parseCatalogVisibility } from "../../db/channelVisibility.js"
 
 function requireString(body, key) {
   const value = body[key]
@@ -95,8 +95,7 @@ export function parseCreateProduct(body) {
     expiry_date: optionalString(body, "expiry_date"),
     low_stock_threshold: optionalNumber(body, "low_stock_threshold") ?? 10,
     is_published: optionalBool(body, "is_published") ?? false,
-    pos_visible: body.pos_visible === undefined ? true : Boolean(body.pos_visible),
-    web_visible: body.web_visible === undefined ? true : Boolean(body.web_visible),
+    ...parseCatalogVisibility(body),
     is_active: body.is_active === undefined ? true : Boolean(body.is_active),
   }
 
@@ -173,8 +172,7 @@ export function parsePatchProduct(body) {
   if (body.is_published !== undefined) {
     fields.is_published = optionalBool(body, "is_published")
   }
-  if (body.pos_visible !== undefined) fields.pos_visible = optionalBool(body, "pos_visible")
-  if (body.web_visible !== undefined) fields.web_visible = optionalBool(body, "web_visible")
+  Object.assign(fields, parseCatalogVisibility(body, { patch: true }))
   if (body.is_active !== undefined) fields.is_active = optionalBool(body, "is_active")
   return fields
 }
