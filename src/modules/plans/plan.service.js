@@ -61,7 +61,6 @@ export function publicPlan(plan) {
 
 export async function listPlans() {
   const rows = await Plan.findAll({
-    where: { is_active: true },
     order: [["price_pkr", "ASC"]],
   })
   return rows.map(publicPlan)

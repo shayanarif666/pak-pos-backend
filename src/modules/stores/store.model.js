@@ -11,6 +11,7 @@ export const Store = sequelize.define(
     plan_id: uuidCol(false),
     name: { type: DataTypes.TEXT, allowNull: false },
     slug: { type: DataTypes.STRING(255), allowNull: false, unique: true },
+    custom_domain: { type: DataTypes.STRING(255), allowNull: true },
     legal_name: { type: DataTypes.STRING(255), allowNull: true },
     owner_name: { type: DataTypes.STRING(255), allowNull: true },
     business_type: { type: DataTypes.ENUM(...BUSINESS_TYPE), allowNull: false },

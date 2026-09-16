@@ -16,6 +16,7 @@ import * as stockExpiryDate from "./migrations/20260911120000-stock-expiry-date.
 import * as planCodeAndType from "./migrations/20260912120000-plan-code-and-type.js"
 import * as orderTaxBreakdown from "./migrations/20260913120000-order-tax-breakdown.js"
 import * as channelVisibilityColumns from "./migrations/20260914120000-channel-visibility-columns.js"
+import * as storeCustomDomain from "./migrations/20260916120000-store-custom-domain.js"
 
 const migrations = [
   initSchema,
@@ -33,6 +34,7 @@ const migrations = [
   planCodeAndType,
   orderTaxBreakdown,
   channelVisibilityColumns,
+  storeCustomDomain,
 ]
 
 async function migrate() {

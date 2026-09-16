@@ -85,6 +85,7 @@ const STORE_PATCH_FIELDS = [
   "account_manager_phone",
   "suspend_reason",
   "default_location_id",
+  "custom_domain",
 ]
 
 function publicPlanLimits(plan) {
@@ -108,6 +109,7 @@ export function publicStore(store) {
     plan_id: store.plan_id,
     name: store.name,
     slug: store.slug,
+    custom_domain: store.custom_domain || null,
     legal_name: store.legal_name,
     owner_name: store.owner_name,
     business_type: store.business_type,
@@ -136,6 +138,7 @@ export function publicStore(store) {
     web_enabled: store.web_enabled,
     is_live: store.is_live,
     is_active: store.is_active,
+    created_at: store.created_at,
     account_manager_name: store.account_manager_name,
     account_manager_phone: store.account_manager_phone,
     suspend_reason: store.suspend_reason,

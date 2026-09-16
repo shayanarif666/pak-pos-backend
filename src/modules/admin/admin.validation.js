@@ -106,6 +106,7 @@ export function parseRegisterStore(body) {
     contact_phone: requireString(body, "contact_phone"),
     logo_url: optionalString(body, "logo_url"),
     favicon_url: optionalString(body, "favicon_url"),
+    custom_domain: optionalString(body, "domain") || optionalString(body, "custom_domain"),
     location_name: requireString(body, "location_name"),
     location_address: optionalString(body, "location_address"),
     location_city: optionalString(body, "location_city"),
@@ -129,22 +130,141 @@ export function parseRegisterStore(body) {
   }
 }
 
+function optionalPinIfPresent(body, key) {
+  if (body[key] === undefined || body[key] === null || body[key] === "") return undefined
+  return requirePin(body, key)
+}
+
+function optionalPasswordIfPresent(body, key) {
+  if (body[key] === undefined || body[key] === null || body[key] === "") return undefined
+  return requireString(body, key, { min: 6, max: 128 })
+}
+
+function optionalUuidIfPresent(body, key) {
+  if (body[key] === undefined || body[key] === null || body[key] === "") return undefined
+  return requireUuid(body, key)
+}
+
+function optionalAmountIfPresent(body) {
+  if (body.amount === undefined || body.amount === null || body.amount === "") return undefined
+  const amount = Number(body.amount)
+  if (Number.isNaN(amount) || amount < 0) {
+    throw new AppError("amount must be a number >= 0", 400)
+  }
+  return amount
+}
+
+function optionalBillingStatusIfPresent(body) {
+  if (body.billing_status === undefined || body.billing_status === null || body.billing_status === "") {
+    return undefined
+  }
+  const billing_status = String(body.billing_status)
+  if (!BILLING_STATUS.includes(billing_status)) {
+    throw new AppError("billing_status must be pending, paid, failed, or refunded", 400)
+  }
+  return billing_status
+}
+
+function optionalBusinessTypeIfPresent(body) {
+  if (body.business_type === undefined || body.business_type === null || body.business_type === "") {
+    return undefined
+  }
+  const business_type = String(body.business_type)
+  if (!BUSINESS_TYPE.includes(business_type)) {
+    throw new AppError(
+      "business_type must be grocery, boutique, retail, or pharmacy",
+      400
+    )
+  }
+  return business_type
+}
+
+function optionalBoolIfPresent(body, key) {
+  if (body[key] === undefined) return undefined
+  if (body[key] === "false" || body[key] === "0") return false
+  return Boolean(body[key])
+}
+
 export function parsePatchStore(body) {
   const patch = {}
-  const strings = [
+  const plan_id = optionalUuidIfPresent(body, "plan_id")
+  if (plan_id) patch.plan_id = plan_id
+
+  const requiredIfPresent = [
     "name",
+    "address",
     "contact_email",
     "contact_phone",
+    "location_name",
+    "admin_name",
+    "admin_email",
+    "manager_name",
+    "manager_email",
+  ]
+  for (const key of requiredIfPresent) {
+    if (body[key] !== undefined) patch[key] = requireString(body, key)
+  }
+  if (patch.admin_email) patch.admin_email = patch.admin_email.toLowerCase()
+  if (patch.manager_email) patch.manager_email = patch.manager_email.toLowerCase()
+
+  const optionalKeys = [
+    "legal_name",
+    "owner_name",
+    "city",
+    "logo_url",
+    "favicon_url",
+    "location_address",
+    "location_city",
+    "location_phone",
+    "admin_phone",
+    "manager_phone",
+    "method_note",
+    "billing_note",
     "suspend_reason",
     "account_manager_name",
     "account_manager_phone",
   ]
-  for (const key of strings) {
+  for (const key of optionalKeys) {
     if (body[key] !== undefined) patch[key] = optionalString(body, key)
   }
-  for (const key of ["is_active", "is_live", "pos_enabled", "web_enabled"]) {
-    if (body[key] !== undefined) patch[key] = Boolean(body[key])
+
+  if (body.domain !== undefined || body.custom_domain !== undefined) {
+    patch.custom_domain =
+      optionalString(body, "domain") || optionalString(body, "custom_domain")
   }
+
+  const business_type = optionalBusinessTypeIfPresent(body)
+  if (business_type) patch.business_type = business_type
+
+  const billing_status = optionalBillingStatusIfPresent(body)
+  if (billing_status) patch.billing_status = billing_status
+
+  const amount = optionalAmountIfPresent(body)
+  if (amount !== undefined) patch.amount = amount
+
+  const admin_password = optionalPasswordIfPresent(body, "admin_password")
+  if (admin_password) patch.admin_password = admin_password
+  const manager_password = optionalPasswordIfPresent(body, "manager_password")
+  if (manager_password) patch.manager_password = manager_password
+
+  const admin_pin = optionalPinIfPresent(body, "admin_pin")
+  if (admin_pin) patch.admin_pin = admin_pin
+  const manager_pin = optionalPinIfPresent(body, "manager_pin")
+  if (manager_pin) patch.manager_pin = manager_pin
+
+  if (patch.admin_email && patch.manager_email && patch.admin_email === patch.manager_email) {
+    throw new AppError("admin_email and manager_email must be different", 400)
+  }
+  if (patch.admin_pin && patch.manager_pin && patch.admin_pin === patch.manager_pin) {
+    throw new AppError("admin_pin and manager_pin must be different", 400)
+  }
+
+  for (const key of ["is_active", "is_live", "pos_enabled", "web_enabled"]) {
+    const value = optionalBoolIfPresent(body, key)
+    if (value !== undefined) patch[key] = value
+  }
+
+  if (!Object.keys(patch).length) throw new AppError("No fields to update", 400)
   return patch
 }
 
