@@ -68,9 +68,22 @@ export function publicVisibility(json) {
   }
 }
 
+function coerceBool(value) {
+  if (value === undefined) return undefined
+  if (typeof value === "boolean") return value
+  if (typeof value === "number") return value !== 0
+  if (typeof value === "string") {
+    const s = value.trim().toLowerCase()
+    if (s === "") return undefined
+    if (["true", "1", "yes", "on"].includes(s)) return true
+    if (["false", "0", "no", "off"].includes(s)) return false
+  }
+  return Boolean(value)
+}
+
 function readBool(body, keys) {
   for (const key of keys) {
-    if (body[key] !== undefined) return Boolean(body[key])
+    if (body[key] !== undefined) return coerceBool(body[key])
   }
   return undefined
 }

@@ -144,6 +144,7 @@ function publicProduct(product, extras = {}) {
     sell_loose: json.sell_loose,
     is_weight_based: json.is_weight_based,
     has_bulk_discount: json.has_bulk_discount,
+    expiry_date: json.expiry_date || null,
     low_stock_threshold: json.low_stock_threshold,
     is_published: json.is_published,
     ...publicVisibility(json),

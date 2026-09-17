@@ -1,5 +1,6 @@
 import { AppError } from "../../shared/errors/AppError.js"
 import { parseCatalogVisibility } from "../../db/channelVisibility.js"
+import { DISCOUNT_TYPE, PRODUCT_UNIT, TAX_AMOUNT_TYPE } from "../../db/enums.js"
 
 function requireString(body, key) {
   const value = body[key]
@@ -22,7 +23,15 @@ function optionalString(body, key, { max = 20000 } = {}) {
 
 function optionalBool(body, key) {
   if (body[key] === undefined) return undefined
-  return Boolean(body[key])
+  const value = body[key]
+  if (typeof value === "boolean") return value
+  if (typeof value === "number") return value !== 0
+  if (typeof value === "string") {
+    const s = value.trim().toLowerCase()
+    if (["true", "1", "yes", "on"].includes(s)) return true
+    if (["false", "0", "no", "off", ""].includes(s)) return false
+  }
+  return Boolean(value)
 }
 
 function requireNumber(body, key, { min = 0 } = {}) {
