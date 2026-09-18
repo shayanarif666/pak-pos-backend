@@ -10,6 +10,7 @@ import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { copyVisibility, publicVisibility } from "../../db/channelVisibility.js"
 import { Location } from "../locations/location.model.js"
+import { getStoreForManager } from "../stores/store.service.js"
 
 const categoryInclude = {
   model: Category,
