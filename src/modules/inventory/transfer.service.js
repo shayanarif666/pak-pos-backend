@@ -17,7 +17,7 @@ async function assertMultiBranch(store) {
 
 export async function listTransfers(storeId) {
   const store = await getStoreForManager(storeId)
-  await assertMultiBranch(store)
+  // await assertMultiBranch(store)
   return StockTransfer.findAll({
     where: { store_id: storeId },
     order: [["created_at", "DESC"]],
