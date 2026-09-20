@@ -222,6 +222,8 @@ export async function activateLicenseKey(input, meta = {}) {
     return publicLicense(license, {
       ...licenseExtras(license),
       device: bound,
+      devices,
+      already_registered: true,
     })
   }
 
@@ -283,6 +285,7 @@ export async function activateLicenseKey(input, meta = {}) {
     ...licenseExtras(license),
     device,
     devices: nextDevices,
+    already_registered: false,
   })
 }
 

@@ -8,12 +8,17 @@ export const validate = asyncHandler(async (req, res) => {
     ip: req.ip,
     userAgent: req.get("user-agent"),
   })
-  const message = data.device
-    ? "License activated and device registered"
-    : data.status === "pending"
-      ? "License is pending activation"
-      : "License is active"
-  return res.status(200).json({ success: true, message })
+
+  let message = "License is active"
+  if (data.already_registered) {
+    message = "Device already registered"
+  } else if (data.device) {
+    message = "License activated and device registered"
+  } else if (data.status === "pending") {
+    message = "License is pending activation"
+  }
+
+  return apiResponse(res, 200, message, data)
 })
 
 export const listMine = asyncHandler(async (req, res) => {
