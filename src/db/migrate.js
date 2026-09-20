@@ -17,6 +17,7 @@ import * as planCodeAndType from "./migrations/20260912120000-plan-code-and-type
 import * as orderTaxBreakdown from "./migrations/20260913120000-order-tax-breakdown.js"
 import * as channelVisibilityColumns from "./migrations/20260914120000-channel-visibility-columns.js"
 import * as storeCustomDomain from "./migrations/20260916120000-store-custom-domain.js"
+import * as licenseDeviceUuids from "./migrations/20260920120000-license-device-uuids.js"
 
 const migrations = [
   initSchema,
@@ -35,6 +36,7 @@ const migrations = [
   orderTaxBreakdown,
   channelVisibilityColumns,
   storeCustomDomain,
+  licenseDeviceUuids,
 ]
 
 async function migrate() {

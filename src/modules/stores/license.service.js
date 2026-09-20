@@ -1,4 +1,5 @@
 import crypto from "crypto"
+import { Op } from "sequelize"
 import { StoreLicense } from "./storeLicense.model.js"
 import { Store } from "./store.model.js"
 import { Plan } from "../plans/plan.model.js"
@@ -17,8 +18,38 @@ export function generateLicenseKey() {
   return `LIC-${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}-${raw.slice(12, 16)}`
 }
 
+export function readDeviceUuids(license) {
+  if (!license) return []
+  const value = license.device_uuids
+  if (Array.isArray(value)) return value
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value)
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  }
+  return []
+}
+
+function findDeviceEntry(devices, deviceUid) {
+  return devices.find((row) => row && row.device_uid === deviceUid) || null
+}
+
+function buildDeviceEntry(device) {
+  return {
+    device_uid: device.device_uid,
+    device_id: device.id,
+    name: device.name || null,
+    location_id: device.location_id || null,
+    activated_at: new Date().toISOString(),
+  }
+}
+
 export function publicLicense(license, extras = {}) {
   if (!license) return null
+  const device_uuids = readDeviceUuids(license)
   return {
     id: license.id,
     store_id: license.store_id,
@@ -26,7 +57,9 @@ export function publicLicense(license, extras = {}) {
     plan_id: license.plan_id,
     license_key: license.license_key,
     status: license.status,
-    device_id: license.device_id || null,
+    device_id: license.device_id || device_uuids[0]?.device_id || null,
+    device_uuids,
+    device_count: device_uuids.length,
     starts_at: license.starts_at,
     expires_at: license.expires_at,
     revoked_at: license.revoked_at,
@@ -43,6 +76,7 @@ export async function issueLicense(store, plan, startsAt, { transaction }) {
       plan_id: plan.id,
       license_key: generateLicenseKey(),
       status: "pending",
+      device_uuids: [],
       starts_at: startsAt,
       expires_at: addOneMonth(startsAt),
     },
@@ -112,6 +146,16 @@ function licenseExtras(license) {
         }
       : null,
     device: license.device || null,
+    devices: readDeviceUuids(license),
+  }
+}
+
+function assertDeviceLimit(license, nextCount) {
+  const maxDevices = Number(license.Plan?.max_devices || 0)
+  if (nextCount > maxDevices) {
+    throw new ConflictError(
+      `Device limit exceeded. This license allows at most ${maxDevices} device(s)`
+    )
   }
 }
 
@@ -147,6 +191,17 @@ async function resolveActivateLocation(store, locationId) {
   throw new AppError("location_id is required to register this POS", 400)
 }
 
+async function findOtherLicenseWithDeviceUid(storeId, deviceUid, excludeLicenseId) {
+  const rows = await StoreLicense.findAll({
+    where: {
+      store_id: storeId,
+      status: { [Op.in]: ["pending", "active"] },
+      id: { [Op.ne]: excludeLicenseId },
+    },
+  })
+  return rows.find((row) => findDeviceEntry(readDeviceUuids(row), deviceUid)) || null
+}
+
 export async function activateLicenseKey(input, meta = {}) {
   if (!input.device_uid) {
     return inspectLicenseKey(input.license_key)
@@ -155,32 +210,34 @@ export async function activateLicenseKey(input, meta = {}) {
   const license = await loadLicenseByKey(input.license_key)
   assertStoreUsable(license)
   const location_id = await resolveActivateLocation(license.Store, input.location_id)
+  const devices = readDeviceUuids(license)
+  const alreadyBound = findDeviceEntry(devices, input.device_uid)
 
-  if (license.status === "active") {
-    const bound = license.device || (license.device_id ? await PosDevice.findByPk(license.device_id) : null)
-    if (bound && bound.device_uid === input.device_uid) {
-      return publicLicense(license, {
-        ...licenseExtras(license),
-        device: bound,
-      })
-    }
-    throw new ConflictError("This license key is already activated on another device")
+  if (alreadyBound) {
+    const bound =
+      (alreadyBound.device_id && (await PosDevice.findByPk(alreadyBound.device_id))) ||
+      (await PosDevice.findOne({
+        where: { store_id: license.store_id, device_uid: input.device_uid },
+      }))
+    return publicLicense(license, {
+      ...licenseExtras(license),
+      device: bound,
+    })
   }
 
-  if (license.status !== "pending") {
+  if (license.status !== "pending" && license.status !== "active") {
     throw new AppError("License cannot be activated", 409)
   }
 
-  const existingUid = await PosDevice.findOne({
-    where: { store_id: license.store_id, device_uid: input.device_uid },
-  })
-  if (existingUid) {
-    const other = await StoreLicense.findOne({
-      where: { device_id: existingUid.id, status: "active" },
-    })
-    if (other && other.id !== license.id) {
-      throw new ConflictError("This device is already bound to another license")
-    }
+  assertDeviceLimit(license, devices.length + 1)
+
+  const otherLicense = await findOtherLicenseWithDeviceUid(
+    license.store_id,
+    input.device_uid,
+    license.id
+  )
+  if (otherLicense) {
+    throw new ConflictError("This device is already bound to another license")
   }
 
   const { registerDevice } = await import("../pos/posDevice.service.js")
@@ -197,9 +254,13 @@ export async function activateLicenseKey(input, meta = {}) {
     { store }
   )
 
+  const nextDevices = [...devices, buildDeviceEntry(device)]
+  assertDeviceLimit(license, nextDevices.length)
+
   await license.update({
     status: "active",
-    device_id: device.id,
+    device_id: license.device_id || device.id,
+    device_uuids: nextDevices,
   })
 
   await writeAudit({
@@ -221,6 +282,7 @@ export async function activateLicenseKey(input, meta = {}) {
   return publicLicense(license, {
     ...licenseExtras(license),
     device,
+    devices: nextDevices,
   })
 }
 
@@ -228,31 +290,54 @@ export async function getCurrentLicense(storeId) {
   const license = await StoreLicense.findOne({
     where: { store_id: storeId },
     order: [["created_at", "DESC"]],
-    include: [{ model: PosDevice, as: "device" }],
+    include: [
+      { model: PosDevice, as: "device" },
+      { model: Plan, attributes: ["id", "code", "name", "max_devices"] },
+    ],
   })
   if (!license) throw new NotFoundError("License not found")
   await refreshExpired(license)
-  return publicLicense(license, { device: license.device || null })
+  return publicLicense(license, {
+    device: license.device || null,
+    plan: license.Plan || null,
+    devices: readDeviceUuids(license),
+  })
 }
 
 export async function listStoreLicenses(storeId) {
   const rows = await StoreLicense.findAll({
     where: { store_id: storeId },
-    include: [{ model: PosDevice, as: "device" }, { model: Plan, attributes: ["id", "code", "name"] }],
+    include: [
+      { model: PosDevice, as: "device" },
+      { model: Plan, attributes: ["id", "code", "name", "max_devices"] },
+    ],
     order: [["created_at", "DESC"]],
   })
   for (const row of rows) await refreshExpired(row)
-  return rows.map((row) => publicLicense(row, { device: row.device || null, plan: row.Plan || null }))
+  return rows.map((row) =>
+    publicLicense(row, {
+      device: row.device || null,
+      plan: row.Plan || null,
+      devices: readDeviceUuids(row),
+    })
+  )
 }
 
 export async function getStoreLicense(storeId, id) {
   const license = await StoreLicense.findOne({
     where: { id, store_id: storeId },
-    include: [{ model: PosDevice, as: "device" }, { model: Plan, attributes: ["id", "code", "name"] }],
+    include: [
+      { model: PosDevice, as: "device" },
+      { model: Plan, attributes: ["id", "code", "name", "max_devices"] },
+    ],
   })
   if (!license) throw new NotFoundError("License not found")
   await refreshExpired(license)
-  return publicLicense(license, { device: license.device || null, plan: license.Plan || null })
+  return publicLicense(license, {
+    device: license.device || null,
+    plan: license.Plan || null,
+    devices: readDeviceUuids(license),
+  })
 }
 
 export async function getLicenseByLocation(storeId, locationId, actor) {
@@ -263,29 +348,43 @@ export async function getLicenseByLocation(storeId, locationId, actor) {
   const location = await Location.findOne({ where: { id: locationId, store_id: storeId } })
   if (!location) throw new NotFoundError("Location not found")
 
-  const license = await StoreLicense.findOne({
+  const locationDevices = await PosDevice.findAll({
+    where: { store_id: storeId, location_id: locationId },
+  })
+  const locationUids = new Set(locationDevices.map((row) => row.device_uid))
+
+  const rows = await StoreLicense.findAll({
     where: { store_id: storeId },
     include: [
-      {
-        model: PosDevice,
-        as: "device",
-        required: true,
-        where: { location_id: locationId },
-      },
-      { model: Plan, attributes: ["id", "code", "name"] },
+      { model: PosDevice, as: "device" },
+      { model: Plan, attributes: ["id", "code", "name", "max_devices"] },
     ],
     order: [["updated_at", "DESC"]],
   })
+
+  const license = rows.find((row) => {
+    const entries = readDeviceUuids(row)
+    return entries.some(
+      (entry) =>
+        (entry.location_id && entry.location_id === locationId) ||
+        (entry.device_uid && locationUids.has(entry.device_uid))
+    )
+  })
+
   if (!license) throw new NotFoundError("No license is activated at this location")
   await refreshExpired(license)
-  return publicLicense(license, { device: license.device || null, plan: license.Plan || null })
+  return publicLicense(license, {
+    device: license.device || null,
+    plan: license.Plan || null,
+    devices: readDeviceUuids(license),
+  })
 }
 
 export async function listAllLicenses() {
   const rows = await StoreLicense.findAll({
     include: [
       { model: Store, attributes: ["id", "name", "slug"] },
-      { model: Plan, attributes: ["id", "code", "name"] },
+      { model: Plan, attributes: ["id", "code", "name", "max_devices"] },
       { model: PosDevice, as: "device" },
     ],
     order: [["created_at", "DESC"]],
@@ -296,6 +395,7 @@ export async function listAllLicenses() {
       store: row.Store || null,
       plan: row.Plan || null,
       device: row.device || null,
+      devices: readDeviceUuids(row),
     })
   )
 }
@@ -304,7 +404,7 @@ export async function getAdminLicense(id) {
   const license = await StoreLicense.findByPk(id, {
     include: [
       { model: Store, attributes: ["id", "name", "slug"] },
-      { model: Plan, attributes: ["id", "code", "name"] },
+      { model: Plan, attributes: ["id", "code", "name", "max_devices"] },
       { model: PosDevice, as: "device" },
     ],
   })
@@ -314,6 +414,7 @@ export async function getAdminLicense(id) {
     store: license.Store || null,
     plan: license.Plan || null,
     device: license.device || null,
+    devices: readDeviceUuids(license),
   })
 }
 

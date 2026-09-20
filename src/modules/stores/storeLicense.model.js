@@ -17,6 +17,27 @@ export const StoreLicense = sequelize.define(
       defaultValue: "pending",
     },
     device_id: uuidCol(true),
+    device_uuids: {
+      type: DataTypes.JSON,
+      allowNull: false,
+      defaultValue: [],
+      get() {
+        const value = this.getDataValue("device_uuids")
+        if (Array.isArray(value)) return value
+        if (typeof value === "string") {
+          try {
+            const parsed = JSON.parse(value)
+            return Array.isArray(parsed) ? parsed : []
+          } catch {
+            return []
+          }
+        }
+        return []
+      },
+      set(value) {
+        this.setDataValue("device_uuids", Array.isArray(value) ? value : [])
+      },
+    },
     starts_at: { type: DataTypes.DATE, allowNull: false },
     expires_at: { type: DataTypes.DATE, allowNull: false },
     revoked_at: { type: DataTypes.DATE, allowNull: true },
