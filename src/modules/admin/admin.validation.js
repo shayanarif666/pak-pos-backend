@@ -81,7 +81,7 @@ export function parseRegisterStore(body) {
   const business_type = requireString(body, "business_type")
   if (!BUSINESS_TYPE.includes(business_type)) {
     throw new AppError(
-      "business_type must be grocery, boutique, retail, or pharmacy",
+      `business_type must be one of: ${BUSINESS_TYPE.join(", ")}`,
       400
     )
   }
@@ -172,7 +172,7 @@ function optionalBusinessTypeIfPresent(body) {
   const business_type = String(body.business_type)
   if (!BUSINESS_TYPE.includes(business_type)) {
     throw new AppError(
-      "business_type must be grocery, boutique, retail, or pharmacy",
+      `business_type must be one of: ${BUSINESS_TYPE.join(", ")}`,
       400
     )
   }

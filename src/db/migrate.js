@@ -18,6 +18,7 @@ import * as orderTaxBreakdown from "./migrations/20260913120000-order-tax-breakd
 import * as channelVisibilityColumns from "./migrations/20260914120000-channel-visibility-columns.js"
 import * as storeCustomDomain from "./migrations/20260916120000-store-custom-domain.js"
 import * as licenseDeviceUuids from "./migrations/20260920120000-license-device-uuids.js"
+import * as expandBusinessTypes from "./migrations/20260921120000-expand-business-types.js"
 
 const migrations = [
   initSchema,
@@ -37,6 +38,7 @@ const migrations = [
   channelVisibilityColumns,
   storeCustomDomain,
   licenseDeviceUuids,
+  expandBusinessTypes,
 ]
 
 async function migrate() {

@@ -176,7 +176,7 @@ export async function registerStore(input, superadmin) {
         name: input.location_name,
         address_line: input.location_address || input.address,
         city: input.location_city || input.city || "N/A",
-        phone: input.location_phone,
+        phone: input.location_phone || input.contact_phone || null,
         is_default: true,
         is_active: true,
       },

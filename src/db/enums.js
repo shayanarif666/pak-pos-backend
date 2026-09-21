@@ -1,5 +1,26 @@
 export const PLAN_TYPE = ["monthly", "yearly"]
-export const BUSINESS_TYPE = ["grocery", "boutique", "retail", "pharmacy"]
+export const BUSINESS_TYPE = [
+  "grocery",
+  "boutique",
+  "retail",
+  "pharmacy",
+  "restaurant",
+  "cafe",
+  "bakery",
+  "electronics",
+  "fashion",
+  "clothing",
+  "beauty",
+  "furniture",
+  "hardware",
+  "sports",
+  "books",
+  "jewelry",
+  "supermarket",
+  "convenience",
+  "wholesale",
+  "other",
+]
 export const LICENSE_STATUS = ["pending", "active", "expired", "revoked"]
 export const USER_ROLE = [
   "superadmin",
