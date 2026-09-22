@@ -98,13 +98,11 @@ async function assertDeviceCap(store, extra) {
 }
 
 export async function listDevices(actor, query = {}) {
-  const where = {}
-  if (actor.role === "store_admin") {
-    if (query.locationId || query.location_id) {
-      where.location_id = query.locationId || query.location_id
-    }
-  } else {
-    where.store_id = actor.store_id
+  const where = { store_id: actor.store_id }
+  if (actor.role === "manager") {
+    where.location_id = actor.location_id
+  } else if (query.locationId || query.location_id) {
+    where.location_id = query.locationId || query.location_id
   }
   const rows = await PosDevice.findAll({
     where,

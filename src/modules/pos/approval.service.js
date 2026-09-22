@@ -38,7 +38,7 @@ export async function createRequest(actor, fields) {
 
 export async function listRequests(actor, query = {}) {
   const store = await getStoreForManager(actor.store_id)
-  await assertApprovalEnabled(store)
+  // await assertApprovalEnabled(store)
   const where = { store_id: actor.store_id }
   if (actor.role === "manager") where.location_id = actor.location_id
   if (query.status) where.status = query.status
