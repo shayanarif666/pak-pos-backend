@@ -42,6 +42,119 @@ export function uploadImageFields(fields) {
   }
 }
 
+export function uploadProductImages() {
+  return uploadImageFields([
+    { name: "featured", maxCount: 1 },
+    { name: "images", maxCount: 12 },
+    { name: "image", maxCount: 1 },
+  ])
+}
+
+function parseImageList(raw) {
+  if (raw == null || raw === "") return []
+  if (Array.isArray(raw)) {
+    return raw
+      .map((item) => {
+        if (typeof item === "string" && item.trim()) return { url: item.trim() }
+        if (item && typeof item === "object" && item.url) return { url: String(item.url) }
+        return null
+      })
+      .filter(Boolean)
+  }
+  if (typeof raw === "string") {
+    try {
+      return parseImageList(JSON.parse(raw))
+    } catch {
+      return raw
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .map((url) => ({ url }))
+    }
+  }
+  return []
+}
+
+export function applyProductImages({ kind = "products" } = {}) {
+  return async (req, res, next) => {
+    try {
+      req.body = req.body || {}
+      const folder = folderFor(req, kind)
+      const hasLegacy = Boolean(pickFile(req, "image"))
+      const hasFeaturedFile = Boolean(pickFile(req, "featured"))
+      const galleryFiles = Array.isArray(req.files?.images) ? req.files.images : []
+      const hasGalleryFiles = galleryFiles.length > 0
+      const hasExplicitImages =
+        req.body.images !== undefined ||
+        req.body.existing_images !== undefined ||
+        req.body.featured_image !== undefined
+
+      if (!hasLegacy && !hasFeaturedFile && !hasGalleryFiles && !hasExplicitImages) {
+        return next()
+      }
+
+      const existing = parseImageList(req.body.images || req.body.existing_images)
+      const uploaded = []
+
+      for (const file of galleryFiles) {
+        const result = await uploadImageBuffer(file.buffer, {
+          folder,
+          filename: file.originalname,
+        })
+        uploaded.push({ url: result.secure_url })
+      }
+
+      let featuredUrl =
+        typeof req.body.featured_image === "string" && req.body.featured_image.trim()
+          ? req.body.featured_image.trim()
+          : null
+
+      const featuredFile = pickFile(req, "featured")
+      if (featuredFile) {
+        const result = await uploadImageBuffer(featuredFile.buffer, {
+          folder,
+          filename: featuredFile.originalname,
+        })
+        featuredUrl = result.secure_url
+      }
+
+      // Backward compatible single "image" upload maps to featured + gallery.
+      const legacyFile = pickFile(req, "image")
+      if (legacyFile) {
+        const result = await uploadImageBuffer(legacyFile.buffer, {
+          folder,
+          filename: legacyFile.originalname,
+        })
+        featuredUrl = result.secure_url
+        uploaded.push({ url: result.secure_url })
+      }
+
+      let images = [...existing, ...uploaded]
+      const seen = new Set()
+      images = images.filter((item) => {
+        if (!item?.url || seen.has(item.url)) return false
+        seen.add(item.url)
+        return true
+      })
+
+      if (!featuredUrl && images.length) featuredUrl = images[0].url
+      if (featuredUrl && !images.some((item) => item.url === featuredUrl)) {
+        images = [{ url: featuredUrl }, ...images]
+      }
+      if (images.length === 1) {
+        featuredUrl = images[0].url
+      }
+
+      req.body.images = images
+      req.body.featured_image = featuredUrl
+      req.body.image_url = featuredUrl
+      next()
+    } catch (err) {
+      next(err)
+    }
+  }
+}
+
 function pickFile(req, fileField) {
   if (req.file && (!fileField || req.file.fieldname === fileField)) return req.file
   const list = req.files?.[fileField]

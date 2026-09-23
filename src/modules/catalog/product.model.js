@@ -16,6 +16,8 @@ export const Product = sequelize.define(
     sku: { type: DataTypes.STRING(255), allowNull: false },
     barcode: { type: DataTypes.STRING(255), allowNull: true },
     image_url: { type: DataTypes.TEXT, allowNull: true },
+    images: { type: DataTypes.JSON, allowNull: true, defaultValue: [] },
+    featured_image: { type: DataTypes.TEXT, allowNull: true },
     description: { type: DataTypes.TEXT, allowNull: true },
     unit: {
       type: DataTypes.ENUM(...PRODUCT_UNIT),

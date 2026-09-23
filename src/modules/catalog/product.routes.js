@@ -7,8 +7,8 @@ import {
 } from "../../shared/middlewares/tenant.middleware.js"
 import { validate } from "../../shared/middlewares/validate.middleware.js"
 import {
-  applyCloudinaryImage,
-  uploadSingleImage,
+  applyProductImages,
+  uploadProductImages,
 } from "../../shared/middlewares/upload.middleware.js"
 import {
   parseBulkTiers,
@@ -39,8 +39,8 @@ router.get("/", ...catalogRead, list)
 router.post(
   "/",
   ...catalogWrite,
-  uploadSingleImage("image"),
-  applyCloudinaryImage({ fileField: "image", bodyField: "image_url", kind: "products" }),
+  uploadProductImages(),
+  applyProductImages({ kind: "products" }),
   validate(parseCreateProduct),
   create
 )
@@ -64,8 +64,8 @@ router.get("/:id", ...catalogRead, getOne)
 router.patch(
   "/:id",
   ...catalogWrite,
-  uploadSingleImage("image"),
-  applyCloudinaryImage({ fileField: "image", bodyField: "image_url", kind: "products" }),
+  uploadProductImages(),
+  applyProductImages({ kind: "products" }),
   validate(parsePatchProduct),
   patch
 )

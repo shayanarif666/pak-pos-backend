@@ -19,6 +19,7 @@ import * as channelVisibilityColumns from "./migrations/20260914120000-channel-v
 import * as storeCustomDomain from "./migrations/20260916120000-store-custom-domain.js"
 import * as licenseDeviceUuids from "./migrations/20260920120000-license-device-uuids.js"
 import * as expandBusinessTypes from "./migrations/20260921120000-expand-business-types.js"
+import * as productImagesFeatured from "./migrations/20260923120000-product-images-featured.js"
 
 const migrations = [
   initSchema,
@@ -39,6 +40,7 @@ const migrations = [
   storeCustomDomain,
   licenseDeviceUuids,
   expandBusinessTypes,
+  productImagesFeatured,
 ]
 
 async function migrate() {

@@ -76,16 +76,79 @@ function requireUuid(body, key) {
   return value
 }
 
+function normalizeImages(raw) {
+  if (raw === undefined) return undefined
+  if (raw === null || raw === "") return []
+  let list = raw
+  if (typeof raw === "string") {
+    try {
+      list = JSON.parse(raw)
+    } catch {
+      list = raw.split(",").map((item) => item.trim()).filter(Boolean)
+    }
+  }
+  if (!Array.isArray(list)) {
+    throw new AppError("images must be an array", 400)
+  }
+  return list
+    .map((item) => {
+      if (typeof item === "string" && item.trim()) return { url: item.trim() }
+      if (item && typeof item === "object" && item.url) {
+        return { url: String(item.url).trim() }
+      }
+      return null
+    })
+    .filter((item) => item?.url)
+}
+
+function resolveProductImages(body, { allowMissingImages = false } = {}) {
+  let images = normalizeImages(body.images)
+  let featured_image =
+    body.featured_image === undefined
+      ? undefined
+      : optionalString(body, "featured_image")
+  let image_url =
+    body.image_url === undefined ? undefined : optionalString(body, "image_url")
+
+  if (images === undefined && featured_image === undefined && image_url === undefined) {
+    return {}
+  }
+
+  if (images === undefined) {
+    if (allowMissingImages) {
+      const featured = featured_image || image_url || null
+      return featured === undefined
+        ? {}
+        : { featured_image: featured, image_url: featured }
+    }
+    images = []
+  }
+  if (!featured_image) featured_image = image_url || images[0]?.url || null
+  if (featured_image && !images.some((item) => item.url === featured_image)) {
+    images = [{ url: featured_image }, ...images]
+  }
+  if (images.length === 1) {
+    featured_image = images[0].url
+  }
+  image_url = featured_image || null
+
+  return { images, featured_image, image_url }
+}
+
 export function parseCreateProduct(body) {
   const unit = body.unit === undefined ? "piece" : String(body.unit)
   if (!PRODUCT_UNIT.includes(unit)) {
     throw new AppError(`unit must be one of: ${PRODUCT_UNIT.join(", ")}`, 400)
   }
 
+  const imageFields = resolveProductImages(body)
+
   const fields = {
     title: requireString(body, "title"),
     barcode: optionalString(body, "barcode") ?? null,
-    image_url: optionalString(body, "image_url") ?? null,
+    image_url: imageFields.image_url ?? null,
+    images: imageFields.images ?? [],
+    featured_image: imageFields.featured_image ?? null,
     description: optionalString(body, "description") ?? null,
     category_id: requireUuid(body, "category_id"),
     unit,
@@ -122,7 +185,13 @@ export function parsePatchProduct(body) {
   if (body.title !== undefined) fields.title = requireString(body, "title")
   if (body.sku !== undefined) fields.sku = requireString(body, "sku")
   if (body.barcode !== undefined) fields.barcode = optionalString(body, "barcode")
-  if (body.image_url !== undefined) fields.image_url = optionalString(body, "image_url")
+  if (
+    body.image_url !== undefined ||
+    body.images !== undefined ||
+    body.featured_image !== undefined
+  ) {
+    Object.assign(fields, resolveProductImages(body, { allowMissingImages: true }))
+  }
   if (body.description !== undefined) {
     fields.description = optionalString(body, "description")
   }
