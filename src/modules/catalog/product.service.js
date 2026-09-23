@@ -91,10 +91,12 @@ function publicStock(row, product) {
   if (!row) return null
   const qty = Number(row.qty)
   const threshold = row.low_stock_threshold ?? product?.low_stock_threshold
+  const location = row.Location || null
   return {
     id: row.id,
     location_id: row.location_id,
     location_number: row.location_id_int,
+    location_name: location?.name || null,
     product_id: row.product_id,
     expiry_date: row.expiry_date || null,
     qty,
@@ -207,7 +209,10 @@ async function attachStocks(products, actor, locationId) {
     where.location_id = locationId
   }
 
-  const rows = await ProductStock.findAll({ where })
+  const rows = await ProductStock.findAll({
+    where,
+    include: [{ model: Location, attributes: ["id", "name", "location_id_int"] }],
+  })
   const byProduct = new Map()
   for (const row of rows) {
     const list = byProduct.get(row.product_id) || []

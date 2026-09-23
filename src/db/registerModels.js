@@ -90,6 +90,7 @@ export function registerModels() {
   User.belongsTo(Store, { foreignKey: "store_id", as: "store" })
   Store.hasMany(User, { foreignKey: "store_id", as: "users" })
   User.belongsTo(Location, { foreignKey: "location_id" })
+  Location.hasMany(User, { foreignKey: "location_id", as: "users" })
   User.hasMany(AuthToken, { foreignKey: "user_id" })
   AuthToken.belongsTo(User, { foreignKey: "user_id" })
 

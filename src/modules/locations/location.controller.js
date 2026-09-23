@@ -9,14 +9,14 @@ export const listLocations = asyncHandler(async (req, res) => {
 })
 
 export const getLocation = asyncHandler(async (req, res) => {
-  const location = await locationService.getLocation(req.storeId, req.params.id)
-  return apiResponse(res, 200, "OK", locationService.publicLocation(location))
+  const location = await locationService.getPublicLocation(req.storeId, req.params.id)
+  return apiResponse(res, 200, "OK", location)
 })
 
 export const createLocation = asyncHandler(async (req, res) => {
   const store = await storeService.getStoreForManager(req.storeId)
   const location = await locationService.createLocation(store, req.body)
-  return apiResponse(res, 201, "Location created", locationService.publicLocation(location))
+  return apiResponse(res, 201, "Location created", location)
 })
 
 export const patchLocation = asyncHandler(async (req, res) => {
@@ -26,5 +26,5 @@ export const patchLocation = asyncHandler(async (req, res) => {
     req.body,
     req.user
   )
-  return apiResponse(res, 200, "Location updated", locationService.publicLocation(location))
+  return apiResponse(res, 200, "Location updated", location)
 })
