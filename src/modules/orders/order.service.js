@@ -440,8 +440,7 @@ export async function getOrderReceipt(actor, id) {
     where: { store_id: actor.store_id, order_id: id },
     order: [["issued_at", "ASC"]],
   })
-  if (!receipt) throw new NotFoundError("Receipt not found")
-  return { receipt, ...view }
+  return { receipt: receipt || null, ...view }
 }
 
 function publicRefund(refund, extras = {}) {
