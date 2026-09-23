@@ -26,7 +26,7 @@ export async function listTransfers(storeId) {
 
 export async function createTransfer(storeId, fields, actor) {
   const store = await getStoreForManager(storeId)
-  await assertMultiBranch(store)
+  // await assertMultiBranch(store)
   await getProduct(storeId, fields.product_id)
   const from = await loadLocation(storeId, fields.from_location_id)
   const to = await loadLocation(storeId, fields.to_location_id)
@@ -51,7 +51,7 @@ async function getTransfer(storeId, id) {
 
 export async function completeTransfer(storeId, id, actor) {
   const store = await getStoreForManager(storeId)
-  await assertMultiBranch(store)
+  // await assertMultiBranch(store)
   const row = await getTransfer(storeId, id)
   if (row.status !== "pending") {
     throw new ConflictError("Only a pending transfer can be completed")
@@ -104,7 +104,7 @@ export async function completeTransfer(storeId, id, actor) {
 
 export async function cancelTransfer(storeId, id) {
   const store = await getStoreForManager(storeId)
-  await assertMultiBranch(store)
+  // await assertMultiBranch(store)
   const row = await getTransfer(storeId, id)
   if (row.status !== "pending") {
     throw new ConflictError("Only a pending transfer can be cancelled")
