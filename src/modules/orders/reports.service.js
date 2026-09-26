@@ -41,25 +41,89 @@ export function reportScope(actor, query = {}) {
   throw new AppError("Reports are not available for this role", 403)
 }
 
-export function dateBound(value, end = false) {
-  if (!value) return null
-  const raw = String(value)
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-    return new Date(end ? `${raw}T23:59:59.999` : `${raw}T00:00:00.000`)
-  }
-  return new Date(value)
+/** web | pos | null (overall / all channels) */
+export function normalizeChannel(query = {}) {
+  const raw = String(query.channel || "").trim().toLowerCase()
+  if (raw === "web" || raw === "pos") return raw
+  // overall | all | empty → every channel
+  return null
 }
 
-export function applyDateRange(where, query = {}) {
+function tzParts(ms, timeZone) {
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: timeZone || "UTC",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  })
+  const map = {}
+  for (const part of fmt.formatToParts(new Date(ms))) {
+    if (part.type !== "literal") map[part.type] = part.value
+  }
+  return {
+    year: Number(map.year),
+    month: Number(map.month),
+    day: Number(map.day),
+    hour: Number(map.hour),
+    minute: Number(map.minute),
+    second: Number(map.second),
+  }
+}
+
+/** Inclusive calendar-day bound in a store timezone (default Asia/Karachi). */
+export function zonedDayBound(ymd, end = false, timeZone = "Asia/Karachi") {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(ymd || "").trim())
+  if (!match) return null
+  const y = Number(match[1])
+  const m = Number(match[2])
+  const d = Number(match[3])
+  const wantHour = end ? 23 : 0
+  const wantMin = end ? 59 : 0
+  const wantSec = end ? 59 : 0
+  let utc = Date.UTC(y, m - 1, d, wantHour, wantMin, wantSec, end ? 999 : 0)
+  for (let i = 0; i < 4; i += 1) {
+    const parts = tzParts(utc, timeZone)
+    const shown = Date.UTC(
+      parts.year,
+      parts.month - 1,
+      parts.day,
+      parts.hour,
+      parts.minute,
+      parts.second,
+      end ? 999 : 0
+    )
+    const target = Date.UTC(y, m - 1, d, wantHour, wantMin, wantSec, end ? 999 : 0)
+    const diff = target - shown
+    utc += diff
+    if (Math.abs(diff) < 2) break
+  }
+  return new Date(utc)
+}
+
+export function dateBound(value, end = false, timeZone = "Asia/Karachi") {
+  if (!value) return null
+  const raw = String(value).trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    return zonedDayBound(raw, end, timeZone || "Asia/Karachi")
+  }
+  const date = new Date(raw)
+  return Number.isNaN(date.getTime()) ? null : date
+}
+
+export function applyDateRange(where, query = {}, timeZone = "Asia/Karachi") {
   if (!query.from && !query.to) return
   where.placed_at = {}
-  const from = dateBound(query.from, false)
-  const to = dateBound(query.to, true)
+  const from = dateBound(query.from, false, timeZone)
+  const to = dateBound(query.to, true, timeZone)
   if (from) where.placed_at[Op.gte] = from
   if (to) where.placed_at[Op.lte] = to
 }
 
-export function orderWhere(actor, query = {}, statuses = ["completed"]) {
+export function orderWhere(actor, query = {}, statuses = ["completed"], timeZone = "Asia/Karachi") {
   const scope = reportScope(actor, query)
   const where = {
     store_id: actor.store_id,
@@ -67,8 +131,9 @@ export function orderWhere(actor, query = {}, statuses = ["completed"]) {
   }
   if (scope.location_id) where.location_id = scope.location_id
   if (scope.cashier_id) where.cashier_id = scope.cashier_id
-  if (query.channel) where.channel = query.channel
-  applyDateRange(where, query)
+  const channel = normalizeChannel(query)
+  if (channel) where.channel = channel
+  applyDateRange(where, query, timeZone)
   return where
 }
 
@@ -165,9 +230,9 @@ export function addMoney(target, key, value) {
   target[key] = money(Number(target[key] || 0) + Number(value || 0))
 }
 
-async function loadCompletedOrders(actor, query) {
+async function loadCompletedOrders(actor, query, timeZone = "Asia/Karachi") {
   return Order.findAll({
-    where: orderWhere(actor, query),
+    where: orderWhere(actor, query, ["completed"], timeZone),
     include: [{ model: OrderItem }],
     order: [["placed_at", "ASC"]],
   })
@@ -252,11 +317,12 @@ export function resolvePeriod(query) {
 }
 
 export async function dashboardReport(actor, query = {}) {
-  await getStoreForManager(actor.store_id)
+  const store = await getStoreForManager(actor.store_id)
+  const timeZone = store.timezone || "Asia/Karachi"
   const period = resolvePeriod(query)
   const statuses = ["completed", "voided", "refunded"]
   const orders = await Order.findAll({
-    where: orderWhere(actor, query, statuses),
+    where: orderWhere(actor, query, statuses, timeZone),
     include: [{ model: OrderItem }, { model: Payment }, { model: OrderRefund }],
     order: [["placed_at", "ASC"]],
   })
@@ -286,7 +352,7 @@ export async function dashboardReport(actor, query = {}) {
     refunded_items = money(refunded_items + itemRefundQty)
     refunded_amount = money(refunded_amount + refundAmount)
     if (order.order_status === "refunded") refunded_orders += 1
-    else completed.push({ order, refund: { amount: refundAmount, tax: refundTax } })
+    completed.push({ order, refund: { amount: refundAmount, tax: refundTax } })
   }
 
   const refundMap = new Map(
@@ -353,9 +419,10 @@ export async function dashboardReport(actor, query = {}) {
 }
 
 export async function salesReport(actor, query = {}) {
-  await getStoreForManager(actor.store_id)
+  const store = await getStoreForManager(actor.store_id)
+  const timeZone = store.timezone || "Asia/Karachi"
   const period = resolvePeriod(query)
-  const orders = await loadCompletedOrders(actor, query)
+  const orders = await loadCompletedOrders(actor, query, timeZone)
   const refunds = await refundsByOrder(orders.map((row) => row.id))
   const { rows, totals } = summarizeOrders(orders, refunds, period)
   return {
@@ -384,9 +451,10 @@ export async function salesReport(actor, query = {}) {
 }
 
 export async function profitReport(actor, query = {}) {
-  await getStoreForManager(actor.store_id)
+  const store = await getStoreForManager(actor.store_id)
+  const timeZone = store.timezone || "Asia/Karachi"
   const period = resolvePeriod(query)
-  const orders = await loadCompletedOrders(actor, query)
+  const orders = await loadCompletedOrders(actor, query, timeZone)
   const refunds = await refundsByOrder(orders.map((row) => row.id))
   const { totals } = summarizeOrders(orders, refunds, period)
   return {
@@ -405,14 +473,15 @@ export async function profitReport(actor, query = {}) {
 }
 
 export async function paymentsReport(actor, query = {}) {
-  await getStoreForManager(actor.store_id)
+  const store = await getStoreForManager(actor.store_id)
+  const timeZone = store.timezone || "Asia/Karachi"
   const payments = await Payment.findAll({
     include: [
       {
         model: Order,
         required: true,
         attributes: ["id"],
-        where: orderWhere(actor, query),
+        where: orderWhere(actor, query, ["completed"], timeZone),
       },
     ],
   })

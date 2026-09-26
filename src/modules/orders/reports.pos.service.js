@@ -20,6 +20,7 @@ import {
   dateBound,
   emptyTaxCollection,
   mergeTaxCollection,
+  normalizeChannel,
   orderTaxCollection,
   orderWhere,
   remainingQty,
@@ -42,8 +43,8 @@ function liveOrders(orders) {
   let refunded_tax = 0
 
   for (const order of orders) {
-    if (order.order_status === "voided") {
-      void_orders += 1
+    if (order.order_status === "voided" || order.order_status === "cancelled") {
+      if (order.order_status === "voided") void_orders += 1
       continue
     }
     const refunds = order.OrderRefunds || []
@@ -294,14 +295,15 @@ function taxBreakdown(completed) {
 function refundVoidRows(orders) {
   const rows = []
   for (const order of orders) {
-    if (order.order_status === "voided") {
+    if (order.order_status === "voided" || order.order_status === "cancelled") {
       rows.push({
-        id: `void:${order.id}`,
-        type: "void",
+        id: `${order.order_status}:${order.id}`,
+        type: order.order_status === "cancelled" ? "cancelled" : "void",
         date: order.placed_at,
         order_number: order.order_number,
+        channel: order.channel || null,
         amount: Number(order.total_amount || 0),
-        reason: order.void_reason || "",
+        reason: order.void_reason || order.cancel_reason || "",
         cashier: order.cashier?.name || "—",
       })
     }
@@ -311,6 +313,7 @@ function refundVoidRows(orders) {
         type: "refund",
         date: refund.created_at || order.placed_at,
         order_number: order.order_number,
+        channel: order.channel || null,
         amount: Number(refund.amount || 0),
         reason: refund.reason || "",
         cashier: order.cashier?.name || "—",
@@ -323,6 +326,7 @@ function refundVoidRows(orders) {
     totals: {
       refunds: rows.filter((row) => row.type === "refund").length,
       voids: rows.filter((row) => row.type === "void").length,
+      cancelled: rows.filter((row) => row.type === "cancelled").length,
       amount: money(rows.reduce((sum, row) => sum + Number(row.amount), 0)),
     },
   }
@@ -330,11 +334,7 @@ function refundVoidRows(orders) {
 
 async function loadOrders(actor, query) {
   return Order.findAll({
-    where: orderWhere(actor, { ...query, channel: query.channel || "pos" }, [
-      "completed",
-      "voided",
-      "refunded",
-    ]),
+    where: orderWhere(actor, query, ["completed", "voided", "refunded", "cancelled"]),
     include: [
       {
         model: OrderItem,
@@ -349,11 +349,21 @@ async function loadOrders(actor, query) {
   })
 }
 
+function applyMovementChannel(where, query) {
+  const channel = normalizeChannel(query)
+  if (!channel) return
+  where.channel = { [Op.in]: [channel, "both"] }
+}
+
 function shortSessionId(id) {
   return `SESS-${String(id || "").replace(/-/g, "").slice(-4).toUpperCase()}`
 }
 
 async function zReports(actor, query, scope) {
+  // Register sessions are POS-only.
+  if (normalizeChannel(query) === "web") {
+    return { rows: [] }
+  }
   const where = { store_id: actor.store_id }
   if (scope.location_id) where.location_id = scope.location_id
   if (scope.cashier_id) where.cashier_id = scope.cashier_id
@@ -423,6 +433,7 @@ async function inventoryReport(actor, query, scope) {
     moveWhere.created_at = moveWhere.placed_at
     delete moveWhere.placed_at
   }
+  applyMovementChannel(moveWhere, query)
   const moves = await StockMovement.findAll({ where: moveWhere })
   const flow = new Map()
   for (const move of moves) {
@@ -466,6 +477,7 @@ async function stockMovementReport(actor, query, scope) {
     where.created_at = where.placed_at
     delete where.placed_at
   }
+  applyMovementChannel(where, query)
   const rows = await StockMovement.findAll({
     where,
     include: [
@@ -485,6 +497,7 @@ async function stockMovementReport(actor, query, scope) {
         type: String(json.movement_type || "").toUpperCase(),
         qty: Number(json.qty || 0),
         reason: prettyReason(json.reason),
+        channel: json.channel || null,
         cashier: json.staff?.name || "System",
       }
     }),
@@ -493,7 +506,8 @@ async function stockMovementReport(actor, query, scope) {
 
 async function buildPosReports(actor, query = {}) {
   const period = resolvePeriod(query)
-  const scopedQuery = { ...query, channel: query.channel || "pos" }
+  const channel = normalizeChannel(query)
+  const scopedQuery = { ...query, channel: channel || undefined }
   const scope = reportScope(actor, scopedQuery)
   const orders = await loadOrders(actor, scopedQuery)
   const extras = liveOrders(orders)
@@ -507,6 +521,7 @@ async function buildPosReports(actor, query = {}) {
 
   return {
     period,
+    channel: channel || "overall",
     scope,
     from: scopedQuery.from || null,
     to: scopedQuery.to || null,
