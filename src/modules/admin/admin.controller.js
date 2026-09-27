@@ -79,7 +79,7 @@ export const patchLicense = asyncHandler(async (req, res) => {
 })
 
 export const listDevices = asyncHandler(async (req, res) => {
-  const data = await deviceService.listAllDevices()
+  const data = await deviceService.listAllDevices(req.query)
   return apiResponse(res, 200, "OK", data)
 })
 

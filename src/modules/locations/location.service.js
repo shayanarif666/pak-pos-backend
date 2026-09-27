@@ -14,7 +14,7 @@ import { AppError } from "../../shared/errors/AppError.js"
 import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
 
-function publicManager(user) {
+function publicManager(user, { includePin = false } = {}) {
   if (!user) return null
   const json = user.toJSON ? user.toJSON() : user
   return {
@@ -22,7 +22,7 @@ function publicManager(user) {
     name: json.name,
     email: json.email,
     phone: json.phone || null,
-    pin: json.pin || null,
+    ...(includePin ? { pin: json.pin || null } : {}),
     is_active: json.is_active !== false,
   }
 }
@@ -180,9 +180,15 @@ async function resolveManagersForLocations(storeId, locations) {
   }
 }
 
-export async function listLocations(storeId) {
+export async function listLocations(storeId, actor = null) {
+  const where = { store_id: storeId }
+  if (actor?.role === "manager") {
+    if (!actor.location_id) return []
+    where.id = actor.location_id
+  }
+  const includePin = actor?.role === "store_admin"
   const rows = await Location.findAll({
-    where: { store_id: storeId },
+    where,
     order: [["location_id_int", "ASC"]],
     include: [
       {
@@ -190,7 +196,17 @@ export async function listLocations(storeId) {
         as: "users",
         required: false,
         where: { role: "manager" },
-        attributes: ["id", "name", "email", "phone", "pin", "is_active", "location_id", "location_id_int", "created_at"],
+        attributes: [
+          "id",
+          "name",
+          "email",
+          "phone",
+          ...(includePin ? ["pin"] : []),
+          "is_active",
+          "location_id",
+          "location_id_int",
+          "created_at",
+        ],
       },
     ],
   })
@@ -201,7 +217,7 @@ export async function listLocations(storeId) {
         ? [...row.users].sort((a, b) => Number(b.is_active) - Number(a.is_active))[0]
         : null
     return publicLocation(row, {
-      manager: publicManager(included || findManager(row)),
+      manager: publicManager(included || findManager(row), { includePin }),
     })
   })
 }
@@ -214,11 +230,16 @@ export async function getLocation(storeId, locationId) {
   return location
 }
 
-export async function getPublicLocation(storeId, locationId) {
+export async function getPublicLocation(storeId, locationId, actor = null) {
+  if (actor?.role === "manager" && actor.location_id && locationId !== actor.location_id) {
+    throw new ForbiddenError("Managers can only view their own location")
+  }
   const location = await getLocation(storeId, locationId)
   const findManager = await resolveManagersForLocations(storeId, [location])
   return publicLocation(location, {
-    manager: publicManager(findManager(location)),
+    manager: publicManager(findManager(location), {
+      includePin: actor?.role === "store_admin",
+    }),
   })
 }
 
@@ -282,7 +303,7 @@ export async function createLocation(store, fields) {
 
     return publicLocation(location, {
       manager: {
-        ...publicManager(manager),
+        ...publicManager(manager, { includePin: true }),
         password: fields.manager.password,
       },
     })
@@ -372,7 +393,9 @@ export async function updateLocation(storeId, locationId, fields, actor) {
     }
 
     return publicLocation(location, {
-      manager: publicManager(managerUser),
+      manager: publicManager(managerUser, {
+        includePin: actor?.role === "store_admin",
+      }),
     })
   })
 }

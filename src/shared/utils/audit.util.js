@@ -1,7 +1,7 @@
 import { AuditLog } from "../../modules/audit/auditLog.model.js"
 
 const SENSITIVE_KEY =
-  /password|passwd|pin|license_key|refresh_token|access_token|verify_token|reset_token|secret|authorization|token/i
+  /password|passwd|pin|license_key|refresh_token|access_token|verify_token|reset_token|secret|authorization|token|api_key|private_key|card_number|cvv|credit_card/i
 
 export function redactAuditPayload(value) {
   if (value == null) return value

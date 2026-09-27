@@ -4,12 +4,24 @@ import * as storeService from "../stores/store.service.js"
 import * as locationService from "./location.service.js"
 
 export const listLocations = asyncHandler(async (req, res) => {
-  const rows = await locationService.listLocations(req.storeId)
+  const actor = {
+    role: req.user.role,
+    location_id: req.auth?.location_id || req.user.location_id,
+  }
+  const rows = await locationService.listLocations(req.storeId, actor)
   return apiResponse(res, 200, "OK", rows)
 })
 
 export const getLocation = asyncHandler(async (req, res) => {
-  const location = await locationService.getPublicLocation(req.storeId, req.params.id)
+  const actor = {
+    role: req.user.role,
+    location_id: req.auth?.location_id || req.user.location_id,
+  }
+  const location = await locationService.getPublicLocation(
+    req.storeId,
+    req.params.id,
+    actor
+  )
   return apiResponse(res, 200, "OK", location)
 })
 

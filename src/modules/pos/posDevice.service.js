@@ -11,11 +11,14 @@ import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 export function publicDevice(row) {
   if (!row) return null
   const json = row.toJSON ? row.toJSON() : row
-  const { store_id_int, location_id_int, ...rest } = json
+  const { store_id_int, location_id_int, Store, Location, ...rest } = json
   return {
     ...rest,
     store_number: store_id_int,
     location_number: location_id_int,
+    store_name: Store?.name || json.store_name || null,
+    store_slug: Store?.slug || json.store_slug || null,
+    location_name: Location?.name || json.location_name || null,
   }
 }
 
@@ -57,6 +60,9 @@ export async function registerDevice(input, user, { store: existingStore } = {})
   })
 
   if (existing) {
+    if (user?.role === "manager" && existing.location_id !== user.location_id) {
+      throw new ForbiddenError("Managers cannot re-register a device from another location")
+    }
     const becomingActive = !existing.is_active
     if (becomingActive) {
       await assertDeviceCap(store, 1)
@@ -111,13 +117,22 @@ export async function listDevices(actor, query = {}) {
   return rows.map(publicDevice)
 }
 
-export async function listAllDevices() {
+export async function listAllDevices(query = {}) {
+  const where = {}
+  if (query.store_id) where.store_id = query.store_id
+  if (query.location_id || query.locationId) {
+    where.location_id = query.location_id || query.locationId
+  }
+  if (query.is_active !== undefined && query.is_active !== "") {
+    where.is_active = String(query.is_active) === "true" || query.is_active === true
+  }
   const rows = await PosDevice.findAll({
+    where,
     include: [
       { model: Store, attributes: ["id", "name", "slug"] },
       { model: Location, attributes: ["id", "name"] },
     ],
-    order: [["created_at", "ASC"]],
+    order: [["created_at", "DESC"]],
   })
   return rows.map(publicDevice)
 }
