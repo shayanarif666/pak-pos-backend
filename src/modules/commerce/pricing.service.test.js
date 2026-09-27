@@ -83,15 +83,56 @@ describe("pricing.service", () => {
     assert.equal(line.subtotal, 149.4)
   })
 
-  it("records product and category tax separately", () => {
+  it("stacks product tax then store default tax", () => {
+    const store = { charge_tax_on_sales: true, default_tax_rate: 10 }
+    const product = { tax_type: "percentage", tax_value: 10 }
+    const row = lineTaxBreakdown(store, product, null, 100)
+    assert.equal(row.product_tax_amount, 10)
+    assert.equal(row.default_tax_amount, 11)
+    assert.equal(row.tax_amount, 21)
+  })
+
+  it("records product and category tax then stacks store default", () => {
     const store = { charge_tax_on_sales: true, default_tax_rate: 17 }
     const product = { tax_type: "percentage", tax_value: 5 }
     const category = { tax_type: "percentage", tax_value: 5 }
     const row = lineTaxBreakdown(store, product, category, 100)
     assert.equal(row.product_tax_amount, 5)
     assert.equal(row.category_tax_amount, 5)
-    assert.equal(row.default_tax_amount, 0)
-    assert.equal(row.tax_amount, 10)
+    assert.equal(row.default_tax_amount, 18.7)
+    assert.equal(row.tax_amount, 28.7)
+  })
+
+  it("quotes 100 + 10% product + 10% store default + 12% cash GST = 135.52", () => {
+    const store = { charge_tax_on_sales: true, default_tax_rate: 10 }
+    const product = { tax_type: "percentage", tax_value: 10 }
+    const tax = lineTaxBreakdown(store, product, null, 100)
+    const quoted = quoteOrderTotals({
+      lines: [
+        {
+          unit_price: 100,
+          quantity: 1,
+          discount_amount: 0,
+          subtotal: 100,
+          tax_amount: tax.tax_amount,
+          product_tax_amount: tax.product_tax_amount,
+          category_tax_amount: 0,
+          default_tax_amount: tax.default_tax_amount,
+          cost_price: 50,
+        },
+      ],
+      store,
+      channel: "pos",
+      paymentMethod: "cash",
+      taxRates: [{ payment_method: "cash", gst_percent: 12 }],
+    })
+    assert.equal(quoted.subtotal, 100)
+    assert.equal(quoted.product_tax_amount, 10)
+    assert.equal(quoted.default_tax_amount, 11)
+    assert.equal(quoted.line_tax, 21)
+    assert.equal(quoted.payment_gst_amount, 14.52)
+    assert.equal(quoted.tax_amount, 35.52)
+    assert.equal(quoted.total_amount, 135.52)
   })
 
   it("adds payment GST on mixed POS tenders", () => {

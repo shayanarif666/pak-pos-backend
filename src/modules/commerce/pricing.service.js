@@ -243,31 +243,27 @@ export function lineTaxBreakdown(store, product, category, taxable) {
     tax_amount: 0,
   }
   if (!store?.charge_tax_on_sales) return breakdown
+
+  const base = money(taxable)
   if (product?.tax_type && product.tax_value != null) {
-    breakdown.product_tax_amount = applyDiscount(
-      taxable,
-      product.tax_type,
-      product.tax_value
-    )
+    breakdown.product_tax_amount = applyDiscount(base, product.tax_type, product.tax_value)
   }
   if (category?.tax_type && category.tax_value != null) {
-    breakdown.category_tax_amount = applyDiscount(
-      taxable,
-      category.tax_type,
-      category.tax_value
-    )
+    breakdown.category_tax_amount = applyDiscount(base, category.tax_type, category.tax_value)
   }
-  if (
-    !breakdown.product_tax_amount &&
-    !breakdown.category_tax_amount &&
-    store.default_tax_rate != null
-  ) {
+
+  // Store default stacks on (subtotal + product tax + category tax), e.g. 100 → 110 → 121.
+  if (store.default_tax_rate != null && Number(store.default_tax_rate) > 0) {
+    const afterLineTaxes = money(
+      base + breakdown.product_tax_amount + breakdown.category_tax_amount
+    )
     breakdown.default_tax_amount = applyDiscount(
-      taxable,
+      afterLineTaxes,
       "percentage",
       store.default_tax_rate
     )
   }
+
   breakdown.tax_amount = money(
     breakdown.product_tax_amount +
       breakdown.category_tax_amount +

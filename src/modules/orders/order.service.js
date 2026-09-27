@@ -490,7 +490,15 @@ export async function refundOrderItem(actor, id, fields) {
   const share = sold > 0 ? qty / sold : 0
   const lineSubtotal = money(Number(item.subtotal) * share)
   const lineTax = money(Number(item.tax_amount || 0) * share)
-  const refundTotal = money(lineSubtotal + lineTax)
+  const paymentGst = Number(order.payment_gst_amount || 0)
+  const orderPreGst = money(Number(order.total_amount || 0) - paymentGst)
+  const linePreGst = money(Number(item.subtotal || 0) + Number(item.tax_amount || 0))
+  const refundGst =
+    paymentGst > 0 && orderPreGst > 0
+      ? money(paymentGst * ((linePreGst * share) / orderPreGst))
+      : 0
+  const refundTax = money(lineTax + refundGst)
+  const refundTotal = money(lineSubtotal + refundTax)
   const now = new Date()
 
   return sequelize.transaction(async (transaction) => {
@@ -524,7 +532,7 @@ export async function refundOrderItem(actor, id, fields) {
         cashier_id: actor.id,
         subtotal: lineSubtotal,
         discount_amount: 0,
-        tax_amount: lineTax,
+        tax_amount: refundTax,
         shipping_fee: 0,
         total_amount: refundTotal,
         issued_at: now,
@@ -544,7 +552,7 @@ export async function refundOrderItem(actor, id, fields) {
         receipt_id: receipt.id,
         reason: fields.reason,
         amount: refundTotal,
-        tax_amount: lineTax,
+        tax_amount: refundTax,
       },
       { transaction }
     )
@@ -558,7 +566,7 @@ export async function refundOrderItem(actor, id, fields) {
         title: item.title,
         quantity: qty,
         unit_price: item.unit_price,
-        tax_amount: lineTax,
+        tax_amount: refundTax,
         subtotal: lineSubtotal,
       },
       { transaction }

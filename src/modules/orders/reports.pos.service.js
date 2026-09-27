@@ -23,6 +23,7 @@ import {
   normalizeChannel,
   orderTaxCollection,
   orderWhere,
+  remainingOrderSubtotal,
   remainingQty,
   reportScope,
   resolvePeriod,
@@ -77,36 +78,51 @@ function trendBucket(placedAt, query) {
 function salesSummary(completed, extras, query) {
   const trend = new Map()
   let gross_sales = 0
+  let revenue = 0
   let discounts = 0
   let tax = 0
+  let total_collected = 0
   const tax_collection = emptyTaxCollection()
+
   for (const { order, refund } of completed) {
     const remainingSold = (order.OrderItems || []).reduce((sum, item) => sum + remainingQty(item), 0)
     if (remainingSold <= 0 && refund.amount >= Number(order.total_amount)) continue
+
     const orderGross = money(Number(order.subtotal || 0))
     const orderDiscount = money(
       Number(order.discount_amount || 0) + Number(order.coupon_discount_amount || 0)
     )
-    const orderTax = money(Math.max(0, Number(order.tax_amount || 0) - Number(refund.tax || 0)))
+    const remSubtotal = remainingOrderSubtotal(order)
+    const remDiscount =
+      orderGross > 0 ? money(orderDiscount * (remSubtotal / orderGross)) : 0
+    const remRevenue = money(Math.max(0, remSubtotal - remDiscount))
+    const taxes = orderTaxCollection(order, refund)
+    const remTax = money(taxes.total)
+    const remCollected = money(
+      remRevenue + remTax + Number(order.shipping_fee || 0) * (remainingSold > 0 ? 1 : 0)
+    )
+
     gross_sales = money(gross_sales + orderGross)
-    discounts = money(discounts + orderDiscount)
-    tax = money(tax + orderTax)
-    mergeTaxCollection(tax_collection, orderTaxCollection(order, refund))
+    revenue = money(revenue + remRevenue)
+    discounts = money(discounts + remDiscount)
+    tax = money(tax + remTax)
+    total_collected = money(total_collected + Number(order.total_amount || 0))
+    mergeTaxCollection(tax_collection, taxes)
+
     const bucket = trendBucket(order.placed_at, query)
     if (!trend.has(bucket)) trend.set(bucket, { bucket, sales: 0, orders: 0 })
     const row = trend.get(bucket)
     row.orders += 1
-    addMoney(row, "sales", money(Math.max(0, orderGross - orderDiscount)))
+    addMoney(row, "sales", remCollected)
   }
 
   const refunds = extras.refunded_amount
-  const net_sales = money(Math.max(0, gross_sales - discounts - refunds))
+  const net_sales = money(Math.max(0, revenue + tax))
   const orders = completed.filter(({ order, refund }) => {
     const remainingSold = (order.OrderItems || []).reduce((sum, item) => sum + remainingQty(item), 0)
     return !(remainingSold <= 0 && refund.amount >= Number(order.total_amount))
   }).length
   const payments = paymentBreakdown(completed, extras.refunded_amount)
-  const total_collected = money(payments.rows.reduce((sum, row) => sum + Number(row.net_amount), 0))
   const cost = money(
     completed.reduce((sum, { order }) => {
       return money(
@@ -122,17 +138,23 @@ function salesSummary(completed, extras, query) {
 
   return {
     totals: {
+      // Gross / collected before refund reduction (full tendered amount).
+      total_collected,
       gross_sales,
+      // Remaining pre-tax goods (Revenue in sales breakdown).
+      revenue,
       discounts,
       refunds,
-      net_sales,
-      cost,
+      // Remaining tax after refunds.
       tax,
       tax_collection,
-      total_collected,
-      gross_profit: money(net_sales - cost),
+      // Remaining amount kept (revenue + tax).
+      net_sales,
+      cost,
+      gross_profit: money(revenue - cost),
       orders,
       avg_order_value: orders ? money(net_sales / orders) : 0,
+      payments_net: money(payments.rows.reduce((sum, row) => sum + Number(row.net_amount), 0)),
     },
     trend: [...trend.entries()]
       .sort(([a], [b]) => String(a).localeCompare(String(b)))
@@ -264,22 +286,35 @@ function taxBreakdown(completed) {
   const orderIds = new Set()
   let total_sales = 0
   for (const { order, refund } of completed) {
-    const net = money(Math.max(0, Number(order.total_amount) - Number(refund.amount || 0)))
-    total_sales = money(total_sales + net)
+    const taxes = orderTaxCollection(order, refund)
+    const remRevenue = remainingOrderSubtotal(order)
+    total_sales = money(total_sales + remRevenue + taxes.total)
     orderIds.add(order.id)
-    mergeTaxCollection(totals, orderTaxCollection(order, refund))
+    mergeTaxCollection(totals, taxes)
   }
   const rows = [
     { id: "product_tax", tax_rule: "Product tax", tax_collected: totals.product_tax },
     { id: "category_tax", tax_rule: "Category tax", tax_collected: totals.category_tax },
     {
       id: "default_store_tax",
-      tax_rule: "Default store tax",
+      tax_rule: "Store default tax",
       tax_collected: totals.default_store_tax,
     },
-    { id: "payment_gst", tax_rule: "Payment method GST", tax_collected: totals.payment_gst },
-    { id: "fbr", tax_rule: "FBR collections", tax_collected: totals.fbr },
-  ].filter((row) => Number(row.tax_collected) > 0)
+    { id: "cash_gst", tax_rule: "Cash GST", tax_collected: totals.payment_gst_cash },
+    { id: "card_gst", tax_rule: "Card GST", tax_collected: totals.payment_gst_card },
+    {
+      id: "jazzcash_gst",
+      tax_rule: "JazzCash GST",
+      tax_collected: totals.payment_gst_jazzcash,
+    },
+    {
+      id: "easypaisa_gst",
+      tax_rule: "Easypaisa GST",
+      tax_collected: totals.payment_gst_easypaisa,
+    },
+    { id: "payment_gst", tax_rule: "Payment GST (total)", tax_collected: totals.payment_gst },
+    { id: "fbr", tax_rule: "FBR", tax_collected: totals.fbr },
+  ]
 
   return {
     totals: {

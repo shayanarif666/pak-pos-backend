@@ -176,9 +176,50 @@ export function emptyTaxCollection() {
     category_tax: 0,
     default_store_tax: 0,
     payment_gst: 0,
+    payment_gst_cash: 0,
+    payment_gst_card: 0,
+    payment_gst_jazzcash: 0,
+    payment_gst_easypaisa: 0,
     fbr: 0,
     total: 0,
   }
+}
+
+export function remainingQty(item) {
+  return Math.max(0, Number(item.quantity) - Number(item.refunded_qty || 0))
+}
+
+/** Share of goods+line-tax still active after item refunds (excludes payment GST). */
+export function orderRemainingPreGstShare(order) {
+  let original = 0
+  let remaining = 0
+  let anyLeft = false
+  for (const item of order.OrderItems || []) {
+    const qty = Number(item.quantity || 0)
+    if (qty <= 0) continue
+    const left = remainingQty(item)
+    if (left > 0) anyLeft = true
+    const lineBase = Number(item.subtotal || 0) + Number(item.tax_amount || 0)
+    original += lineBase
+    remaining += lineBase * (left / qty)
+  }
+  const shipping = Number(order.shipping_fee || 0)
+  if (shipping > 0) {
+    original += shipping
+    if (anyLeft) remaining += shipping
+  }
+  if (original <= 0) return 0
+  return Math.max(0, Math.min(1, remaining / original))
+}
+
+export function remainingOrderSubtotal(order) {
+  return money(
+    (order.OrderItems || []).reduce((sum, item) => {
+      const qty = Number(item.quantity || 0)
+      if (qty <= 0) return sum
+      return sum + Number(item.subtotal || 0) * (remainingQty(item) / qty)
+    }, 0)
+  )
 }
 
 export function orderTaxCollection(order, refund = { amount: 0, tax: 0 }) {
@@ -187,24 +228,39 @@ export function orderTaxCollection(order, refund = { amount: 0, tax: 0 }) {
     const qty = Number(item.quantity || 0)
     const share = qty > 0 ? remainingQty(item) / qty : 0
     if (share <= 0) continue
-    const product = Number(item.product_tax_amount || 0) * share
-    const category = Number(item.category_tax_amount || 0) * share
-    const storeDefault = Number(item.default_tax_amount || 0) * share
-    if (product || category || storeDefault) {
-      addMoney(collected, "product_tax", product)
-      addMoney(collected, "category_tax", category)
-      addMoney(collected, "default_store_tax", storeDefault)
-    } else {
-      addMoney(collected, "default_store_tax", Number(item.tax_amount || 0) * share)
+    addMoney(collected, "product_tax", Number(item.product_tax_amount || 0) * share)
+    addMoney(collected, "category_tax", Number(item.category_tax_amount || 0) * share)
+    addMoney(collected, "default_store_tax", Number(item.default_tax_amount || 0) * share)
+  }
+
+  const orderShare = orderRemainingPreGstShare(order)
+  const paymentGstTotal = Number(order.payment_gst_amount || 0) * orderShare
+  addMoney(collected, "payment_gst", paymentGstTotal)
+
+  const splits =
+    order.tax_breakdown?.payment_gst ||
+    order.tax_breakdown?.payment_gst_splits ||
+    []
+  if (Array.isArray(splits) && splits.length) {
+    for (const split of splits) {
+      const method = String(split.method || "").toLowerCase()
+      const key = `payment_gst_${method}`
+      if (Object.prototype.hasOwnProperty.call(collected, key)) {
+        addMoney(collected, key, Number(split.gst_amount || 0) * orderShare)
+      }
+    }
+  } else if (paymentGstTotal > 0) {
+    const method = String(order.payment_method || "cash").toLowerCase()
+    const key = `payment_gst_${method}`
+    if (Object.prototype.hasOwnProperty.call(collected, key)) {
+      addMoney(collected, key, paymentGstTotal)
     }
   }
-  const total = Number(order.total_amount || 0)
-  const orderShare =
-    total > 0 ? Math.max(0, (total - Number(refund.amount || 0)) / total) : 0
-  addMoney(collected, "payment_gst", Number(order.payment_gst_amount || 0) * orderShare)
+
   if (order.fbr_invoice_enabled) {
     addMoney(collected, "fbr", Number(order.fbr_tax_amount || 0) * orderShare)
   }
+
   collected.total = money(
     collected.product_tax +
       collected.category_tax +
@@ -219,6 +275,10 @@ export function mergeTaxCollection(target, next) {
   addMoney(target, "category_tax", next.category_tax)
   addMoney(target, "default_store_tax", next.default_store_tax)
   addMoney(target, "payment_gst", next.payment_gst)
+  addMoney(target, "payment_gst_cash", next.payment_gst_cash)
+  addMoney(target, "payment_gst_card", next.payment_gst_card)
+  addMoney(target, "payment_gst_jazzcash", next.payment_gst_jazzcash)
+  addMoney(target, "payment_gst_easypaisa", next.payment_gst_easypaisa)
   addMoney(target, "fbr", next.fbr)
   target.total = money(
     target.product_tax + target.category_tax + target.default_store_tax + target.payment_gst
@@ -236,10 +296,6 @@ async function loadCompletedOrders(actor, query, timeZone = "Asia/Karachi") {
     include: [{ model: OrderItem }],
     order: [["placed_at", "ASC"]],
   })
-}
-
-export function remainingQty(item) {
-  return Math.max(0, Number(item.quantity) - Number(item.refunded_qty || 0))
 }
 
 function netCost(order) {
