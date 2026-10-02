@@ -1,5 +1,5 @@
 import { Router } from "express"
-import { authMiddleware } from "../../shared/middlewares/auth.middleware.js"
+import { authMiddleware, optionalAuth } from "../../shared/middlewares/auth.middleware.js"
 import { authorize } from "../../shared/middlewares/authorize.middleware.js"
 import { validate } from "../../shared/middlewares/validate.middleware.js"
 import {
@@ -41,8 +41,10 @@ import { listAdmin } from "../audit/audit.controller.js"
 
 const router = Router()
 
+// Open only while no Super Admin exists (first bootstrap); afterwards a Super Admin token is required.
 router.post(
   "/superadmins",
+  optionalAuth,
   validate(parseRegisterSuperAdmin),
   registerSuperAdmin
 )

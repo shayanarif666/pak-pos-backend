@@ -1,5 +1,6 @@
 import crypto from "crypto"
 import { Op } from "sequelize"
+import { sequelize } from "../../db/sequelize.js"
 import { StoreLicense } from "./storeLicense.model.js"
 import { Store } from "./store.model.js"
 import { Plan } from "../plans/plan.model.js"
@@ -150,15 +151,6 @@ function licenseExtras(license) {
   }
 }
 
-function assertDeviceLimit(license, nextCount) {
-  const maxDevices = Number(license.Plan?.max_devices || 0)
-  if (nextCount > maxDevices) {
-    throw new ConflictError(
-      `Device limit exceeded. This license allows at most ${maxDevices} device(s)`
-    )
-  }
-}
-
 export async function inspectLicenseKey(licenseKey) {
   const license = await loadLicenseByKey(licenseKey)
   assertStoreUsable(license)
@@ -202,104 +194,136 @@ async function findOtherLicenseWithDeviceUid(storeId, deviceUid, excludeLicenseI
   return rows.find((row) => findDeviceEntry(readDeviceUuids(row), deviceUid)) || null
 }
 
+/**
+ * POS activation rules:
+ * - Key invalid / expired / revoked            -> error, data.valid = false
+ * - Device already registered on this key      -> valid = true (pending key becomes active,
+ *                                                  e.g. after a renewal)
+ * - New device                                 -> registered only if the store's plan still has
+ *                                                  a free device slot (active devices, store-wide)
+ * - Device deactivated by the store            -> rejected; the store must re-enable it
+ */
 export async function activateLicenseKey(input, meta = {}) {
   if (!input.device_uid) {
-    return inspectLicenseKey(input.license_key)
+    return { ...(await inspectLicenseKey(input.license_key)), valid: true }
   }
 
   const license = await loadLicenseByKey(input.license_key)
   assertStoreUsable(license)
-  const location_id = await resolveActivateLocation(license.Store, input.location_id)
-  const devices = readDeviceUuids(license)
-  const alreadyBound = findDeviceEntry(devices, input.device_uid)
 
-  if (alreadyBound) {
-    const bound =
-      (alreadyBound.device_id && (await PosDevice.findByPk(alreadyBound.device_id))) ||
-      (await PosDevice.findOne({
-        where: { store_id: license.store_id, device_uid: input.device_uid },
-      }))
+  return sequelize.transaction(async (transaction) => {
+    // Serialize activations of one key so two PCs cannot both take the last slot.
+    await StoreLicense.findByPk(license.id, { transaction, lock: transaction.LOCK.UPDATE })
+
+    const devices = readDeviceUuids(license)
+    const existing = await PosDevice.findOne({
+      where: { store_id: license.store_id, device_uid: input.device_uid },
+      transaction,
+    })
+    const alreadyBound = findDeviceEntry(devices, input.device_uid)
+
+    if (existing && !existing.is_active) {
+      throw new ForbiddenError(
+        "This device has been deactivated by the store. Ask the store admin to re-enable it."
+      )
+    }
+
+    if (alreadyBound && existing) {
+      if (license.status === "pending") {
+        await license.update({ status: "active" }, { transaction })
+      }
+      await existing.update({ last_seen_at: new Date() }, { transaction })
+      return publicLicense(license, {
+        ...licenseExtras(license),
+        device: existing,
+        devices,
+        already_registered: true,
+        valid: true,
+      })
+    }
+
+    const otherLicense = await findOtherLicenseWithDeviceUid(
+      license.store_id,
+      input.device_uid,
+      license.id
+    )
+    if (otherLicense) {
+      throw new ConflictError("This device is already bound to another license")
+    }
+
+    // registerDevice() enforces plans.max_devices across all active devices of the store.
+    const location_id = await resolveActivateLocation(license.Store, input.location_id)
+    const { registerDevice } = await import("../pos/posDevice.service.js")
+    const store = await Store.findByPk(license.store_id, { transaction })
+    const device = await registerDevice(
+      {
+        device_uid: input.device_uid,
+        name: input.name || `POS ${input.device_uid}`,
+        location_id,
+        platform: input.platform,
+        app_version: input.app_version,
+      },
+      null,
+      { store }
+    )
+
+    const nextDevices = [
+      ...devices.filter((row) => row?.device_uid !== input.device_uid),
+      buildDeviceEntry(device),
+    ]
+    await license.update(
+      {
+        status: "active",
+        device_id: license.device_id || device.id,
+        device_uuids: nextDevices,
+      },
+      { transaction }
+    )
+
+    await writeAudit({
+      action: "license_activate",
+      entity_type: "store_licenses",
+      entity_id: license.id,
+      store_id: license.store_id,
+      store_id_int: license.store_id_int,
+      location_id: device.location_id,
+      location_id_int: device.location_id_int,
+      device_id: device.id,
+      user_id: null,
+      channel: "pos",
+      ip_address: meta.ip,
+      user_agent: meta.userAgent,
+      note: device.device_uid,
+    })
+
     return publicLicense(license, {
       ...licenseExtras(license),
-      device: bound,
-      devices,
-      already_registered: true,
+      device,
+      devices: nextDevices,
+      already_registered: false,
+      valid: true,
     })
-  }
-
-  if (license.status !== "pending" && license.status !== "active") {
-    throw new AppError("License cannot be activated", 409)
-  }
-
-  assertDeviceLimit(license, devices.length + 1)
-
-  const otherLicense = await findOtherLicenseWithDeviceUid(
-    license.store_id,
-    input.device_uid,
-    license.id
-  )
-  if (otherLicense) {
-    throw new ConflictError("This device is already bound to another license")
-  }
-
-  const { registerDevice } = await import("../pos/posDevice.service.js")
-  const store = await Store.findByPk(license.store_id)
-  const device = await registerDevice(
-    {
-      device_uid: input.device_uid,
-      name: input.name || `POS ${input.device_uid}`,
-      location_id,
-      platform: input.platform,
-      app_version: input.app_version,
-    },
-    null,
-    { store }
-  )
-
-  const nextDevices = [...devices, buildDeviceEntry(device)]
-  assertDeviceLimit(license, nextDevices.length)
-
-  await license.update({
-    status: "active",
-    device_id: license.device_id || device.id,
-    device_uuids: nextDevices,
-  })
-
-  await writeAudit({
-    action: "license_activate",
-    entity_type: "store_licenses",
-    entity_id: license.id,
-    store_id: license.store_id,
-    store_id_int: license.store_id_int,
-    location_id: device.location_id,
-    location_id_int: device.location_id_int,
-    device_id: device.id,
-    user_id: null,
-    channel: "pos",
-    ip_address: meta.ip,
-    user_agent: meta.userAgent,
-    note: device.device_uid,
-  })
-
-  return publicLicense(license, {
-    ...licenseExtras(license),
-    device,
-    devices: nextDevices,
-    already_registered: false,
   })
 }
 
+const LICENSE_STATUS_RANK = { active: 0, pending: 1, expired: 2, revoked: 3 }
+
+/** The license the store is actually running on: active first, then pending, newest expiry. */
 export async function getCurrentLicense(storeId) {
-  const license = await StoreLicense.findOne({
+  const rows = await StoreLicense.findAll({
     where: { store_id: storeId },
-    order: [["created_at", "DESC"]],
     include: [
       { model: PosDevice, as: "device" },
       { model: Plan, attributes: ["id", "code", "name", "max_devices"] },
     ],
   })
-  if (!license) throw new NotFoundError("License not found")
-  await refreshExpired(license)
+  if (!rows.length) throw new NotFoundError("License not found")
+  for (const row of rows) await refreshExpired(row)
+  const license = rows.sort(
+    (a, b) =>
+      (LICENSE_STATUS_RANK[a.status] ?? 9) - (LICENSE_STATUS_RANK[b.status] ?? 9) ||
+      new Date(b.expires_at) - new Date(a.expires_at)
+  )[0]
   return publicLicense(license, {
     device: license.device || null,
     plan: license.Plan || null,
@@ -480,7 +504,11 @@ export async function renewLicense(id) {
       ? new Date(license.expires_at)
       : now
 
-  const nextStatus = license.status === "expired" ? "pending" : license.status
+  // A renewed key that already has registered tills goes straight back to active,
+  // otherwise those POS devices stay locked out until someone re-activates them.
+  const hasDevices = readDeviceUuids(license).length > 0
+  const nextStatus =
+    license.status === "expired" ? (hasDevices ? "active" : "pending") : license.status
   await license.update({
     status: nextStatus,
     expires_at: addOneMonth(base),

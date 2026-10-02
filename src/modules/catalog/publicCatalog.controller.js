@@ -5,12 +5,22 @@ import {
   findLiveStoreBySlug,
   getContent,
   getShipping,
+  getPublicStoreBySlug,
   getTheme,
 } from "../stores/store.service.js"
 import { listPublicBanners } from "../stores/banner.service.js"
 import * as categoryService from "./category.service.js"
 import * as productService from "./product.service.js"
 import { listPublicReviews as listApprovedReviews } from "../reviews/review.service.js"
+
+// /public/stores/:slug/... uses the slug; /public/site/... resolves it from the domain first.
+function slugOf(req) {
+  return req.params.slug || req.storeSlug
+}
+
+export const getSiteStore = asyncHandler(async (req, res) => {
+  return apiResponse(res, 200, "OK", await getPublicStoreBySlug(slugOf(req)))
+})
 
 async function liveStore(slug) {
   const store = await findLiveStoreBySlug(slug)
@@ -19,31 +29,31 @@ async function liveStore(slug) {
 }
 
 export const getPublicTheme = asyncHandler(async (req, res) => {
-  const store = await liveStore(req.params.slug)
+  const store = await liveStore(slugOf(req))
   return apiResponse(res, 200, "OK", await getTheme(store.id))
 })
 
 export const getPublicContent = asyncHandler(async (req, res) => {
-  const store = await liveStore(req.params.slug)
+  const store = await liveStore(slugOf(req))
   return apiResponse(res, 200, "OK", await getContent(store.id))
 })
 
 export const getPublicShipping = asyncHandler(async (req, res) => {
-  const store = await liveStore(req.params.slug)
+  const store = await liveStore(slugOf(req))
   return apiResponse(res, 200, "OK", await getShipping(store.id))
 })
 
 export const getPublicBanners = asyncHandler(async (req, res) => {
-  return apiResponse(res, 200, "OK", await listPublicBanners(req.params.slug))
+  return apiResponse(res, 200, "OK", await listPublicBanners(slugOf(req)))
 })
 
 export const listPublicCategories = asyncHandler(async (req, res) => {
-  const rows = await categoryService.listPublicCategories(req.params.slug)
+  const rows = await categoryService.listPublicCategories(slugOf(req))
   return apiResponse(res, 200, "OK", rows)
 })
 
 export const listPublicProducts = asyncHandler(async (req, res) => {
-  const rows = await productService.listPublicProducts(req.params.slug, {
+  const rows = await productService.listPublicProducts(slugOf(req), {
     categoryId: req.query.category_id,
   })
   return apiResponse(res, 200, "OK", rows)
@@ -51,13 +61,13 @@ export const listPublicProducts = asyncHandler(async (req, res) => {
 
 export const getPublicProduct = asyncHandler(async (req, res) => {
   const product = await productService.getPublicProduct(
-    req.params.slug,
+    slugOf(req),
     req.params.id
   )
   return apiResponse(res, 200, "OK", product)
 })
 
 export const getPublicProductReviews = asyncHandler(async (req, res) => {
-  const rows = await listApprovedReviews(req.params.slug, req.params.id)
+  const rows = await listApprovedReviews(slugOf(req), req.params.id)
   return apiResponse(res, 200, "OK", rows)
 })

@@ -3,6 +3,7 @@ import { Op, UniqueConstraintError } from "sequelize"
 import { sequelize } from "../../db/sequelize.js"
 import { env, isProduction } from "../../config/env.js"
 import { User } from "./user.model.js"
+import { UserSession } from "./userSession.model.js"
 import { AuthToken } from "./authToken.model.js"
 import { Customer } from "../customers/customer.model.js"
 import { Store } from "../stores/store.model.js"
@@ -14,6 +15,7 @@ import { visibilityFromRecordChannel } from "../../db/channelVisibility.js"
 import { publicLicense, validateLicenseKey } from "../stores/license.service.js"
 import { hashPassword, comparePassword } from "../../shared/utils/hash.util.js"
 import { hashToken, randomToken } from "../../shared/utils/token.util.js"
+import { isExpired } from "../../shared/utils/date.util.js"
 import { writeAudit } from "../../shared/utils/audit.util.js"
 import {
   sendPasswordChangedEmail,
@@ -27,13 +29,14 @@ const RESET_TTL_MS = 60 * 60 * 1000
 const VERIFY_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const STAFF_ROLES = new Set(["store_admin", "manager", "cashier"])
 
-export function publicUser(user) {
+// PIN is only echoed on staff-management screens, never on login / me.
+export function publicUser(user, { includePin = false } = {}) {
   return {
     id: user.id,
     name: user.name,
     email: user.email,
     phone: user.phone,
-    pin: user.pin || null,
+    ...(includePin ? { pin: user.pin || null } : {}),
     role: user.role,
     store_id: user.store_id,
     store_number: user.store_id_int,
@@ -171,38 +174,86 @@ async function tokenClaims(user) {
   }
 }
 
-function signTokens(user, extras = {}) {
+function posClaims(pos) {
+  if (!pos) return {}
+  return { channel: "pos", license_id: pos.license_id, device_id: pos.device_id }
+}
+
+function signTokens(user, extras = {}, pos = null, sid = null) {
   const access_token = jwt.sign(
     {
       sub: user.id,
+      sid,
       role: user.role,
       store_id: extras.store_id ?? user.store_id ?? null,
       location_id: extras.location_id ?? user.location_id ?? null,
       store_number: extras.store_number ?? user.store_id_int ?? null,
       location_number: extras.location_number ?? user.location_id_int ?? null,
+      tv: user.token_version ?? 0,
+      ...posClaims(pos),
       type: "access",
     },
     env.JWT_SECRET,
-    { expiresIn: env.JWT_EXPIRES_IN }
+    { expiresIn: env.JWT_ACCESS_EXPIRES_IN }
   )
 
   const refresh_token = jwt.sign(
-    { sub: user.id, type: "refresh" },
+    { sub: user.id, sid, tv: user.token_version ?? 0, ...posClaims(pos), type: "refresh" },
     env.JWT_SECRET,
-    { expiresIn: env.JWT_EXPIRES_IN }
+    { expiresIn: env.JWT_REFRESH_EXPIRES_IN }
   )
 
-  return { access_token, refresh_token, expires_in: env.JWT_EXPIRES_IN }
+  return { access_token, refresh_token, expires_in: env.JWT_ACCESS_EXPIRES_IN }
 }
 
-async function persistRefreshToken(user, refreshToken, transaction) {
-  const refresh_token_hash = await hashPassword(refreshToken)
-  await user.update({ refresh_token_hash }, { transaction })
+function refreshExpiry(refreshToken) {
+  const { exp } = jwt.decode(refreshToken) || {}
+  return exp ? new Date(exp * 1000) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
 }
 
-export async function issueUserSession(user) {
-  const tokens = signTokens(user, await tokenClaims(user))
-  await persistRefreshToken(user, tokens.refresh_token)
+/**
+ * One session row per signed-in device. Tokens carry its id (sid), so logout revokes only
+ * this device and a second login no longer overwrites the first device's refresh token.
+ */
+async function startSession(user, { pos = null, channel = null, meta = {}, transaction } = {}) {
+  const session = await UserSession.create(
+    {
+      user_id: user.id,
+      channel: pos ? "pos" : channel,
+      device_id: pos?.device_id || null,
+      license_id: pos?.license_id || null,
+      ip_address: meta.ip || null,
+      user_agent: meta.userAgent || null,
+      expires_at: new Date(),
+    },
+    { transaction }
+  )
+  const tokens = signTokens(user, await tokenClaims(user), pos, session.id)
+  await session.update(
+    {
+      refresh_token_hash: await hashPassword(tokens.refresh_token),
+      expires_at: refreshExpiry(tokens.refresh_token),
+    },
+    { transaction }
+  )
+  return tokens
+}
+
+/** Throws unless the access/refresh token's session is still open. */
+export async function assertSessionOpen(payload) {
+  if (!payload.sid) throw new UnauthorizedError("Session has ended. Sign in again.")
+  const session = await UserSession.findByPk(payload.sid)
+  if (!session || session.user_id !== payload.sub || session.revoked_at) {
+    throw new UnauthorizedError("Session has ended. Sign in again.")
+  }
+  if (new Date(session.expires_at) < new Date()) {
+    throw new UnauthorizedError("Session has expired. Sign in again.")
+  }
+  return session
+}
+
+export async function issueUserSession(user, meta = {}) {
+  const tokens = await startSession(user, { channel: "web", meta })
   return {
     ...tokens,
     user: publicUser(user),
@@ -279,40 +330,60 @@ async function resolveUserByStoreScope({ email, store_slug, license_key }) {
   return matches[0] || null
 }
 
+// PIN is always looked up inside one store and only for store staff.
+// A platform-wide PIN search let any 4-digit guess (even the Super Admin's PIN) sign in.
 async function findUserByPin(pin, storeId) {
-  const where = { pin }
-  if (storeId !== undefined) where.store_id = storeId
-  return User.findOne({ where })
+  if (!storeId) return null
+  return User.findOne({
+    where: { pin, store_id: storeId, role: { [Op.in]: [...STAFF_ROLES] } },
+  })
+}
+
+// POS sessions are bound to an active device registered on the license.
+async function resolvePosDevice(input, license) {
+  const where = { store_id: license.store_id }
+  if (input.device_id) where.id = input.device_id
+  else if (input.device_uid) where.device_uid = input.device_uid
+  else throw new AppError("device_uid is required for POS login", 400)
+
+  const device = await PosDevice.findOne({ where })
+  if (!device) throw new AppError("This device is not registered for this license", 403)
+  if (!device.is_active) throw new AppError("This device has been deactivated", 403)
+  const bound = (license.device_uuids || []).some(
+    (entry) => entry?.device_uid === device.device_uid
+  )
+  if (!bound) throw new AppError("This device is not registered for this license", 403)
+  return device
+}
+
+async function resolvePosLogin(input) {
+  const license = await validateLicenseKey(input.license_key)
+  const device = await resolvePosDevice(input, license)
+  return { license, device }
 }
 
 async function resolvePinLoginUser(input) {
   if (input.channel === "pos") {
-    const license = await validateLicenseKey(input.license_key)
+    const { license, device } = await resolvePosLogin(input)
     const user = await findUserByPin(input.pin, license.store_id)
-    return { user, channel: "pos" }
+    return { user, channel: "pos", pos: { license_id: license.id, device_id: device.id } }
   }
 
   if (input.license_key) {
     const license = await StoreLicense.findOne({
       where: { license_key: input.license_key },
     })
-    if (!license) return { user: null, channel: input.channel || "web" }
-    const user = await findUserByPin(input.pin, license.store_id)
+    const user = license ? await findUserByPin(input.pin, license.store_id) : null
     return { user, channel: input.channel || "web" }
   }
 
   if (input.store_slug) {
     const store = await Store.findOne({ where: { slug: input.store_slug } })
-    if (!store) return { user: null, channel: input.channel || "web" }
-    const user = await findUserByPin(input.pin, store.id)
+    const user = store ? await findUserByPin(input.pin, store.id) : null
     return { user, channel: input.channel || "web" }
   }
 
-  const matches = await User.findAll({ where: { pin: input.pin } })
-  if (matches.length > 1) {
-    throw new AppError("license_key or store_slug is required", 400)
-  }
-  return { user: matches[0] || null, channel: input.channel || "web" }
+  throw new AppError("license_key or store_slug is required for PIN login", 400)
 }
 
 async function resolveLoginUser(input) {
@@ -321,11 +392,14 @@ async function resolveLoginUser(input) {
   const email = input.email.toLowerCase()
 
   if (input.channel === "pos") {
-    const license = await validateLicenseKey(input.license_key)
+    const { license, device } = await resolvePosLogin(input)
     const user = await User.findOne({
       where: { email, store_id: license.store_id },
     })
-    return { user, channel: "pos" }
+    if (user && !STAFF_ROLES.has(user.role)) {
+      throw new UnauthorizedError("Invalid credentials")
+    }
+    return { user, channel: "pos", pos: { license_id: license.id, device_id: device.id } }
   }
 
   const user = await resolveUserByStoreScope({
@@ -352,16 +426,31 @@ async function verifyCredentials(user, { password, pin }) {
   }
 }
 
+/** POS tokens stay valid only while their license is active and their device is enabled. */
+export async function assertPosSessionUsable(storeId, { license_id, device_id }) {
+  const [license, device] = await Promise.all([
+    license_id ? StoreLicense.findOne({ where: { id: license_id, store_id: storeId } }) : null,
+    device_id ? PosDevice.findOne({ where: { id: device_id, store_id: storeId } }) : null,
+  ])
+  if (!license) throw new UnauthorizedError("POS license not found")
+  if (license.status === "active" && isExpired(license.expires_at)) {
+    await license.update({ status: "expired" })
+  }
+  if (license.status !== "active") {
+    throw new UnauthorizedError(`POS license is ${license.status}`)
+  }
+  if (!device || !device.is_active) {
+    throw new UnauthorizedError("POS device is deactivated")
+  }
+}
+
 export async function login(input, meta = {}) {
-  const { user, channel } = await resolveLoginUser(input)
+  const { user, channel, pos } = await resolveLoginUser(input)
   await verifyCredentials(user, input)
 
   const last_login_at = new Date()
-  const tokens = signTokens(user, await tokenClaims(user))
-  await user.update({
-    last_login_at,
-    refresh_token_hash: await hashPassword(tokens.refresh_token),
-  })
+  const tokens = await startSession(user, { pos, channel, meta })
+  await user.update({ last_login_at })
   user.last_login_at = last_login_at
 
   await writeAudit({
@@ -381,6 +470,7 @@ export async function login(input, meta = {}) {
   return {
     ...tokens,
     user: publicUser(user),
+    ...(pos ? { device_id: pos.device_id, license_id: pos.license_id } : {}),
     ...(await buildStaffSession(user)),
   }
 }
@@ -398,15 +488,32 @@ export async function refreshSession(refreshToken) {
   }
 
   const user = await User.findByPk(payload.sub)
-  if (!user || !user.is_active || !user.refresh_token_hash) {
+  if (!user || !user.is_active) {
     throw new UnauthorizedError("Invalid refresh token")
   }
 
-  const match = await comparePassword(refreshToken, user.refresh_token_hash)
+  if ((payload.tv ?? 0) !== (user.token_version ?? 0)) {
+    throw new UnauthorizedError("Session has ended")
+  }
+
+  const session = await assertSessionOpen(payload)
+  const match =
+    session.refresh_token_hash &&
+    (await comparePassword(refreshToken, session.refresh_token_hash))
   if (!match) throw new UnauthorizedError("Invalid refresh token")
 
-  const tokens = signTokens(user, await tokenClaims(user))
-  await persistRefreshToken(user, tokens.refresh_token)
+  const pos =
+    payload.channel === "pos"
+      ? { license_id: payload.license_id, device_id: payload.device_id }
+      : null
+  if (pos) await assertPosSessionUsable(user.store_id, pos)
+
+  // Rotate: the old refresh token stops working once the new one is issued.
+  const tokens = signTokens(user, await tokenClaims(user), pos, session.id)
+  await session.update({
+    refresh_token_hash: await hashPassword(tokens.refresh_token),
+    expires_at: refreshExpiry(tokens.refresh_token),
+  })
   return {
     ...tokens,
     user: publicUser(user),
@@ -415,7 +522,13 @@ export async function refreshSession(refreshToken) {
 }
 
 export async function logout(user, meta = {}) {
-  await user.update({ refresh_token_hash: null })
+  // Ends only the session (device) that called logout; other devices stay signed in.
+  if (meta.sid) {
+    await UserSession.update(
+      { revoked_at: new Date(), refresh_token_hash: null },
+      { where: { id: meta.sid, user_id: user.id } }
+    )
+  }
   await writeAudit({
     action: "logout",
     entity_type: "users",
@@ -530,8 +643,7 @@ export async function registerCustomer(input) {
       VERIFY_TTL_MS,
       transaction
     )
-    const tokens = signTokens(user, await tokenClaims(user))
-    await persistRefreshToken(user, tokens.refresh_token, transaction)
+    const tokens = await startSession(user, { channel: "web", transaction })
 
     return {
       ...tokens,
@@ -570,6 +682,7 @@ export async function resetPassword(input) {
   await user.update({
     password: await hashPassword(input.password),
     refresh_token_hash: null,
+    token_version: (user.token_version ?? 0) + 1,
   })
   await sendPasswordChangedEmail(user)
   return publicUser(user)

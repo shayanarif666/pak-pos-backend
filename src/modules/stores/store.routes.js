@@ -17,6 +17,7 @@ import {
   parsePutTheme,
 } from "./store.validation.js"
 import {
+  getByDomain,
   getBySlug,
   getContent,
   getMyStore,
@@ -43,6 +44,7 @@ const managerStore = [
 ]
 
 router.get("/by-slug/:slug", getBySlug)
+router.get("/by-domain/:domain", getByDomain)
 router.get("/me", ...tenantStaff, getMyStore)
 router.patch(
   "/me",

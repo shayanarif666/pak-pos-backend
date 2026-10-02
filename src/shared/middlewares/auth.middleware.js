@@ -2,6 +2,10 @@ import jwt from "jsonwebtoken"
 import { env } from "../../config/env.js"
 import { User } from "../../modules/auth/user.model.js"
 import { UnauthorizedError } from "../errors/UnauthorizedError.js"
+import {
+  assertPosSessionUsable,
+  assertSessionOpen,
+} from "../../modules/auth/auth.service.js"
 
 export async function authMiddleware(req, res, next) {
   try {
@@ -24,6 +28,13 @@ export async function authMiddleware(req, res, next) {
     if (!user || !user.is_active) {
       throw new UnauthorizedError("Account is not available")
     }
+    if ((payload.tv ?? 0) !== (user.token_version ?? 0)) {
+      throw new UnauthorizedError("Session has ended. Sign in again.")
+    }
+    await assertSessionOpen(payload)
+    if (payload.channel === "pos") {
+      await assertPosSessionUsable(user.store_id, payload)
+    }
 
     req.user = user
     req.auth = {
@@ -33,6 +44,10 @@ export async function authMiddleware(req, res, next) {
       location_id: user.location_id || payload.location_id || null,
       store_number: user.store_id_int ?? payload.store_number ?? null,
       location_number: user.location_id_int ?? payload.location_number ?? null,
+      channel: payload.channel || null,
+      device_id: payload.device_id || null,
+      license_id: payload.license_id || null,
+      sid: payload.sid || null,
     }
     next()
   } catch (err) {

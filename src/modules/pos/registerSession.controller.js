@@ -14,6 +14,7 @@ function actorFromReq(req) {
     location_id: req.auth?.location_id || user.location_id,
     store_id_int: user.store_id_int,
     location_id_int: user.location_id_int,
+    device_id: req.auth?.device_id || null,
   }
 }
 

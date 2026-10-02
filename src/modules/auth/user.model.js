@@ -21,6 +21,7 @@ export const User = sequelize.define(
     is_active: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
     last_login_at: { type: DataTypes.DATE, allowNull: true },
     refresh_token_hash: { type: DataTypes.TEXT, allowNull: true },
+    token_version: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
   },
   {
     ...modelOptions,

@@ -49,7 +49,7 @@ async function assertEmailFree(storeId, email, exceptId) {
 }
 
 function staffPayload(user, plaintextPassword = null) {
-  return { ...publicUser(user), password: plaintextPassword }
+  return { ...publicUser(user, { includePin: true }), password: plaintextPassword }
 }
 
 async function assertPinFree(storeId, pin, exceptId) {
@@ -202,7 +202,7 @@ export async function getStaffSales(actor, id, query = {}) {
   })
 
   return {
-    staff: publicUser(staff),
+    staff: publicUser(staff, { includePin: true }),
     orders,
   }
 }

@@ -45,8 +45,17 @@ export function parseLogin(body) {
   }
 
   const license_key = optionalString(body, "license_key")
+  const store_slug = optionalString(body, "store_slug")
+  const device_uid = optionalString(body, "device_uid")
+  const device_id = optionalString(body, "device_id")
   if (channel === "pos" && !license_key) {
     throw new AppError("license_key is required for POS login", 400)
+  }
+  if (channel === "pos" && !device_uid && !device_id) {
+    throw new AppError("device_uid is required for POS login", 400)
+  }
+  if (pin && !license_key && !store_slug) {
+    throw new AppError("license_key or store_slug is required for PIN login", 400)
   }
 
   return {
@@ -55,7 +64,9 @@ export function parseLogin(body) {
     pin,
     channel,
     license_key,
-    store_slug: optionalString(body, "store_slug"),
+    store_slug,
+    device_uid,
+    device_id,
   }
 }
 

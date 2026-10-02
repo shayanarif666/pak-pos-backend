@@ -11,6 +11,10 @@ import { env } from "./config/env.js"
 export function createApp() {
   const app = express()
 
+  // Railway / Vercel sit in front of the API: use the client IP from X-Forwarded-For,
+  // otherwise every request looks like it came from the proxy.
+  app.set("trust proxy", 1)
+
   app.use(helmet())
   app.use(cors())
   app.use(compression())

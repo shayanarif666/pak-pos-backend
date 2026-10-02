@@ -31,6 +31,15 @@ export async function createTransfer(storeId, fields, actor) {
   const from = await loadLocation(storeId, fields.from_location_id)
   const to = await loadLocation(storeId, fields.to_location_id)
 
+  // Reject up front instead of letting an impossible transfer sit pending.
+  const source = await ProductStock.findOne({
+    where: { location_id: from.id, product_id: fields.product_id },
+  })
+  const available = Number(source?.qty || 0)
+  if (Number(fields.qty) > available) {
+    throw new ConflictError(`Only ${available} available at the source location`)
+  }
+
   return StockTransfer.create({
     store_id: storeId,
     from_location_id: from.id,

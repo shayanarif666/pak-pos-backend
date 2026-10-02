@@ -348,7 +348,8 @@ export function summarizeOrders(orders, refundMap, period) {
     addMoney(row, "refunds", refund.amount)
     addMoney(row, "total_collected", revenue)
     mergeTaxCollection(row.tax_collection, taxes)
-    row.gross_profit = money(row.revenue - row.cost)
+    // Tax belongs to the government and shipping is a pass-through: neither is profit.
+    row.gross_profit = money(row.revenue - row.tax - row.shipping - row.cost)
     totals.orders += 1
     addMoney(totals, "revenue", revenue)
     addMoney(totals, "tax", tax)
@@ -359,7 +360,7 @@ export function summarizeOrders(orders, refundMap, period) {
     addMoney(totals, "total_collected", revenue)
     mergeTaxCollection(totals.tax_collection, taxes)
   }
-  totals.gross_profit = money(totals.revenue - totals.cost)
+  totals.gross_profit = money(totals.revenue - totals.tax - totals.shipping - totals.cost)
   const rows = [...groups.entries()]
     .sort(([a], [b]) => String(a).localeCompare(String(b)))
     .map(([bucket, stats]) => ({ bucket, ...stats }))

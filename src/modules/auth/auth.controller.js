@@ -20,7 +20,7 @@ export const refresh = asyncHandler(async (req, res) => {
 })
 
 export const logout = asyncHandler(async (req, res) => {
-  await authService.logout(req.user, requestMeta(req))
+  await authService.logout(req.user, { ...requestMeta(req), sid: req.auth?.sid })
   return apiResponse(res, 200, "Logged out", null)
 })
 

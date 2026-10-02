@@ -28,6 +28,7 @@ import {
   applySessionSale,
   requireOpenSession,
 } from "../pos/registerSession.service.js"
+import { requireApprovedAction } from "../pos/approval.service.js"
 import { deductSaleStock } from "./stock.service.js"
 import {
   lineTaxBreakdown,
@@ -186,8 +187,51 @@ function normalizeClientLocalId(value) {
   return trimmed || null
 }
 
-function resolveSaleLocation(actor, store, session) {
-  return session?.location_id || actor.location_id || store.default_location_id
+// Store admins may sell at any branch (dashboard location switcher); everyone else sells
+// at their own branch.
+function requestedLocationId(actor, store, input) {
+  if (actor.role === "store_admin" && input.location_id) return input.location_id
+  return actor.location_id || store.default_location_id
+}
+
+const OFFLINE_AFTER_MS = 2 * 60 * 1000
+const MAX_OFFLINE_AGE_MS = 30 * 24 * 60 * 60 * 1000
+
+/** Offline POS sales keep the time they were rung up, not the time they reached the server. */
+function resolvePlacedAt(input, now) {
+  if (!input.client_local_id || !input.placed_at) return now
+  const at = new Date(input.placed_at)
+  if (Number.isNaN(at.getTime())) throw new AppError("placed_at is not a valid date", 400)
+  if (at.getTime() > now.getTime() + 5 * 60 * 1000) {
+    throw new AppError("placed_at cannot be in the future", 400)
+  }
+  if (now.getTime() - at.getTime() > MAX_OFFLINE_AGE_MS) {
+    throw new AppError("Offline sale is older than 30 days", 400)
+  }
+  return at
+}
+
+/**
+ * Overpayment is only possible in cash (customer hands a bigger note). The payment rows record
+ * what the store keeps; the extra is change. Card / wallet rows can never exceed the bill.
+ */
+function settleCashChange(splits, total) {
+  const paid = money(splits.reduce((sum, row) => sum + Number(row.amount || 0), 0))
+  let change = money(paid - total)
+  if (change <= 0) return { splits, change: 0 }
+  const cashPaid = money(
+    splits.filter((row) => row.method === "cash").reduce((sum, row) => sum + Number(row.amount), 0)
+  )
+  if (cashPaid < change) {
+    throw new AppError("Payments exceed the bill; only cash can be overpaid", 400)
+  }
+  const settled = splits.map((row) => {
+    if (row.method !== "cash" || change <= 0) return { ...row }
+    const keep = money(Math.max(0, Number(row.amount) - change))
+    change = money(change - (Number(row.amount) - keep))
+    return { ...row, amount: keep }
+  })
+  return { splits: settled.filter((row) => Number(row.amount) > 0), change: money(paid - total) }
 }
 
 export async function createOrder(actor, input) {
@@ -202,7 +246,13 @@ export async function createOrder(actor, input) {
   const is_custom = Boolean(input.is_custom)
   const client_local_id = normalizeClientLocalId(input.client_local_id)
   const store = await getStoreForManager(actor.store_id)
-  // if (client_local_id) await assertPlan(store, "offline_enabled")
+  const syncedAt = new Date()
+  const placedAt = resolvePlacedAt({ ...input, client_local_id }, syncedAt)
+  const offline =
+    channel === "pos" &&
+    (Boolean(input.offline) || syncedAt.getTime() - placedAt.getTime() > OFFLINE_AFTER_MS)
+  // Syncing sales made without internet is a Package 2 / 3 feature.
+  if (offline) await assertPlan(store, "offline_enabled")
 
   return sequelize.transaction(async (transaction) => {
     const existing = await loadExisting(store.id, client_local_id, transaction)
@@ -213,15 +263,19 @@ export async function createOrder(actor, input) {
       session = await requireOpenSession(
         store.id,
         {
-          locationId: actor.location_id || store.default_location_id,
-          deviceId: input.device_id,
+          locationId: requestedLocationId(actor, store, input),
+          deviceId: input.device_id || actor.device_id,
           sessionId: input.register_session_id,
+          cashierId: actor.id,
+          actorRole: actor.role,
+          placedAt,
+          offline,
         },
         { transaction }
       )
     }
 
-    const locationId = resolveSaleLocation(actor, store, session)
+    const locationId = session?.location_id || requestedLocationId(actor, store, input)
     if (!is_custom && !locationId) {
       throw new AppError("location_id is required to deduct stock", 400)
     }
@@ -232,7 +286,7 @@ export async function createOrder(actor, input) {
       ? await getLocation(store.id, locationId)
       : null
 
-    const now = new Date()
+    const now = placedAt
     const { offers, taxRates, shippingRule } = await loadPricingContext(store.id, {
       locationId: location?.id,
       now,
@@ -297,6 +351,15 @@ export async function createOrder(actor, input) {
       priced.reduce((sum, line) => sum + Number(line.subtotal), 0)
     )
     const orderDiscount = resolveOrderDiscount(lineSubtotal, input)
+    // A manual order discount is a discount_override: cashiers need a manager's approval.
+    if (orderDiscount > 0 && actor.role === "cashier") {
+      await requireApprovedAction({
+        store,
+        actor,
+        type: "discount_override",
+        approvalRequestId: input.approval_request_id,
+      })
+    }
     if (!input.tax_exempt && orderDiscount > 0 && lineSubtotal > 0) {
       const taxableShare = money((lineSubtotal - orderDiscount) / lineSubtotal)
       for (const line of priced) {
@@ -360,18 +423,29 @@ export async function createOrder(actor, input) {
       throw new AppError("payment_method is required", 400)
     }
 
-    const totals = quoteOrderTotals({
-      lines: priced,
-      store,
-      channel,
-      shippingRule,
-      couponDiscount,
-      orderDiscount,
-      paymentMethod: payment_method,
-      paymentSplits: paymentSplits.length ? paymentSplits : null,
-      taxRates,
-      taxExempt: Boolean(input.tax_exempt),
-    })
+    const quote = (splits) =>
+      quoteOrderTotals({
+        lines: priced,
+        store,
+        channel,
+        shippingRule,
+        couponDiscount,
+        orderDiscount,
+        paymentMethod: payment_method,
+        paymentSplits: splits.length ? splits : null,
+        taxRates,
+        taxExempt: Boolean(input.tax_exempt),
+      })
+    let totals = quote(paymentSplits)
+    const tenderedSum = money(paymentSplits.reduce((sum, row) => sum + Number(row.amount || 0), 0))
+    let settledSplits = paymentSplits
+    if (paymentSplits.length && tenderedSum > totals.total_amount) {
+      settledSplits = settleCashChange(paymentSplits, totals.total_amount).splits
+      // GST per payment method depends on the split, so price again with what is kept.
+      totals = quote(settledSplits)
+      settledSplits = settleCashChange(settledSplits, totals.total_amount).splits
+    }
+    const isWeb = channel === "web"
 
     let customer = null
     if (input.customer_id) {
@@ -385,9 +459,9 @@ export async function createOrder(actor, input) {
     }
 
     const order_number = await nextOrderNumber(store.id, transaction)
-    const cashier_id =
-      input.cashier_id ||
-      (["cashier", "manager", "store_admin"].includes(actor.role) ? actor.id : null)
+    const cashier_id = ["cashier", "manager", "store_admin"].includes(actor.role)
+      ? actor.id
+      : null
 
     let order
     try {
@@ -436,12 +510,14 @@ export async function createOrder(actor, input) {
           total_amount: totals.total_amount,
           cost_total: totals.cost_total,
           payment_method,
-          payment_status: "paid",
+          // Web (COD / wallet) is collected later; it turns paid/completed on payment confirm.
+          payment_status: isWeb ? "pending" : "paid",
           shipping_address: channel === "web" ? input.shipping_address || null : null,
-          order_status: "completed",
+          order_status: isWeb ? "pending" : "completed",
           amount_paid: 0,
           change_due: null,
-          placed_at: now,
+          placed_at: placedAt,
+          synced_at: offline ? syncedAt : null,
         },
         { transaction }
       )
@@ -499,15 +575,19 @@ export async function createOrder(actor, input) {
       )
     }
 
-    const plannedPayments = paymentSplits.length
-      ? paymentSplits
-      : [{ method: payment_method, amount: totals.total_amount }]
+    const plannedPayments = (
+      settledSplits.length
+        ? settledSplits
+        : [{ method: payment_method, amount: totals.total_amount }]
+    ).filter((row) => Number(row.amount) > 0)
 
     const paidSum = money(
       plannedPayments.reduce((sum, row) => sum + Number(row.amount || 0), 0)
     )
-    const tendered = money(input.amount_paid != null ? input.amount_paid : paidSum)
-    const collected = money(Math.max(paidSum, tendered))
+    const tendered = money(
+      input.amount_paid != null ? input.amount_paid : Math.max(paidSum, tenderedSum)
+    )
+    const collected = money(Math.min(totals.total_amount, Math.max(paidSum, tendered)))
     let creditAmount = money(totals.total_amount - collected)
     if (creditAmount < 0) creditAmount = 0
     if (creditAmount > 0 && !customer) {
@@ -537,8 +617,8 @@ export async function createOrder(actor, input) {
           amount,
           tax_amount,
           currency: store.currency || "PKR",
-          status: "success",
-          paid_at: now,
+          status: isWeb ? "initiated" : "success",
+          paid_at: isWeb ? null : syncedAt,
         },
         { transaction }
       )
@@ -559,7 +639,7 @@ export async function createOrder(actor, input) {
       )
     }
 
-    const amount_paid = tendered
+    const amount_paid = isWeb ? 0 : tendered
     const change_due =
       amount_paid > totals.total_amount
         ? money(amount_paid - totals.total_amount)
@@ -582,7 +662,7 @@ export async function createOrder(actor, input) {
         tax_amount: totals.tax_amount,
         shipping_fee: totals.shipping_fee,
         total_amount: totals.total_amount,
-        issued_at: now,
+        issued_at: syncedAt,
       },
       { transaction }
     )

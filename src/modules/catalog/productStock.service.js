@@ -11,8 +11,10 @@ import { AppError } from "../../shared/errors/AppError.js"
 import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 
+// Only the store admin may pick a branch; managers and cashiers are pinned to their own.
 function resolveLocationId(actor, requested) {
-  return requested || actor.location_id || null
+  if (actor.role === "store_admin") return requested || actor.location_id || null
+  return actor.location_id || null
 }
 
 async function loadLocation(storeId, locationId) {
@@ -90,9 +92,12 @@ export async function applyStockDelta(
   if (!transaction) throw new AppError("Stock change requires a transaction", 500)
   if (!location) throw new AppError("location is required", 400)
 
+  // Lock the stock row: two tills selling the same product at once must not both read
+  // the old qty and overwrite each other (lost update / oversell).
   let row = await ProductStock.findOne({
     where: { location_id: location.id, product_id: productId },
     transaction,
+    lock: transaction.LOCK.UPDATE,
   })
   const oldQty = row ? Number(row.qty) : 0
   const newQty = oldQty + Number(delta)

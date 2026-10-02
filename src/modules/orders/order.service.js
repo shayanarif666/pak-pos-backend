@@ -82,8 +82,12 @@ async function placeWebCustomerOrder(actor, fields) {
     shippingAddress: fields.shipping_address,
   })
 
+  // Only checkout choices come from the customer. Discounts, tax exemption, custom lines and
+  // tendered amounts are staff-only; spreading the raw body here let customers price their own orders.
   const result = await persistOrder(actor, {
-    ...fields,
+    payment_method: fields.payment_method,
+    payments: fields.payments,
+    client_local_id: fields.client_local_id,
     channel: "web",
     items: lines,
     coupon_code: fields.coupon_code || cart.coupon_code,
@@ -101,7 +105,7 @@ export async function placeOrder(actor, fields) {
   if (actor.role === "customer" && fields.channel === "pos") {
     throw new ForbiddenError("Customers cannot place POS orders")
   }
-  if (fields.channel === "web" && actor.role === "customer") {
+  if (actor.role === "customer") {
     return placeWebCustomerOrder(actor, fields)
   }
   return persistOrder(actor, {
@@ -124,15 +128,35 @@ export async function listOrders(actor, query = {}, extraWhere = {}) {
   if (query.channel) where.channel = query.channel
   if (query.payment_method) where.payment_method = query.payment_method
   if (query.cashier_id) where.cashier_id = query.cashier_id
+  if (query.status && !extraWhere.order_status) where.order_status = query.status
+  if (query.payment_status) where.payment_status = query.payment_status
   if (query.from || query.to) {
     where.placed_at = {}
     if (query.from) where.placed_at[Op.gte] = new Date(query.from)
     if (query.to) where.placed_at[Op.lte] = new Date(query.to)
   }
+  const q = String(query.q || "").trim().replace(/^#/, "")
+  if (q && actor.role !== "customer") {
+    // Search by order number, or by customer name / phone.
+    const customers = await Customer.findAll({
+      attributes: ["id"],
+      where: {
+        store_id: actor.store_id,
+        [Op.or]: [{ name: { [Op.like]: `%${q}%` } }, { phone: { [Op.like]: `%${q}%` } }],
+      },
+    })
+    const or = [{ customer_id: { [Op.in]: customers.map((row) => row.id) } }]
+    if (/^\d+$/.test(q)) or.push({ order_number: Number(q) })
+    where[Op.or] = or
+  }
 
   const rows = await Order.findAll({
     where,
-    order: [["placed_at", "DESC"]],
+    // placed_at has second precision; order_number keeps same-second sales in sequence.
+    order: [
+      ["placed_at", "DESC"],
+      ["order_number", "DESC"],
+    ],
   })
   return rows.map((row) => publicOrder(row))
 }
@@ -488,17 +512,32 @@ export async function refundOrderItem(actor, id, fields) {
   }
 
   const share = sold > 0 ? qty / sold : 0
-  const lineSubtotal = money(Number(item.subtotal) * share)
+  // Order-level discount and coupon are spread over the lines: the customer gets back
+  // only what they actually paid for this line, never the pre-discount price.
+  const orderGoods = Number(order.subtotal || 0)
+  const orderLevelDiscount =
+    Number(order.discount_amount || 0) + Number(order.coupon_discount_amount || 0)
+  const keptFactor =
+    orderGoods > 0 ? Math.max(0, (orderGoods - orderLevelDiscount) / orderGoods) : 1
+  const lineSubtotal = money(Number(item.subtotal) * keptFactor * share)
   const lineTax = money(Number(item.tax_amount || 0) * share)
   const paymentGst = Number(order.payment_gst_amount || 0)
-  const orderPreGst = money(Number(order.total_amount || 0) - paymentGst)
-  const linePreGst = money(Number(item.subtotal || 0) + Number(item.tax_amount || 0))
+  const orderPreGst = money(
+    Number(order.total_amount || 0) - paymentGst - Number(order.shipping_fee || 0)
+  )
+  const linePreGst = money(Number(item.subtotal || 0) * keptFactor + Number(item.tax_amount || 0))
   const refundGst =
     paymentGst > 0 && orderPreGst > 0
       ? money(paymentGst * ((linePreGst * share) / orderPreGst))
       : 0
   const refundTax = money(lineTax + refundGst)
-  const refundTotal = money(lineSubtotal + refundTax)
+  const alreadyRefunded = Number(
+    (await OrderRefund.sum("amount", { where: { order_id: order.id } })) || 0
+  )
+  const refundable = money(
+    Number(order.total_amount || 0) - Number(order.shipping_fee || 0) - alreadyRefunded
+  )
+  const refundTotal = money(Math.min(lineSubtotal + refundTax, Math.max(0, refundable)))
   const now = new Date()
 
   return sequelize.transaction(async (transaction) => {

@@ -90,6 +90,10 @@ export function parseCreateOrder(body) {
     tax_exempt: Boolean(body.tax_exempt),
     amount_paid: body.amount_paid == null ? undefined : Number(body.amount_paid),
     total_amount: body.total_amount == null ? undefined : Number(body.total_amount),
+    approval_request_id: optionalUuid(body, "approval_request_id"),
+    // Offline POS: when the sale was rung up on the device (ISO date-time).
+    placed_at: optionalString(body, "placed_at"),
+    offline: Boolean(body.offline),
   }
 }
 

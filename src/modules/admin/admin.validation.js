@@ -55,7 +55,6 @@ export function parseRegisterSuperAdmin(body) {
     name: requireString(body, "name"),
     email: requireString(body, "email").toLowerCase(),
     password: requireString(body, "password", { min: 6, max: 128 }),
-    pin: requirePin(body, "pin"),
   }
 }
 

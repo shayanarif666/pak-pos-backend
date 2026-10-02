@@ -20,6 +20,8 @@ import * as storeCustomDomain from "./migrations/20260916120000-store-custom-dom
 import * as licenseDeviceUuids from "./migrations/20260920120000-license-device-uuids.js"
 import * as expandBusinessTypes from "./migrations/20260921120000-expand-business-types.js"
 import * as productImagesFeatured from "./migrations/20260923120000-product-images-featured.js"
+import * as authTokenVersionDomainUnique from "./migrations/20261002120000-auth-token-version-domain-unique.js"
+import * as userSessions from "./migrations/20261002130000-user-sessions.js"
 
 const migrations = [
   initSchema,
@@ -41,6 +43,8 @@ const migrations = [
   licenseDeviceUuids,
   expandBusinessTypes,
   productImagesFeatured,
+  authTokenVersionDomainUnique,
+  userSessions,
 ]
 
 async function migrate() {

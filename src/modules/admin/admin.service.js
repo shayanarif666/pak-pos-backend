@@ -13,6 +13,7 @@ import { Billing } from "../billings/billing.model.js"
 import { PosDevice } from "../pos/posDevice.model.js"
 import {
   createStore,
+  normalizeDomain,
   publicStore as publicStoreView,
   setStoreDefaultLocation,
   setStoreOwner,
@@ -27,6 +28,7 @@ import { issueUserSession } from "../auth/auth.service.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
+import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
 
 const DEFAULT_THEME = {
   primary: "#111827",
@@ -103,7 +105,13 @@ function publicStore(store) {
   return publicStoreView(store)
 }
 
-export async function registerSuperAdmin(input) {
+export async function registerSuperAdmin(input, actor = null) {
+  // Public only for the very first bootstrap. After that, only a Super Admin may add another.
+  const existingCount = await User.count({ where: { role: "superadmin" } })
+  if (existingCount > 0 && actor?.role !== "superadmin") {
+    throw new ForbiddenError("Only a Super Admin can create another Super Admin")
+  }
+
   const email = input.email.toLowerCase()
   const existing = await User.findOne({
     where: { email, role: "superadmin" },
@@ -114,7 +122,8 @@ export async function registerSuperAdmin(input) {
     name: input.name,
     email,
     password: await hashPassword(input.password),
-    pin: input.pin,
+    // Super Admin never signs in with a PIN.
+    pin: null,
     role: "superadmin",
     store_id: null,
     store_id_int: null,
@@ -126,6 +135,16 @@ export async function registerSuperAdmin(input) {
   })
 
   return issueUserSession(user)
+}
+
+// One custom domain can point at exactly one store.
+async function assertDomainFree(domain, exceptStoreId, transaction) {
+  const custom_domain = normalizeDomain(domain)
+  if (!custom_domain) return
+  const where = { custom_domain }
+  if (exceptStoreId) where.id = { [Op.ne]: exceptStoreId }
+  const taken = await Store.findOne({ where, transaction })
+  if (taken) throw new ConflictError("This domain is already used by another store")
 }
 
 export async function registerStore(input, superadmin) {
@@ -144,6 +163,7 @@ export async function registerStore(input, superadmin) {
 
     const slugTaken = await Store.findOne({ where: { slug }, transaction })
     if (slugTaken) throw new ConflictError("Store slug already exists")
+    await assertDomainFree(input.custom_domain, null, transaction)
 
     const store = await createStore(
       {
@@ -159,7 +179,7 @@ export async function registerStore(input, superadmin) {
         contact_phone: input.contact_phone,
         logo_url: input.logo_url,
         favicon_url: input.favicon_url,
-        custom_domain: input.custom_domain,
+        custom_domain: normalizeDomain(input.custom_domain),
         pos_enabled: input.pos_enabled,
         web_enabled: input.web_enabled,
         is_active: true,
@@ -460,6 +480,10 @@ export async function patchStore(id, fields) {
     const storePatch = {}
     for (const key of STORE_FIELD_KEYS) {
       if (fields[key] !== undefined) storePatch[key] = fields[key]
+    }
+    if (storePatch.custom_domain !== undefined) {
+      storePatch.custom_domain = normalizeDomain(storePatch.custom_domain)
+      await assertDomainFree(storePatch.custom_domain, store.id, transaction)
     }
     if (Object.keys(storePatch).length) {
       await store.update(storePatch, { transaction })

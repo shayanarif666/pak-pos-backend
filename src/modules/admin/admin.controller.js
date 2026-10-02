@@ -6,7 +6,7 @@ import * as licenseService from "../stores/license.service.js"
 import * as deviceService from "../pos/posDevice.service.js"
 
 export const registerSuperAdmin = asyncHandler(async (req, res) => {
-  const data = await adminService.registerSuperAdmin(req.body)
+  const data = await adminService.registerSuperAdmin(req.body, req.user || null)
   return apiResponse(res, 201, "Super Admin created", data)
 })
 

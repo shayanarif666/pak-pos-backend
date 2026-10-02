@@ -2,8 +2,7 @@ import { Op } from "sequelize"
 import { RegisterSession } from "./registerSession.model.js"
 import { PosDevice } from "./posDevice.model.js"
 import { getLocation } from "../locations/location.service.js"
-import { getStoreForManager, getStorePlan } from "../stores/store.service.js"
-import { planHasFeature } from "../plans/plan.service.js"
+import { getStoreForManager } from "../stores/store.service.js"
 import { money } from "../commerce/pricing.service.js"
 import { writeAudit } from "../../shared/utils/audit.util.js"
 import { AppError } from "../../shared/errors/AppError.js"
@@ -116,8 +115,9 @@ export async function getCurrentSession(actor, query = {}) {
     location_id: locationId,
     status: "clock_in",
   }
+  // "Current" is the caller's own drawer (or the given counter's), never another cashier's.
   if (query.device_id) where.device_id = query.device_id
-  if (actor.role === "cashier") where.cashier_id = actor.id
+  else where.cashier_id = actor.id
   const row = await RegisterSession.findOne({
     where,
     order: [["opened_at", "DESC"]],
@@ -138,19 +138,23 @@ export async function clockIn(actor, fields) {
   const locationId = resolveActorLocation(actor, fields.location_id)
   if (!locationId) throw new AppError("location_id is required", 400)
   const location = await getLocation(store.id, locationId)
-  const device = await resolveDevice(store.id, location.id, fields.device_id)
-  const plan = await getStorePlan(store)
+  const device = await resolveDevice(store.id, location.id, fields.device_id || actor.device_id)
 
-  const openWhere = {
-    store_id: store.id,
-    location_id: location.id,
-    status: "clock_in",
+  // Each counter (device) and each cashier can have one open drawer. Several counters of the
+  // same branch (Package 2: up to 3 PCs) therefore run their own shifts side by side.
+  const openForCashier = await RegisterSession.findOne({
+    where: { store_id: store.id, cashier_id: actor.id, status: "clock_in" },
+  })
+  if (openForCashier) {
+    throw new ConflictError("You already have an open register session")
   }
-  if (planHasFeature(plan, "multi_branch_enabled") && device) openWhere.device_id = device.id
-
-  const open = await RegisterSession.findOne({ where: openWhere })
-  if (open) {
-    throw new ConflictError("A register session is already open")
+  if (device) {
+    const openOnDevice = await RegisterSession.findOne({
+      where: { store_id: store.id, device_id: device.id, status: "clock_in" },
+    })
+    if (openOnDevice) {
+      throw new ConflictError("This counter already has an open register session")
+    }
   }
 
   const row = await RegisterSession.create({
@@ -226,9 +230,26 @@ export async function clockOut(actor, id, fields) {
   return publicSession(row)
 }
 
+// DATETIME columns are stored to the second, so allow a small edge on both ends.
+const SHIFT_EDGE_MS = 2000
+
+function coversTime(row, at) {
+  if (!at) return false
+  const time = new Date(at).getTime()
+  const opened = new Date(row.opened_at).getTime() - SHIFT_EDGE_MS
+  const closed = row.closed_at ? new Date(row.closed_at).getTime() + SHIFT_EDGE_MS : Infinity
+  return time >= opened && time <= closed
+}
+
+/**
+ * The shift a POS sale belongs to.
+ * - Live sale: the seller's own open shift (by device when known, otherwise by cashier).
+ * - Offline sale (placedAt in the past): the seller's shift that was open at placedAt,
+ *   even if it has been closed since the sale was made.
+ */
 export async function requireOpenSession(
   storeId,
-  { locationId, deviceId, sessionId },
+  { locationId, deviceId, sessionId, cashierId, actorRole, placedAt, offline = false },
   { transaction } = {}
 ) {
   if (sessionId) {
@@ -237,7 +258,10 @@ export async function requireOpenSession(
       transaction,
     })
     if (!row) throw new NotFoundError("Register session not found")
-    if (row.status !== "clock_in") {
+    if (actorRole === "cashier" && cashierId && row.cashier_id !== cashierId) {
+      throw new ForbiddenError("This register session belongs to another cashier")
+    }
+    if (row.status !== "clock_in" && !(offline && coversTime(row, placedAt))) {
       throw new ConflictError("Register session is closed")
     }
     if (locationId && row.location_id !== locationId) {
@@ -246,17 +270,30 @@ export async function requireOpenSession(
     return row
   }
 
-  const where = {
-    store_id: storeId,
-    location_id: locationId,
-    status: "clock_in",
-  }
-  if (deviceId) where.device_id = deviceId
-  const row = await RegisterSession.findOne({
-    where,
+  const base = { store_id: storeId, location_id: locationId }
+  const owner = deviceId ? { device_id: deviceId } : { cashier_id: cashierId }
+
+  let row = await RegisterSession.findOne({
+    where: { ...base, ...owner, status: "clock_in" },
     order: [["opened_at", "DESC"]],
     transaction,
   })
+  if (!row && deviceId && cashierId) {
+    row = await RegisterSession.findOne({
+      where: { ...base, cashier_id: cashierId, status: "clock_in" },
+      order: [["opened_at", "DESC"]],
+      transaction,
+    })
+  }
+  if (!row && offline && placedAt) {
+    const candidates = await RegisterSession.findAll({
+      where: { ...base, cashier_id: cashierId, opened_at: { [Op.lte]: new Date(placedAt) } },
+      order: [["opened_at", "DESC"]],
+      limit: 5,
+      transaction,
+    })
+    row = candidates.find((candidate) => coversTime(candidate, placedAt)) || null
+  }
   if (!row) {
     throw new ConflictError("Clock in before selling")
   }
@@ -288,5 +325,9 @@ export async function applySessionSale(session, { payments, total, reverse = fal
       Number(patch.cash_sales ?? session.cash_sales) -
       Number(session.cash_out)
   )
+  // An offline sale synced after clock-out changes what the drawer should have held.
+  if (session.status === "clock_out" && session.closing_cash != null) {
+    patch.cash_variance = money(Number(session.closing_cash) - patch.expected_cash)
+  }
   await session.update(patch, { transaction })
 }

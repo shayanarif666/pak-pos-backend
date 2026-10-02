@@ -19,7 +19,15 @@ router.get("/breakdown", ...staff, breakdown)
 router.get("/dashboard", ...staff, dashboard)
 router.get("/sales", ...staff, sales)
 router.get("/payments", ...staff, payments)
-router.get("/profit", ...staff, profit)
+// Cost and margin are management-only; cashiers never see P&L.
+const management = [
+  authMiddleware,
+  tenantMiddleware,
+  requireTenantStore,
+  authorize("store_admin", "manager"),
+]
+
+router.get("/profit", ...management, profit)
 router.get(
   "/export",
   authMiddleware,

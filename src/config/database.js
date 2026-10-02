@@ -10,6 +10,12 @@ export const databaseConfig = {
   // Keep DATETIME comparisons in UTC; report ranges use store timezone explicitly.
   timezone: "+00:00",
   logging: env.NODE_ENV === "development" ? false : false,
+  pool: {
+    max: env.DB_POOL_MAX,
+    min: 0,
+    acquire: 30000,
+    idle: 10000,
+  },
   define: {
     underscored: false,
     freezeTableName: true,

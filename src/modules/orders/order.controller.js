@@ -20,6 +20,8 @@ function actorFromReq(req) {
     location_id: req.auth?.location_id || user.location_id,
     store_id_int: user.store_id_int,
     location_id_int: user.location_id_int,
+    device_id: req.auth?.device_id || null,
+    channel: req.auth?.channel || null,
   }
 }
 
@@ -32,7 +34,8 @@ export const create = asyncHandler(async (req, res) => {
 export const createBulk = asyncHandler(async (req, res) => {
   const actor = actorFromReq(req)
   const data = await runBulk(extractBulkItems(req.body), async (item) => {
-    return orderService.placeOrder(actor, parseCreateOrder(item))
+    // /orders/bulk is the offline-sync endpoint of the desktop POS.
+    return orderService.placeOrder(actor, { ...parseCreateOrder(item), offline: true })
   })
   return apiResponse(res, bulkStatus(data), "Bulk orders processed", data)
 })

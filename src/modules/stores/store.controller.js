@@ -45,6 +45,11 @@ export const putShipping = asyncHandler(async (req, res) => {
   return apiResponse(res, 200, "Shipping saved", shipping)
 })
 
+export const getByDomain = asyncHandler(async (req, res) => {
+  const data = await storeService.getPublicStoreByDomain(req.params.domain)
+  return apiResponse(res, 200, "OK", data)
+})
+
 export const getBySlug = asyncHandler(async (req, res) => {
   const data = await storeService.getPublicStoreBySlug(req.params.slug)
   return apiResponse(res, 200, "OK", data)

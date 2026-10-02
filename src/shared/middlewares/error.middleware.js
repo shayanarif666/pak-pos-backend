@@ -16,6 +16,7 @@ export function errorMiddleware(err, req, res, _next) {
     success: false,
     message,
     errors: null,
+    ...(err.data !== undefined ? { data: err.data } : {}),
     ...(isProduction ? {} : { stack: err.stack }),
   })
 }

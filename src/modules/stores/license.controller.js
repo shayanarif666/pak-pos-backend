@@ -4,10 +4,17 @@ import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
 import * as licenseService from "./license.service.js"
 
 export const validate = asyncHandler(async (req, res) => {
-  const data = await licenseService.activateLicenseKey(req.body, {
-    ip: req.ip,
-    userAgent: req.get("user-agent"),
-  })
+  let data
+  try {
+    data = await licenseService.activateLicenseKey(req.body, {
+      ip: req.ip,
+      userAgent: req.get("user-agent"),
+    })
+  } catch (err) {
+    // POS reads data.valid: false = key invalid / expired / revoked / device limit reached.
+    err.data = { valid: false }
+    throw err
+  }
 
   let message = "License is active"
   if (data.already_registered) {

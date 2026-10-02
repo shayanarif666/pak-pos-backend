@@ -49,10 +49,28 @@ export async function setStoreDefaultLocation(storeId, location, { transaction }
   )
 }
 
+const LIVE_STORE = { is_live: true, is_active: true, web_enabled: true }
+
 export async function findLiveStoreBySlug(slug) {
   return Store.findOne({
-    where: { slug, is_live: true, is_active: true },
+    where: { slug, ...LIVE_STORE },
   })
+}
+
+/** Bare hostname: lowercase, no scheme, "www.", port or path. */
+export function normalizeDomain(value) {
+  if (value == null) return null
+  let host = String(value).trim().toLowerCase()
+  host = host.replace(/^[a-z]+:\/\//, "")
+  host = host.split("/")[0].split("?")[0].split(":")[0]
+  if (host.startsWith("www.")) host = host.slice(4)
+  return host || null
+}
+
+export async function findLiveStoreByDomain(domain) {
+  const custom_domain = normalizeDomain(domain)
+  if (!custom_domain) return null
+  return Store.findOne({ where: { custom_domain, ...LIVE_STORE } })
 }
 
 const STORE_PATCH_FIELDS = [
@@ -77,16 +95,11 @@ const STORE_PATCH_FIELDS = [
   "receipt_footer",
   "pos_enabled",
   "web_enabled",
-  "is_live",
-  "is_active",
-  "slug",
   "business_type",
-  "account_manager_name",
-  "account_manager_phone",
-  "suspend_reason",
   "default_location_id",
-  "custom_domain",
 ]
+// Suspension, go-live, slug, custom domain and account manager are platform decisions:
+// only Super Admin changes them (PATCH /admin/stores/:id), never the store itself.
 
 function publicPlanLimits(plan) {
   if (!plan) return null
@@ -246,6 +259,12 @@ export async function upsertShipping(store, fields) {
     store_id_int: store.store_id_int,
     ...fields,
   })
+}
+
+export async function getPublicStoreByDomain(domain) {
+  const store = await findLiveStoreByDomain(domain)
+  if (!store) throw new NotFoundError("Store not found")
+  return getPublicStoreBySlug(store.slug)
 }
 
 export async function getPublicStoreBySlug(slug) {
