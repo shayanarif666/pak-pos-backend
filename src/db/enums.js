@@ -21,7 +21,7 @@ export const BUSINESS_TYPE = [
   "wholesale",
   "other",
 ]
-export const LICENSE_STATUS = ["pending", "active", "expired", "revoked"]
+export const LICENSE_STATUS = ["pending", "active", "expired", "revoked", "suspended"]
 export const USER_ROLE = [
   "superadmin",
   "store_admin",

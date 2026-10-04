@@ -82,7 +82,8 @@ async function resolveDevice(storeId, locationId, deviceId) {
     where: { id: deviceId, store_id: storeId, is_active: true },
   })
   if (!device) throw new NotFoundError("Device not found")
-  if (device.location_id !== locationId) {
+  // A till with no branch yet can open a shift at the cashier's location.
+  if (device.location_id && device.location_id !== locationId) {
     throw new AppError("Device is not at this location", 400)
   }
   return device

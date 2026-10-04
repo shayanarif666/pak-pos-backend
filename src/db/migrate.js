@@ -22,6 +22,8 @@ import * as expandBusinessTypes from "./migrations/20260921120000-expand-busines
 import * as productImagesFeatured from "./migrations/20260923120000-product-images-featured.js"
 import * as authTokenVersionDomainUnique from "./migrations/20261002120000-auth-token-version-domain-unique.js"
 import * as userSessions from "./migrations/20261002130000-user-sessions.js"
+import * as licenseSuspendExtend from "./migrations/20261004120000-license-suspend-extend.js"
+import * as posDeviceOptionalLocation from "./migrations/20261004130000-pos-device-optional-location.js"
 
 const migrations = [
   initSchema,
@@ -45,6 +47,8 @@ const migrations = [
   productImagesFeatured,
   authTokenVersionDomainUnique,
   userSessions,
+  licenseSuspendExtend,
+  posDeviceOptionalLocation,
 ]
 
 async function migrate() {

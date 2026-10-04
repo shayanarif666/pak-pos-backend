@@ -5,6 +5,7 @@ import { UnauthorizedError } from "../errors/UnauthorizedError.js"
 import {
   assertPosSessionUsable,
   assertSessionOpen,
+  assertStaffLicense,
 } from "../../modules/auth/auth.service.js"
 
 export async function authMiddleware(req, res, next) {
@@ -32,6 +33,11 @@ export async function authMiddleware(req, res, next) {
       throw new UnauthorizedError("Session has ended. Sign in again.")
     }
     await assertSessionOpen(payload)
+    // Expired / suspended store license: 403 with data.code, the dashboard signs the user out.
+    // Logout stays allowed so that sign-out can still close the session on the server.
+    if (!req.originalUrl.split("?")[0].endsWith("/auth/logout")) {
+      await assertStaffLicense(user)
+    }
     if (payload.channel === "pos") {
       await assertPosSessionUsable(user.store_id, payload)
     }

@@ -14,7 +14,9 @@ import {
   parseRegisterStore,
   parseRegisterSuperAdmin,
   parseBulkDelete,
+  parseRenewLicense,
   parseRevoke,
+  parseSuspendLicense,
 } from "./admin.validation.js"
 import {
   bulkDeleteModule,
@@ -33,8 +35,11 @@ import {
   patchStore,
   registerStore,
   registerSuperAdmin,
+  activateLicense,
+  extendLicense,
   renewLicense,
   revokeLicense,
+  suspendLicense,
 } from "./admin.controller.js"
 import { adminBillingRoutes } from "../billings/billing.routes.js"
 import { listAdmin } from "../audit/audit.controller.js"
@@ -77,7 +82,10 @@ router.get("/licenses", listLicenses)
 router.get("/licenses/:id", getLicense)
 router.patch("/licenses/:id", validate(parsePatchLicense), patchLicense)
 router.post("/licenses/:id/revoke", validate(parseRevoke), revokeLicense)
-router.post("/licenses/:id/renew", renewLicense)
+router.post("/licenses/:id/renew", validate(parseRenewLicense), renewLicense)
+router.post("/licenses/:id/extend", extendLicense)
+router.post("/licenses/:id/suspend", validate(parseSuspendLicense), suspendLicense)
+router.post("/licenses/:id/activate", activateLicense)
 
 router.post("/pos-devices", validate(parseAdminDevice), createDevice)
 router.get("/pos-devices", listDevices)

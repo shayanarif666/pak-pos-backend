@@ -8,8 +8,9 @@ export const PosDevice = sequelize.define(
     id: uuidPk(),
     store_id: uuidCol(false),
     store_id_int: { type: DataTypes.INTEGER, allowNull: false },
-    location_id: uuidCol(false),
-    location_id_int: { type: DataTypes.INTEGER, allowNull: false },
+    // Null until the store admin assigns the till to a branch (PATCH /pos-devices/:id).
+    location_id: uuidCol(true),
+    location_id_int: { type: DataTypes.INTEGER, allowNull: true },
     device_uid: { type: DataTypes.STRING(255), allowNull: false },
     name: { type: DataTypes.STRING(255), allowNull: false },
     platform: { type: DataTypes.STRING(255), allowNull: true },

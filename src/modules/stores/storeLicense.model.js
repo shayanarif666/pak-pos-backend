@@ -40,6 +40,10 @@ export const StoreLicense = sequelize.define(
     },
     starts_at: { type: DataTypes.DATE, allowNull: false },
     expires_at: { type: DataTypes.DATE, allowNull: false },
+    // Days added by "extend" that the next renewal takes back.
+    grace_days: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+    suspended_at: { type: DataTypes.DATE, allowNull: true },
+    suspended_reason: { type: DataTypes.TEXT, allowNull: true },
     revoked_at: { type: DataTypes.DATE, allowNull: true },
     revoked_reason: { type: DataTypes.TEXT, allowNull: true },
   },

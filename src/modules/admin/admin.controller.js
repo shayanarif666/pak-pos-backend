@@ -97,6 +97,21 @@ export const revokeLicense = asyncHandler(async (req, res) => {
 })
 
 export const renewLicense = asyncHandler(async (req, res) => {
-  const data = await licenseService.renewLicense(req.params.id)
-  return apiResponse(res, 200, "License renewed", data)
+  const data = await licenseService.renewLicense(req.params.id, req.body, req.user)
+  return apiResponse(res, 200, "License renewed for 1 month", data)
+})
+
+export const extendLicense = asyncHandler(async (req, res) => {
+  const data = await licenseService.extendLicense(req.params.id, req.user)
+  return apiResponse(res, 200, `License extended by ${licenseService.LICENSE_GRACE_DAYS} days`, data)
+})
+
+export const suspendLicense = asyncHandler(async (req, res) => {
+  const data = await licenseService.suspendLicense(req.params.id, req.body.reason, req.user)
+  return apiResponse(res, 200, "License suspended", data)
+})
+
+export const activateLicense = asyncHandler(async (req, res) => {
+  const data = await licenseService.reactivateLicense(req.params.id, req.user)
+  return apiResponse(res, 200, "License activated", data)
 })

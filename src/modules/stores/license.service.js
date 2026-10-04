@@ -13,6 +13,11 @@ import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
+import { createBilling } from "../billings/billing.service.js"
+
+/** Days the Super Admin can give an expired store before payment ("extend" button). */
+export const LICENSE_GRACE_DAYS = 2
+const DAY_MS = 24 * 60 * 60 * 1000
 
 export function generateLicenseKey() {
   const raw = crypto.randomBytes(8).toString("hex").toUpperCase()
@@ -65,6 +70,9 @@ export function publicLicense(license, extras = {}) {
     expires_at: license.expires_at,
     revoked_at: license.revoked_at,
     revoked_reason: license.revoked_reason,
+    grace_days: license.grace_days ?? 0,
+    suspended_at: license.suspended_at ?? null,
+    suspended_reason: license.suspended_reason ?? null,
     ...extras,
   }
 }
@@ -119,6 +127,9 @@ function assertStoreUsable(license) {
   if (license.status === "expired") {
     throw new AppError("License has expired", 403)
   }
+  if (license.status === "suspended") {
+    throw new AppError("License has been suspended", 403)
+  }
   if (license.Store && !license.Store.is_active) {
     throw new AppError("Store is suspended", 403)
   }
@@ -167,20 +178,6 @@ export async function validateLicenseKey(licenseKey) {
     throw new AppError("License is not active", 403)
   }
   return publicLicense(license, licenseExtras(license))
-}
-
-async function resolveActivateLocation(store, locationId) {
-  if (locationId) return locationId
-  if (store?.default_location_id) return store.default_location_id
-  const first = await Location.findOne({
-    where: { store_id: store.id, is_active: true },
-    order: [
-      ["is_default", "DESC"],
-      ["location_id_int", "ASC"],
-    ],
-  })
-  if (first) return first.id
-  throw new AppError("location_id is required to register this POS", 400)
 }
 
 async function findOtherLicenseWithDeviceUid(storeId, deviceUid, excludeLicenseId) {
@@ -252,19 +249,19 @@ export async function activateLicenseKey(input, meta = {}) {
     }
 
     // registerDevice() enforces plans.max_devices across all active devices of the store.
-    const location_id = await resolveActivateLocation(license.Store, input.location_id)
+    // The till is registered without a location; the store admin assigns it later with
+    // PATCH /pos-devices/:id (an already known till keeps its location).
     const { registerDevice } = await import("../pos/posDevice.service.js")
     const store = await Store.findByPk(license.store_id, { transaction })
     const device = await registerDevice(
       {
         device_uid: input.device_uid,
         name: input.name || `POS ${input.device_uid}`,
-        location_id,
         platform: input.platform,
         app_version: input.app_version,
       },
       null,
-      { store }
+      { store, withoutLocation: true }
     )
 
     const nextDevices = [
@@ -306,7 +303,7 @@ export async function activateLicenseKey(input, meta = {}) {
   })
 }
 
-const LICENSE_STATUS_RANK = { active: 0, pending: 1, expired: 2, revoked: 3 }
+const LICENSE_STATUS_RANK = { active: 0, pending: 1, suspended: 2, expired: 3, revoked: 4 }
 
 /** The license the store is actually running on: active first, then pending, newest expiry. */
 export async function getCurrentLicense(storeId) {
@@ -491,29 +488,227 @@ export async function revokeLicense(id, reason) {
   return publicLicense(license)
 }
 
-export async function renewLicense(id) {
-  const license = await StoreLicense.findByPk(id)
+// Status a license returns to once it is no longer suspended / expired: tills that are already
+// registered can keep working (active); a key with no till yet waits for activation (pending).
+function liveStatus(license) {
+  return readDeviceUuids(license).length > 0 ? "active" : "pending"
+}
+
+async function loadAdminLicense(id, transaction) {
+  const license = await StoreLicense.findByPk(id, { transaction, lock: transaction.LOCK.UPDATE })
   if (!license) throw new NotFoundError("License not found")
-  if (license.status === "revoked") {
-    throw new AppError("Revoked license cannot be renewed", 409)
-  }
+  return license
+}
 
-  const now = new Date()
-  const base =
-    license.expires_at && new Date(license.expires_at) > now
-      ? new Date(license.expires_at)
-      : now
+async function adminLicenseView(license, transaction) {
+  const [store, plan] = await Promise.all([
+    Store.findByPk(license.store_id, { attributes: ["id", "name", "slug"], transaction }),
+    Plan.findByPk(license.plan_id, {
+      attributes: ["id", "code", "name", "max_devices", "max_locations", "price_pkr"],
+      transaction,
+    }),
+  ])
+  return publicLicense(license, { store, plan, devices: readDeviceUuids(license) })
+}
 
-  // A renewed key that already has registered tills goes straight back to active,
-  // otherwise those POS devices stay locked out until someone re-activates them.
-  const hasDevices = readDeviceUuids(license).length > 0
-  const nextStatus =
-    license.status === "expired" ? (hasDevices ? "active" : "pending") : license.status
-  await license.update({
-    status: nextStatus,
-    expires_at: addOneMonth(base),
-    revoked_at: null,
-    revoked_reason: null,
+// Audit actions are a fixed enum, so the license action (extend / renew / suspend / activate)
+// is recorded as an "update" with the action name at the start of the note.
+async function auditLicense(license, action, actor, detail) {
+  const note = detail ? `${action}: ${detail}` : action
+  await writeAudit({
+    action: "update",
+    entity_type: "store_licenses",
+    entity_id: license.id,
+    store_id: license.store_id,
+    store_id_int: license.store_id_int,
+    user_id: actor?.id || null,
+    channel: "web",
+    note,
   })
-  return publicLicense(license)
+}
+
+/**
+ * Extend: the store promised to pay in a couple of days. Adds LICENSE_GRACE_DAYS from the later
+ * of today and the expiry date, and records them so the next renewal takes them back.
+ * Allowed once per billing period.
+ */
+export async function extendLicense(id, actor) {
+  const license = await sequelize.transaction(async (transaction) => {
+    const row = await loadAdminLicense(id, transaction)
+    await refreshExpired(row)
+    if (["revoked", "suspended"].includes(row.status)) {
+      throw new ConflictError(`A ${row.status} license cannot be extended`)
+    }
+    if ((row.grace_days || 0) > 0) {
+      throw new ConflictError("This license was already extended. Renew it to extend again")
+    }
+
+    const now = new Date()
+    const base = new Date(row.expires_at) > now ? new Date(row.expires_at) : now
+    await row.update(
+      {
+        expires_at: new Date(base.getTime() + LICENSE_GRACE_DAYS * DAY_MS),
+        grace_days: LICENSE_GRACE_DAYS,
+        status: row.status === "expired" ? liveStatus(row) : row.status,
+      },
+      { transaction }
+    )
+    return row
+  })
+  await auditLicense(license, "extend", actor, `+${LICENSE_GRACE_DAYS} days`)
+  return adminLicenseView(license)
+}
+
+/**
+ * Renew +1 month for the plan the store bought. Grace days from an earlier extension are taken
+ * back, the store moves to that plan, and the billing transaction is recorded.
+ */
+export async function renewLicense(id, input = {}, actor = null) {
+  const { license, billing, plan } = await sequelize.transaction(async (transaction) => {
+    const row = await loadAdminLicense(id, transaction)
+    if (row.status === "revoked") {
+      throw new AppError("Revoked license cannot be renewed", 409)
+    }
+    await refreshExpired(row)
+
+    const nextPlan = await Plan.findByPk(input.plan_id || row.plan_id, { transaction })
+    if (!nextPlan || !nextPlan.is_active) throw new NotFoundError("Plan not found")
+    const store = await Store.findByPk(row.store_id, { transaction })
+    if (!store) throw new NotFoundError("Store not found")
+
+    // A smaller plan must still fit what the store already uses.
+    const [devices, locations] = await Promise.all([
+      PosDevice.count({ where: { store_id: store.id, is_active: true }, transaction }),
+      Location.count({ where: { store_id: store.id, is_active: true }, transaction }),
+    ])
+    if (devices > nextPlan.max_devices) {
+      throw new ConflictError(
+        `${nextPlan.name} allows ${nextPlan.max_devices} device(s) but the store has ${devices} active. Deactivate devices first`
+      )
+    }
+    if (locations > nextPlan.max_locations) {
+      throw new ConflictError(
+        `${nextPlan.name} allows ${nextPlan.max_locations} location(s) but the store has ${locations} active. Deactivate locations first`
+      )
+    }
+
+    const now = new Date()
+    const periodStart =
+      row.expires_at && new Date(row.expires_at) > now ? new Date(row.expires_at) : now
+    const graceDays = row.grace_days || 0
+    const expiresAt = new Date(addOneMonth(periodStart).getTime() - graceDays * DAY_MS)
+
+    const status = ["expired", "pending"].includes(row.status)
+      ? liveStatus(row)
+      : row.status // active stays active, suspended stays suspended
+    await row.update(
+      { plan_id: nextPlan.id, status, expires_at: expiresAt, grace_days: 0 },
+      { transaction }
+    )
+    if (store.plan_id !== nextPlan.id) await store.update({ plan_id: nextPlan.id }, { transaction })
+
+    const billingRow = await createBilling(
+      {
+        store_id: store.id,
+        plan_id: nextPlan.id,
+        amount: input.amount ?? nextPlan.price_pkr,
+        status: input.billing_status || "paid",
+        period_start: periodStart,
+        period_end: expiresAt,
+        method_note: input.method_note || "manual",
+        note: [
+          `License ${row.license_key} renewed for 1 month`,
+          graceDays ? `${graceDays} grace day(s) deducted` : null,
+          input.note || null,
+        ]
+          .filter(Boolean)
+          .join(". "),
+      },
+      { transaction, createdBy: actor?.id }
+    )
+    return { license: row, billing: billingRow, plan: nextPlan }
+  })
+
+  await auditLicense(license, "renew", actor, `${plan.code}, billing ${billing.id}`)
+  return { ...(await adminLicenseView(license)), billing }
+}
+
+/** Suspend: the Super Admin blocks the store. Dashboard and POS stop working for its staff. */
+export async function suspendLicense(id, reason, actor) {
+  const license = await sequelize.transaction(async (transaction) => {
+    const row = await loadAdminLicense(id, transaction)
+    if (row.status === "revoked") throw new ConflictError("Revoked license cannot be suspended")
+    if (row.status === "suspended") throw new ConflictError("License is already suspended")
+    await row.update(
+      { status: "suspended", suspended_at: new Date(), suspended_reason: reason || null },
+      { transaction }
+    )
+    return row
+  })
+  await auditLicense(license, "suspend", actor, reason || null)
+  return adminLicenseView(license)
+}
+
+/** Activate: lift a suspension. If the paid period ran out meanwhile, the license is expired. */
+export async function reactivateLicense(id, actor) {
+  const license = await sequelize.transaction(async (transaction) => {
+    const row = await loadAdminLicense(id, transaction)
+    if (row.status !== "suspended") {
+      throw new ConflictError("Only a suspended license can be activated")
+    }
+    await row.update(
+      {
+        status: isExpired(row.expires_at) ? "expired" : liveStatus(row),
+        suspended_at: null,
+        suspended_reason: null,
+      },
+      { transaction }
+    )
+    return row
+  })
+  await auditLicense(license, "activate", actor, null)
+  return adminLicenseView(license)
+}
+
+/** Marks every license whose paid period has ended as expired (runs on a timer). */
+export async function expireOverdueLicenses() {
+  const [result] = await sequelize.query(
+    `UPDATE store_licenses SET status = 'expired', updated_at = NOW()
+     WHERE status IN ('active', 'pending') AND expires_at < NOW()`
+  )
+  return result?.affectedRows ?? 0
+}
+
+function accessError(message, code) {
+  const err = new AppError(message, 403)
+  err.data = { code }
+  return err
+}
+
+/**
+ * Store staff (dashboard and POS) may work only while the store holds a usable license:
+ * active or pending, inside its paid period. Otherwise 403 with data.code LICENSE_SUSPENDED or
+ * LICENSE_EXPIRED, which the dashboard shows as a blocking alert before signing out.
+ */
+export async function assertStoreLicenseUsable(storeId) {
+  if (!storeId) return
+  const licenses = await StoreLicense.findAll({
+    where: { store_id: storeId },
+    attributes: ["id", "status", "expires_at"],
+  })
+  const now = new Date()
+  const usable = licenses.some(
+    (row) => ["active", "pending"].includes(row.status) && new Date(row.expires_at) > now
+  )
+  if (usable) return
+  if (licenses.some((row) => row.status === "suspended")) {
+    throw accessError(
+      "Your store license has been suspended. Contact Bazar360 support.",
+      "LICENSE_SUSPENDED"
+    )
+  }
+  throw accessError(
+    "Your store license has expired. Renew your subscription to continue.",
+    "LICENSE_EXPIRED"
+  )
 }

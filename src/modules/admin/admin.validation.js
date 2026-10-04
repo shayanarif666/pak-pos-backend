@@ -271,6 +271,31 @@ export function parseRevoke(body) {
   return { revoked_reason: optionalString(body, "revoked_reason") }
 }
 
+// Renew +1 month: plan_id is the plan the store bought for the next month; a billing
+// transaction is created from it (amount defaults to the plan price).
+export function parseRenewLicense(body) {
+  const out = { plan_id: requireUuid(body, "plan_id") }
+  if (body.amount !== undefined && body.amount !== null && body.amount !== "") {
+    const amount = Number(body.amount)
+    if (Number.isNaN(amount) || amount < 0) throw new AppError("amount must be a number >= 0", 400)
+    out.amount = amount
+  }
+  const status = optionalString(body, "billing_status")
+  if (status) {
+    if (!BILLING_STATUS.includes(status)) {
+      throw new AppError(`billing_status must be one of: ${BILLING_STATUS.join(", ")}`, 400)
+    }
+    out.billing_status = status
+  }
+  out.method_note = optionalString(body, "method_note")
+  out.note = optionalString(body, "note")
+  return out
+}
+
+export function parseSuspendLicense(body) {
+  return { reason: optionalString(body, "reason") }
+}
+
 export function parseCreateLicense(body) {
   return {
     store_id: requireUuid(body, "store_id"),

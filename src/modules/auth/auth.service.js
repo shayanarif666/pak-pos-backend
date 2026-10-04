@@ -12,7 +12,7 @@ import { Location } from "../locations/location.model.js"
 import { PosDevice } from "../pos/posDevice.model.js"
 import { findLiveStoreBySlug, publicStore } from "../stores/store.service.js"
 import { visibilityFromRecordChannel } from "../../db/channelVisibility.js"
-import { publicLicense } from "../stores/license.service.js"
+import { assertStoreLicenseUsable, publicLicense } from "../stores/license.service.js"
 import { assertPinAvailable, PIN_TAKEN_MESSAGE } from "./pin.util.js"
 import { hashPassword, comparePassword } from "../../shared/utils/hash.util.js"
 import { hashToken, randomToken } from "../../shared/utils/token.util.js"
@@ -372,6 +372,7 @@ async function resolveLoginUser(input) {
   if (input.channel !== "pos") return { user, channel: input.channel }
 
   if (!STAFF_ROLES.has(user.role)) throw new UnauthorizedError("Invalid credentials")
+  await assertStoreLicenseUsable(user.store_id)
   const pos = await resolveStorePosLicense(user)
   return { user, channel: "pos", pos }
 }
@@ -416,9 +417,17 @@ export async function assertPosSessionUsable(storeId, { license_id, device_id })
   }
 }
 
+/** Store staff can sign in (dashboard or POS) only while the store license is usable. */
+export async function assertStaffLicense(user) {
+  if (user?.store_id && STAFF_ROLES.has(user.role)) {
+    await assertStoreLicenseUsable(user.store_id)
+  }
+}
+
 export async function login(input, meta = {}) {
   const { user, channel, pos } = await resolveLoginUser(input)
   await verifyCredentials(user, input)
+  await assertStaffLicense(user)
 
   const last_login_at = new Date()
   const tokens = await startSession(user, { pos, channel, meta })
@@ -467,6 +476,7 @@ export async function refreshSession(refreshToken) {
   if ((payload.tv ?? 0) !== (user.token_version ?? 0)) {
     throw new UnauthorizedError("Session has ended")
   }
+  await assertStaffLicense(user)
 
   const session = await assertSessionOpen(payload)
   const match =

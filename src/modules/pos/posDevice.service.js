@@ -1,7 +1,9 @@
+import { Op } from "sequelize"
 import { PosDevice } from "./posDevice.model.js"
+import { StoreLicense } from "../stores/storeLicense.model.js"
 import { Location } from "../locations/location.model.js"
 import { Store } from "../stores/store.model.js"
-import { validateLicenseKey } from "../stores/license.service.js"
+import { readDeviceUuids, validateLicenseKey } from "../stores/license.service.js"
 import { getStoreForManager } from "../stores/store.service.js"
 import { assertPlan } from "../../shared/utils/plan.util.js"
 import { AppError } from "../../shared/errors/AppError.js"
@@ -46,15 +48,27 @@ async function resolveStoreFromInput(input, user) {
   return store
 }
 
-export async function registerDevice(input, user, { store: existingStore } = {}) {
+/**
+ * withoutLocation: used by license activation (POST /licenses/validate). A new till is saved with
+ * no location, and an existing till keeps the location it has; only PATCH /pos-devices/:id
+ * (store admin) sets or changes it.
+ */
+export async function registerDevice(
+  input,
+  user,
+  { store: existingStore, withoutLocation = false } = {}
+) {
   const store = existingStore || (await resolveStoreFromInput(input, user))
-  const locationId = input.location_id || user?.location_id
-  if (!locationId) throw new AppError("location_id is required", 400)
-  if (user?.role === "manager" && locationId !== user.location_id) {
-    throw new ForbiddenError("Managers can only register a device at their location")
+  let location = null
+  if (!withoutLocation) {
+    const locationId = input.location_id || user?.location_id
+    if (!locationId) throw new AppError("location_id is required", 400)
+    if (user?.role === "manager" && locationId !== user.location_id) {
+      throw new ForbiddenError("Managers can only register a device at their location")
+    }
+    location = await resolveLocation(store.id, locationId)
   }
 
-  const location = await resolveLocation(store.id, locationId)
   const existing = await PosDevice.findOne({
     where: { store_id: store.id, device_uid: input.device_uid },
   })
@@ -69,8 +83,7 @@ export async function registerDevice(input, user, { store: existingStore } = {})
     }
     await existing.update({
       name: input.name,
-      location_id: location.id,
-      location_id_int: location.location_id_int,
+      ...(location ? { location_id: location.id, location_id_int: location.location_id_int } : {}),
       platform: input.platform,
       app_version: input.app_version,
       last_seen_at: new Date(),
@@ -84,8 +97,8 @@ export async function registerDevice(input, user, { store: existingStore } = {})
     await PosDevice.create({
       store_id: store.id,
       store_id_int: store.store_id_int,
-      location_id: location.id,
-      location_id_int: location.location_id_int,
+      location_id: location?.id || null,
+      location_id_int: location?.location_id_int ?? null,
       device_uid: input.device_uid,
       name: input.name,
       platform: input.platform,
@@ -146,7 +159,8 @@ export async function adminCreateDevice(input) {
 export async function heartbeat(actor, id) {
   const where = { id, store_id: actor.store_id }
   if (actor.role === "manager" || actor.role === "cashier") {
-    where.location_id = actor.location_id
+    // A till not yet assigned to a branch can still report in.
+    where.location_id = { [Op.or]: [actor.location_id, null] }
   }
   const device = await PosDevice.findOne({ where })
   if (!device || !device.is_active) throw new NotFoundError("Device not found")
@@ -171,5 +185,20 @@ export async function patchDevice(actor, id, fields) {
     await assertDeviceCap(store, 1)
   }
   await device.update(patch)
+  if (patch.location_id) await syncLicenseDeviceLocation(device)
   return publicDevice(device)
+}
+
+// License device lists keep a copy of each till's location (used by GET /licenses/location/:id).
+async function syncLicenseDeviceLocation(device) {
+  const licenses = await StoreLicense.findAll({ where: { store_id: device.store_id } })
+  for (const license of licenses) {
+    const entries = readDeviceUuids(license)
+    if (!entries.some((entry) => entry?.device_uid === device.device_uid)) continue
+    await license.update({
+      device_uuids: entries.map((entry) =>
+        entry?.device_uid === device.device_uid ? { ...entry, location_id: device.location_id } : entry
+      ),
+    })
+  }
 }
