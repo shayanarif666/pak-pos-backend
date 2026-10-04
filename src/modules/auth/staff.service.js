@@ -6,6 +6,7 @@ import { publicUser } from "./auth.service.js"
 import { hashPassword } from "../../shared/utils/hash.util.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
+import { assertPinAvailable, PIN_TAKEN_MESSAGE } from "./pin.util.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
 
@@ -52,11 +53,9 @@ function staffPayload(user, plaintextPassword = null) {
   return { ...publicUser(user, { includePin: true }), password: plaintextPassword }
 }
 
-async function assertPinFree(storeId, pin, exceptId) {
-  const where = { store_id: storeId, pin }
-  if (exceptId) where.id = { [Op.ne]: exceptId }
-  const taken = await User.findOne({ where })
-  if (taken) throw new ConflictError("PIN is already used in this store")
+// PINs are unique across all stores because POS sign-in sends only the PIN.
+async function assertPinFree(pin, exceptId) {
+  await assertPinAvailable(pin, { exceptUserId: exceptId })
 }
 
 export async function listStaff(actor) {
@@ -90,7 +89,7 @@ export async function createStaff(actor, input) {
   }
 
   await assertEmailFree(actor.store_id, input.email)
-  await assertPinFree(actor.store_id, input.pin)
+  await assertPinFree(input.pin)
 
   try {
     const user = await User.create({
@@ -112,7 +111,7 @@ export async function createStaff(actor, input) {
     if (err instanceof UniqueConstraintError) {
       const fields = err.errors?.map((e) => e.path) || []
       if (fields.includes("pin")) {
-        throw new ConflictError("PIN is already used in this store")
+        throw new ConflictError(PIN_TAKEN_MESSAGE)
       }
       throw new ConflictError("Email already registered in this store")
     }
@@ -147,7 +146,7 @@ export async function patchStaff(actor, id, fields) {
   }
   if (fields.password) patch.password = await hashPassword(fields.password)
   if (fields.pin) {
-    await assertPinFree(actor.store_id, fields.pin, user.id)
+    await assertPinFree(fields.pin, user.id)
     patch.pin = fields.pin
   }
   if (fields.location_id) {

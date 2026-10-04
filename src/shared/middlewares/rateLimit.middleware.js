@@ -22,7 +22,16 @@ function defaultScope(req) {
   return String(body.email || body.license_key || body.store_slug || "").toLowerCase()
 }
 
-export function rateLimit({ windowMs = 15 * 60 * 1000, max = 10, scope = defaultScope } = {}) {
+/**
+ * failuresOnly: count only requests that end in an error response. Used for login, where a
+ * shop's tills share one IP and successful PIN sign-ins at shift change must not lock them out.
+ */
+export function rateLimit({
+  windowMs = 15 * 60 * 1000,
+  max = 10,
+  scope = defaultScope,
+  failuresOnly = false,
+} = {}) {
   return (req, res, next) => {
     const now = Date.now()
     sweep(now)
@@ -35,8 +44,16 @@ export function rateLimit({ windowMs = 15 * 60 * 1000, max = 10, scope = default
       return next(new AppError("Too many attempts. Try again later.", 429))
     }
 
-    bucket.hits.push(now)
-    windows.set(key, bucket)
+    if (failuresOnly) {
+      res.on("finish", () => {
+        if (res.statusCode < 400 || res.statusCode === 429) return
+        bucket.hits.push(Date.now())
+        windows.set(key, bucket)
+      })
+    } else {
+      bucket.hits.push(now)
+      windows.set(key, bucket)
+    }
     next()
   }
 }

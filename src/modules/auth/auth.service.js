@@ -12,7 +12,8 @@ import { Location } from "../locations/location.model.js"
 import { PosDevice } from "../pos/posDevice.model.js"
 import { findLiveStoreBySlug, publicStore } from "../stores/store.service.js"
 import { visibilityFromRecordChannel } from "../../db/channelVisibility.js"
-import { publicLicense, validateLicenseKey } from "../stores/license.service.js"
+import { publicLicense } from "../stores/license.service.js"
+import { assertPinAvailable, PIN_TAKEN_MESSAGE } from "./pin.util.js"
 import { hashPassword, comparePassword } from "../../shared/utils/hash.util.js"
 import { hashToken, randomToken } from "../../shared/utils/token.util.js"
 import { isExpired } from "../../shared/utils/date.util.js"
@@ -306,108 +307,73 @@ function maybeRevealToken(token) {
   return isProduction ? undefined : token
 }
 
-async function findUsersByEmail(email) {
-  return User.findAll({ where: { email } })
-}
-
-async function resolveUserByStoreScope({ email, store_slug, license_key }) {
-  if (license_key) {
-    const license = await StoreLicense.findOne({ where: { license_key } })
-    if (!license) return null
-    return User.findOne({ where: { email, store_id: license.store_id } })
+// Email is unique per store, so one email can belong to several accounts. The password picks
+// the account; if it still matches more than one, the owner has to fix the duplicate.
+async function findUserByEmailPassword(email, password) {
+  const candidates = await User.findAll({ where: { email, is_active: true } })
+  const matches = []
+  for (const user of candidates) {
+    if (await comparePassword(password, user.password)) matches.push(user)
   }
-
-  if (store_slug) {
-    const store = await Store.findOne({ where: { slug: store_slug } })
-    if (!store) return null
-    return User.findOne({ where: { email, store_id: store.id } })
-  }
-
-  const matches = await findUsersByEmail(email)
   if (matches.length > 1) {
-    throw new AppError("store_slug or license_key is required", 400)
+    throw new ConflictError(
+      "This email is linked to more than one store with the same password. Change the password on one of them"
+    )
   }
   return matches[0] || null
 }
 
-// PIN is always looked up inside one store and only for store staff.
-// A platform-wide PIN search let any 4-digit guess (even the Super Admin's PIN) sign in.
-async function findUserByPin(pin, storeId) {
-  if (!storeId) return null
-  return User.findOne({
-    where: { pin, store_id: storeId, role: { [Op.in]: [...STAFF_ROLES] } },
+// PINs are unique platform-wide (see pin.util.js), so the PIN alone identifies one staff member.
+async function findUserByPin(pin) {
+  const matches = await User.findAll({
+    where: { pin, is_active: true, role: { [Op.in]: [...STAFF_ROLES] } },
+    limit: 2,
   })
+  if (matches.length > 1) {
+    throw new ConflictError("This PIN is shared by more than one account. Ask your admin to set a new PIN")
+  }
+  return matches[0] || null
 }
 
-// POS sessions are bound to an active device registered on the license.
-async function resolvePosDevice(input, license) {
-  const where = { store_id: license.store_id }
-  if (input.device_id) where.id = input.device_id
-  else if (input.device_uid) where.device_uid = input.device_uid
-  else throw new AppError("device_uid is required for POS login", 400)
+/**
+ * POS sign-in only needs credentials. The store must be active, have POS enabled and hold an
+ * activated license (devices are bound to the license on POST /licenses/validate).
+ */
+async function resolveStorePosLicense(user) {
+  const store = await Store.findByPk(user.store_id)
+  if (!store) throw new UnauthorizedError("Invalid credentials")
+  if (!store.is_active) throw new AppError("Store is suspended", 403)
+  if (!store.pos_enabled) throw new AppError("POS is disabled for this store", 403)
 
-  const device = await PosDevice.findOne({ where })
-  if (!device) throw new AppError("This device is not registered for this license", 403)
-  if (!device.is_active) throw new AppError("This device has been deactivated", 403)
-  const bound = (license.device_uuids || []).some(
-    (entry) => entry?.device_uid === device.device_uid
-  )
-  if (!bound) throw new AppError("This device is not registered for this license", 403)
-  return device
-}
-
-async function resolvePosLogin(input) {
-  const license = await validateLicenseKey(input.license_key)
-  const device = await resolvePosDevice(input, license)
-  return { license, device }
-}
-
-async function resolvePinLoginUser(input) {
-  if (input.channel === "pos") {
-    const { license, device } = await resolvePosLogin(input)
-    const user = await findUserByPin(input.pin, license.store_id)
-    return { user, channel: "pos", pos: { license_id: license.id, device_id: device.id } }
+  const licenses = await StoreLicense.findAll({
+    where: { store_id: store.id, status: { [Op.in]: ["active", "pending"] } },
+    order: [["expires_at", "DESC"]],
+  })
+  for (const license of licenses) {
+    if (license.status !== "active") continue
+    if (isExpired(license.expires_at)) {
+      await license.update({ status: "expired" })
+      continue
+    }
+    return { license_id: license.id, device_id: null }
   }
-
-  if (input.license_key) {
-    const license = await StoreLicense.findOne({
-      where: { license_key: input.license_key },
-    })
-    const user = license ? await findUserByPin(input.pin, license.store_id) : null
-    return { user, channel: input.channel || "web" }
+  if (licenses.some((license) => license.status === "pending")) {
+    throw new AppError("License has not been activated", 403)
   }
-
-  if (input.store_slug) {
-    const store = await Store.findOne({ where: { slug: input.store_slug } })
-    const user = store ? await findUserByPin(input.pin, store.id) : null
-    return { user, channel: input.channel || "web" }
-  }
-
-  throw new AppError("license_key or store_slug is required for PIN login", 400)
+  throw new AppError("License is not active", 403)
 }
 
 async function resolveLoginUser(input) {
-  if (input.pin) return resolvePinLoginUser(input)
+  const user = input.pin
+    ? await findUserByPin(input.pin)
+    : await findUserByEmailPassword(input.email, input.password)
+  if (!user) throw new UnauthorizedError("Invalid credentials")
 
-  const email = input.email.toLowerCase()
+  if (input.channel !== "pos") return { user, channel: input.channel }
 
-  if (input.channel === "pos") {
-    const { license, device } = await resolvePosLogin(input)
-    const user = await User.findOne({
-      where: { email, store_id: license.store_id },
-    })
-    if (user && !STAFF_ROLES.has(user.role)) {
-      throw new UnauthorizedError("Invalid credentials")
-    }
-    return { user, channel: "pos", pos: { license_id: license.id, device_id: device.id } }
-  }
-
-  const user = await resolveUserByStoreScope({
-    email,
-    store_slug: input.store_slug,
-    license_key: input.license_key,
-  })
-  return { user, channel: input.channel || "web" }
+  if (!STAFF_ROLES.has(user.role)) throw new UnauthorizedError("Invalid credentials")
+  const pos = await resolveStorePosLicense(user)
+  return { user, channel: "pos", pos }
 }
 
 async function verifyCredentials(user, { password, pin }) {
@@ -426,12 +392,18 @@ async function verifyCredentials(user, { password, pin }) {
   }
 }
 
-/** POS tokens stay valid only while their license is active and their device is enabled. */
+/**
+ * POS tokens stay valid only while the store's POS is on and its license is active. Tokens
+ * issued before login dropped device_uid may still carry a device; that device must be enabled.
+ */
 export async function assertPosSessionUsable(storeId, { license_id, device_id }) {
-  const [license, device] = await Promise.all([
+  const [store, license, device] = await Promise.all([
+    Store.findByPk(storeId, { attributes: ["id", "is_active", "pos_enabled"] }),
     license_id ? StoreLicense.findOne({ where: { id: license_id, store_id: storeId } }) : null,
     device_id ? PosDevice.findOne({ where: { id: device_id, store_id: storeId } }) : null,
   ])
+  if (!store || !store.is_active) throw new UnauthorizedError("Store is suspended")
+  if (!store.pos_enabled) throw new UnauthorizedError("POS is disabled for this store")
   if (!license) throw new UnauthorizedError("POS license not found")
   if (license.status === "active" && isExpired(license.expires_at)) {
     await license.update({ status: "expired" })
@@ -439,7 +411,7 @@ export async function assertPosSessionUsable(storeId, { license_id, device_id })
   if (license.status !== "active") {
     throw new UnauthorizedError(`POS license is ${license.status}`)
   }
-  if (!device || !device.is_active) {
+  if (device_id && (!device || !device.is_active)) {
     throw new UnauthorizedError("POS device is deactivated")
   }
 }
@@ -565,14 +537,7 @@ export async function patchMe(user, fields) {
     if (!STAFF_ROLES.has(user.role) || !user.store_id) {
       throw new AppError("PIN is only for store staff", 400)
     }
-    const taken = await User.findOne({
-      where: {
-        store_id: user.store_id,
-        pin: fields.pin,
-        id: { [Op.ne]: user.id },
-      },
-    })
-    if (taken) throw new ConflictError("PIN is already used in this store")
+    await assertPinAvailable(fields.pin, { exceptUserId: user.id })
     patch.pin = fields.pin
   }
 
@@ -580,7 +545,7 @@ export async function patchMe(user, fields) {
     await user.update(patch)
   } catch (err) {
     if (err instanceof UniqueConstraintError) {
-      throw new ConflictError("PIN is already used in this store")
+      throw new ConflictError(PIN_TAKEN_MESSAGE)
     }
     throw err
   }
@@ -651,6 +616,27 @@ export async function registerCustomer(input) {
       verify_token: maybeRevealToken(verify_token),
     }
   })
+}
+
+// Password reset has no password to tell same-email accounts apart, so it still needs the store.
+async function resolveUserByStoreScope({ email, store_slug, license_key }) {
+  if (license_key) {
+    const license = await StoreLicense.findOne({ where: { license_key } })
+    if (!license) return null
+    return User.findOne({ where: { email, store_id: license.store_id } })
+  }
+
+  if (store_slug) {
+    const store = await Store.findOne({ where: { slug: store_slug } })
+    if (!store) return null
+    return User.findOne({ where: { email, store_id: store.id } })
+  }
+
+  const matches = await User.findAll({ where: { email } })
+  if (matches.length > 1) {
+    throw new AppError("store_slug or license_key is required", 400)
+  }
+  return matches[0] || null
 }
 
 export async function forgotPassword(input) {

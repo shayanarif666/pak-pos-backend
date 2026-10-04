@@ -13,6 +13,7 @@ import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
+import { assertPinAvailable, PIN_TAKEN_MESSAGE } from "../auth/pin.util.js"
 
 function publicManager(user, { includePin = false } = {}) {
   if (!user) return null
@@ -96,12 +97,8 @@ async function assertManagerCredentialsFree(
     if (emailTaken) throw new ConflictError("Manager email already registered in this store")
   }
 
-  if (pin) {
-    const where = { store_id: storeId, pin }
-    if (exceptUserId) where.id = { [Op.ne]: exceptUserId }
-    const pinTaken = await User.findOne({ where, transaction })
-    if (pinTaken) throw new ConflictError("Manager PIN is already used in this store")
-  }
+  // PINs are unique across all stores because POS sign-in sends only the PIN.
+  if (pin) await assertPinAvailable(pin, { exceptUserId, transaction })
 }
 
 async function createLocationManager(store, location, manager, transaction) {
@@ -130,7 +127,7 @@ async function createLocationManager(store, location, manager, transaction) {
     if (err instanceof UniqueConstraintError) {
       const fields = err.errors?.map((e) => e.path) || []
       if (fields.includes("pin")) {
-        throw new ConflictError("Manager PIN is already used in this store")
+        throw new ConflictError(PIN_TAKEN_MESSAGE)
       }
       throw new ConflictError("Manager email already registered in this store")
     }

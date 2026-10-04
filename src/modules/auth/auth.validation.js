@@ -25,49 +25,32 @@ function optionalPin(body, key) {
   return pin
 }
 
+// Login takes only credentials + channel: { email, password, channel } or { pin, channel }.
+// Store, license and device are resolved on the server; anything else in the body is ignored.
 export function parseLogin(body) {
   const email = optionalString(body, "email")
   const password = optionalString(body, "password")
   const pin = optionalPin(body, "pin")
-
-  if (pin) {
-    if (email || password) {
-      throw new AppError("Use email and password, or pin only", 400)
-    }
-  } else {
-    if (!email) throw new AppError("email is required", 400)
-    if (!password) throw new AppError("password is required", 400)
-  }
 
   const channel = optionalString(body, "channel")
   if (channel && !ORDER_CHANNEL.includes(channel)) {
     throw new AppError("channel must be web or pos", 400)
   }
 
-  const license_key = optionalString(body, "license_key")
-  const store_slug = optionalString(body, "store_slug")
-  const device_uid = optionalString(body, "device_uid")
-  const device_id = optionalString(body, "device_id")
-  if (channel === "pos" && !license_key) {
-    throw new AppError("license_key is required for POS login", 400)
-  }
-  if (channel === "pos" && !device_uid && !device_id) {
-    throw new AppError("device_uid is required for POS login", 400)
-  }
-  if (pin && !license_key && !store_slug) {
-    throw new AppError("license_key or store_slug is required for PIN login", 400)
+  if (pin) {
+    if (email || password) {
+      throw new AppError("Use email and password, or pin only", 400)
+    }
+    // PIN sign-in exists only on the POS.
+    if (channel && channel !== "pos") {
+      throw new AppError("PIN login is only available on POS", 400)
+    }
+    return { email: null, password: null, pin, channel: "pos" }
   }
 
-  return {
-    email: email ? email.toLowerCase() : null,
-    password,
-    pin,
-    channel,
-    license_key,
-    store_slug,
-    device_uid,
-    device_id,
-  }
+  if (!email) throw new AppError("email is required", 400)
+  if (!password) throw new AppError("password is required", 400)
+  return { email: email.toLowerCase(), password, pin: null, channel: channel || "web" }
 }
 
 export function parseRefresh(body) {

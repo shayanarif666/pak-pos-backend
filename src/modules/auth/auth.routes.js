@@ -25,7 +25,7 @@ import {
 
 const router = Router()
 
-router.post("/login", rateLimit({ max: 10 }), validate(parseLogin), login)
+router.post("/login", rateLimit({ max: 10, failuresOnly: true }), validate(parseLogin), login)
 router.post("/refresh", validate(parseRefresh), refresh)
 router.post("/logout", authMiddleware, logout)
 router.get("/me", authMiddleware, me)
