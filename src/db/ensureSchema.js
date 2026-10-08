@@ -5,6 +5,8 @@ import * as authTokenVersionDomainUnique from "./migrations/20261002120000-auth-
 import * as userSessions from "./migrations/20261002130000-user-sessions.js"
 import * as licenseSuspendExtend from "./migrations/20261004120000-license-suspend-extend.js"
 import * as posDeviceOptionalLocation from "./migrations/20261004130000-pos-device-optional-location.js"
+import * as supplierLocations from "./migrations/20261006120000-supplier-locations.js"
+import * as reportLocationIndexes from "./migrations/20261006130000-report-location-indexes.js"
 
 // Migrations the running code cannot work without (e.g. users.token_version is read on every
 // authenticated request). Each one checks before it changes anything, so running it on a
@@ -16,6 +18,10 @@ const REQUIRED = [
   userSessions,
   licenseSuspendExtend,
   posDeviceOptionalLocation,
+  supplierLocations,
+  // Not required for correctness, but cheap: InnoDB builds these online, and Railway's query
+  // editor cannot run CREATE INDEX (it appends LIMIT 100), so the server adds them on start.
+  reportLocationIndexes,
 ]
 
 export async function ensureSchema() {

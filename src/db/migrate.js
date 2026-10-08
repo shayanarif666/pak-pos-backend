@@ -24,6 +24,8 @@ import * as authTokenVersionDomainUnique from "./migrations/20261002120000-auth-
 import * as userSessions from "./migrations/20261002130000-user-sessions.js"
 import * as licenseSuspendExtend from "./migrations/20261004120000-license-suspend-extend.js"
 import * as posDeviceOptionalLocation from "./migrations/20261004130000-pos-device-optional-location.js"
+import * as supplierLocations from "./migrations/20261006120000-supplier-locations.js"
+import * as reportLocationIndexes from "./migrations/20261006130000-report-location-indexes.js"
 
 const migrations = [
   initSchema,
@@ -49,6 +51,8 @@ const migrations = [
   userSessions,
   licenseSuspendExtend,
   posDeviceOptionalLocation,
+  supplierLocations,
+  reportLocationIndexes,
 ]
 
 async function migrate() {

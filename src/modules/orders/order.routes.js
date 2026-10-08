@@ -23,6 +23,7 @@ import {
   listCancelled,
   listCustom,
   listRefunds,
+  salesByLocation,
   listPayments,
   receipt,
   refundComplete,
@@ -53,6 +54,7 @@ router.get("/", ...listRoles, list)
 router.get("/custom", ...staff, listCustom)
 router.get("/cancelled", ...cancelled, listCancelled)
 router.get("/refunds", ...staff, listRefunds)
+router.get("/summary/locations", ...cancelled, salesByLocation)
 router.post("/refunds/bulk", ...manage, refundItemsBulk)
 router.post("/refunds/complete/bulk", ...manage, refundCompleteBulk)
 router.get("/:id/payments", ...staff, listPayments)

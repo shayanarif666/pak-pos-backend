@@ -55,6 +55,11 @@ export const listCancelled = asyncHandler(async (req, res) => {
   return apiResponse(res, 200, "OK", data)
 })
 
+export const salesByLocation = asyncHandler(async (req, res) => {
+  const data = await orderService.salesByLocation(actorFromReq(req), req.query)
+  return apiResponse(res, 200, "OK", data)
+})
+
 export const listRefunds = asyncHandler(async (req, res) => {
   const data = await orderService.listOrderRefunds(actorFromReq(req), req.query)
   return apiResponse(res, 200, "OK", data)

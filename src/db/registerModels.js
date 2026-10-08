@@ -20,6 +20,7 @@ import { ProductStock } from "../modules/catalog/productStock.model.js"
 import { ProductBulkTier } from "../modules/catalog/productBulkTier.model.js"
 import { Supplier } from "../modules/inventory/supplier.model.js"
 import { SupplierLedger } from "../modules/inventory/supplierLedger.model.js"
+import { SupplierLocation } from "../modules/inventory/supplierLocation.model.js"
 import { StockMovement } from "../modules/inventory/stockMovement.model.js"
 import { StockTransfer } from "../modules/inventory/stockTransfer.model.js"
 import { Customer } from "../modules/customers/customer.model.js"
@@ -126,6 +127,9 @@ export function registerModels() {
 
   Supplier.belongsTo(Store, { foreignKey: "store_id" })
   Supplier.hasMany(SupplierLedger, { foreignKey: "supplier_id" })
+  Supplier.hasMany(SupplierLocation, { foreignKey: "supplier_id", as: "supplierLocations" })
+  SupplierLocation.belongsTo(Supplier, { foreignKey: "supplier_id" })
+  SupplierLocation.belongsTo(Location, { foreignKey: "location_id" })
   SupplierLedger.belongsTo(Supplier, { foreignKey: "supplier_id" })
   SupplierLedger.belongsTo(Store, { foreignKey: "store_id" })
   SupplierLedger.belongsTo(Location, { foreignKey: "location_id" })
@@ -246,6 +250,7 @@ export {
   ProductBulkTier,
   Supplier,
   SupplierLedger,
+  SupplierLocation,
   StockMovement,
   StockTransfer,
   Customer,

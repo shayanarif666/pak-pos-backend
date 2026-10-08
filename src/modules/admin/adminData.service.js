@@ -39,7 +39,10 @@ export const DATA_MODULES = {
   },
   suppliers: {
     table: "suppliers",
-    cascade: [{ table: "supplier_ledger", fk: "supplier_id" }],
+    cascade: [
+      { table: "supplier_ledger", fk: "supplier_id" },
+      { table: "supplier_locations", fk: "supplier_id" },
+    ],
   },
   stock_movements: { table: "stock_movements", cascade: [] },
   stock_transfers: { table: "stock_transfers", cascade: [] },

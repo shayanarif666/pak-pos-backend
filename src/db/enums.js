@@ -115,4 +115,6 @@ export const AUDIT_ACTION = [
 ]
 export const TRANSFER_STATUS = ["pending", "completed", "cancelled"]
 export const LEDGER_ENTRY_TYPE = ["debit", "credit"]
+/** suppliers.location_scope: delivers to every branch, or only to supplier_locations rows. */
+export const SUPPLIER_LOCATION_SCOPE = ["all", "selected"]
 export const RECORD_SOURCE = ["web", "pos", "sync"]

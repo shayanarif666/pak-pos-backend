@@ -8,6 +8,7 @@ import { OrderRefundItem } from "./orderRefundItem.model.js"
 import { Payment } from "../payments/payment.model.js"
 import { Receipt } from "../payments/receipt.model.js"
 import { User } from "../auth/user.model.js"
+import { Location } from "../locations/location.model.js"
 import { Customer } from "../customers/customer.model.js"
 import { CustomerCreditEntry } from "../customers/customerCreditEntry.model.js"
 import { nextReceiptNumber } from "../../shared/utils/counter.util.js"
@@ -175,10 +176,137 @@ export async function listCancelledOrders(actor, query = {}) {
   return { orders: rows, lost_sales, count: rows.length }
 }
 
+/**
+ * Sales per branch for the Sales tabs: how much each location sold and how its orders ended up.
+ * Store admin sees every location (or one with ?location_id=); a manager only their own.
+ * Filters: from, to (placed_at), channel, payment_method.
+ * net_sales = completed sales minus partial refunds on those completed orders (fully refunded
+ * orders are already outside completed sales).
+ */
+export async function salesByLocation(actor, query = {}) {
+  const locationId = locationScope(actor, query)
+  const where = { store_id: actor.store_id }
+  if (locationId) where.location_id = locationId
+  if (query.channel) where.channel = query.channel
+  if (query.payment_method) where.payment_method = query.payment_method
+  if (query.from || query.to) {
+    where.placed_at = {}
+    if (query.from) where.placed_at[Op.gte] = new Date(query.from)
+    if (query.to) where.placed_at[Op.lte] = new Date(query.to)
+  }
+
+  const [orderRows, refundRows, locations] = await Promise.all([
+    Order.findAll({
+      where,
+      attributes: [
+        "location_id",
+        "order_status",
+        [sequelize.fn("COUNT", sequelize.col("id")), "orders"],
+        [sequelize.fn("SUM", sequelize.col("total_amount")), "amount"],
+      ],
+      group: ["location_id", "order_status"],
+      raw: true,
+    }),
+    OrderRefund.findAll({
+      where: {
+        store_id: actor.store_id,
+        ...(locationId ? { location_id: locationId } : {}),
+      },
+      attributes: [
+        [sequelize.col("OrderRefund.location_id"), "location_id"],
+        [sequelize.col("Order.order_status"), "order_status"],
+        [sequelize.fn("COUNT", sequelize.col("OrderRefund.id")), "refunds"],
+        [sequelize.fn("SUM", sequelize.col("OrderRefund.amount")), "amount"],
+      ],
+      include: [{ model: Order, attributes: [], where, required: true }],
+      group: ["OrderRefund.location_id", "Order.order_status"],
+      raw: true,
+    }),
+    Location.findAll({
+      where: { store_id: actor.store_id, ...(locationId ? { id: locationId } : {}) },
+      attributes: ["id", "name", "is_active", "location_id_int"],
+      order: [["location_id_int", "ASC"]],
+    }),
+  ])
+
+  const empty = () => ({
+    orders: 0,
+    completed_orders: 0,
+    sales: 0,
+    pending_orders: 0,
+    pending_amount: 0,
+    cancelled_orders: 0,
+    refunded_orders: 0,
+    refunds_count: 0,
+    refunds_amount: 0,
+    partial_refunds: 0,
+  })
+  const byLocation = new Map(
+    locations.map((loc) => [
+      loc.id,
+      { location_id: loc.id, location_name: loc.name, location_number: loc.location_id_int, is_active: loc.is_active, ...empty() },
+    ])
+  )
+  const bucket = (id) => {
+    const key = id || null
+    if (!byLocation.has(key)) {
+      byLocation.set(key, { location_id: key, location_name: key ? "Unknown location" : "No location", location_number: null, is_active: false, ...empty() })
+    }
+    return byLocation.get(key)
+  }
+
+  for (const row of orderRows) {
+    const entry = bucket(row.location_id)
+    const count = Number(row.orders) || 0
+    const amount = Number(row.amount) || 0
+    entry.orders += count
+    if (row.order_status === "completed") {
+      entry.completed_orders += count
+      entry.sales += amount
+    } else if (row.order_status === "pending") {
+      entry.pending_orders += count
+      entry.pending_amount += amount
+    } else if (row.order_status === "cancelled" || row.order_status === "voided") {
+      entry.cancelled_orders += count
+    } else if (row.order_status === "refunded") {
+      entry.refunded_orders += count
+    }
+  }
+  for (const row of refundRows) {
+    const entry = bucket(row.location_id)
+    entry.refunds_count += Number(row.refunds) || 0
+    entry.refunds_amount += Number(row.amount) || 0
+    if (row.order_status === "completed") entry.partial_refunds += Number(row.amount) || 0
+  }
+
+  const rows = [...byLocation.values()].map((entry) => ({
+    ...entry,
+    sales: money(entry.sales),
+    pending_amount: money(entry.pending_amount),
+    refunds_amount: money(entry.refunds_amount),
+    partial_refunds: money(entry.partial_refunds),
+    net_sales: money(entry.sales - entry.partial_refunds),
+  }))
+  const totals = rows.reduce((sum, entry) => {
+    for (const key of Object.keys(empty())) sum[key] = (sum[key] || 0) + entry[key]
+    sum.net_sales = (sum.net_sales || 0) + entry.net_sales
+    return sum
+  }, {})
+  for (const key of ["sales", "pending_amount", "refunds_amount", "partial_refunds", "net_sales"]) {
+    totals[key] = money(totals[key] || 0)
+  }
+  return { locations: rows, totals }
+}
+
 export async function listOrderRefunds(actor, query = {}) {
   const where = { store_id: actor.store_id }
   const locationId = locationScope(actor, query)
   if (locationId) where.location_id = locationId
+  if (query.from || query.to) {
+    where.created_at = {}
+    if (query.from) where.created_at[Op.gte] = new Date(query.from)
+    if (query.to) where.created_at[Op.lte] = new Date(query.to)
+  }
 
   const rows = await OrderRefund.findAll({
     where,
