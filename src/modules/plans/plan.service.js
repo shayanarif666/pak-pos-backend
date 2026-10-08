@@ -66,6 +66,15 @@ export async function listPlans() {
   return rows.map(publicPlan)
 }
 
+/** Active plans only, for the public marketing site's pricing section. */
+export async function listActivePlans() {
+  const rows = await Plan.findAll({
+    where: { is_active: true },
+    order: [["price_pkr", "ASC"]],
+  })
+  return rows.map(publicPlan)
+}
+
 export async function getPlanById(id) {
   const plan = await Plan.findByPk(id)
   if (!plan) throw new NotFoundError("Plan not found")

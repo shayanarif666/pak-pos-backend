@@ -12,6 +12,7 @@ import { listPublicBanners } from "../stores/banner.service.js"
 import * as categoryService from "./category.service.js"
 import * as productService from "./product.service.js"
 import { listPublicReviews as listApprovedReviews } from "../reviews/review.service.js"
+import { listActivePlans } from "../plans/plan.service.js"
 
 // /public/stores/:slug/... uses the slug; /public/site/... resolves it from the domain first.
 function slugOf(req) {
@@ -20,6 +21,11 @@ function slugOf(req) {
 
 export const getSiteStore = asyncHandler(async (req, res) => {
   return apiResponse(res, 200, "OK", await getPublicStoreBySlug(slugOf(req)))
+})
+
+/** Active subscription plans, for the marketing site's pricing section. */
+export const listPublicPlans = asyncHandler(async (req, res) => {
+  return apiResponse(res, 200, "OK", await listActivePlans())
 })
 
 async function liveStore(slug) {

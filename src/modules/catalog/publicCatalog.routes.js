@@ -9,11 +9,13 @@ import {
   getPublicTheme,
   getSiteStore,
   listPublicCategories,
+  listPublicPlans,
   listPublicProducts,
 } from "./publicCatalog.controller.js"
 
 const router = Router()
 
+router.get("/plans", listPublicPlans)
 router.get("/stores/:slug/theme", getPublicTheme)
 router.get("/stores/:slug/content", getPublicContent)
 router.get("/stores/:slug/shipping", getPublicShipping)
