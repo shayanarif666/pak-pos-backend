@@ -76,11 +76,12 @@ async function getSession(storeId, id) {
   return row
 }
 
-async function resolveDevice(storeId, locationId, deviceId) {
-  if (!deviceId) return null
-  const device = await PosDevice.findOne({
-    where: { id: deviceId, store_id: storeId, is_active: true },
-  })
+async function resolveDevice(storeId, locationId, { deviceId, deviceUid } = {}) {
+  if (!deviceId && !deviceUid) return null
+  const where = { store_id: storeId, is_active: true }
+  if (deviceId) where.id = deviceId
+  else where.device_uid = deviceUid
+  const device = await PosDevice.findOne({ where })
   if (!device) throw new NotFoundError("Device not found")
   // A till with no branch yet can open a shift at the cashier's location.
   if (device.location_id && device.location_id !== locationId) {
@@ -139,7 +140,10 @@ export async function clockIn(actor, fields) {
   const locationId = resolveActorLocation(actor, fields.location_id)
   if (!locationId) throw new AppError("location_id is required", 400)
   const location = await getLocation(store.id, locationId)
-  const device = await resolveDevice(store.id, location.id, fields.device_id || actor.device_id)
+  const device = await resolveDevice(store.id, location.id, {
+    deviceId: fields.device_id || actor.device_id || null,
+    deviceUid: fields.device_uid || null,
+  })
 
   // Each counter (device) and each cashier can have one open drawer. Several counters of the
   // same branch (Package 2: up to 3 PCs) therefore run their own shifts side by side.

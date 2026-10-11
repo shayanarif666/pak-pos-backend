@@ -34,7 +34,11 @@ export function parseClockIn(body) {
   return {
     opening_cash,
     location_id: optionalUuid(body, "location_id"),
+    // Either identifies the till: device_id is the pos_devices row id, device_uid is the
+    // device's own stable hardware id (what a POS client knows right after license activation).
     device_id: optionalUuid(body, "device_id"),
+    device_uid:
+      body.device_uid == null || body.device_uid === "" ? null : String(body.device_uid).trim(),
     note: body.note == null || body.note === "" ? null : String(body.note).trim(),
   }
 }
