@@ -507,9 +507,11 @@ export async function login(input, meta = {}) {
   return {
     ...tokens,
     user: publicUser(user),
-    ...(pos ? { device_id: pos.device_id, license_id: pos.license_id } : {}),
-    ...(pos ? { license: await buildPosLicenseSummary(pos, user) } : {}),
-    ...(await buildStaffSession(user)),
+    ...(pos ? { device_id: pos.device_id } : {}),
+    // POS gets the till's license context flattened right onto data (id/store_id/plan_id/
+    // location_id/license_key/status/.../store{}/location{}/plan{}) instead of the dashboard's
+    // heavier store-settings + locations-array shape from buildStaffSession().
+    ...(pos ? await buildPosLicenseSummary(pos, user) : await buildStaffSession(user)),
   }
 }
 
