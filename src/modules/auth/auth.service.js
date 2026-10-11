@@ -141,6 +141,11 @@ async function buildPosLicenseSummary(pos, user) {
     status: license.status,
     starts_at: license.starts_at,
     expires_at: license.expires_at,
+    revoked_at: license.revoked_at,
+    revoked_reason: license.revoked_reason,
+    grace_days: license.grace_days ?? 0,
+    suspended_at: license.suspended_at ?? null,
+    suspended_reason: license.suspended_reason ?? null,
     store: { id: store.store_id_int, name: store.name, slug: store.slug },
     location: location ? { id: location.location_id_int, name: location.name } : null,
     plan: license.Plan
