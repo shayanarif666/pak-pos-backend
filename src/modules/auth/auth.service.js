@@ -10,6 +10,7 @@ import { Store } from "../stores/store.model.js"
 import { StoreLicense } from "../stores/storeLicense.model.js"
 import { Location } from "../locations/location.model.js"
 import { PosDevice } from "../pos/posDevice.model.js"
+import { Plan } from "../plans/plan.model.js"
 import { findLiveStoreBySlug, publicStore } from "../stores/store.service.js"
 import { visibilityFromRecordChannel } from "../../db/channelVisibility.js"
 import { assertStoreLicenseUsable, publicLicense } from "../stores/license.service.js"
@@ -103,6 +104,56 @@ async function devicesForLocation(storeId, locationId) {
     order: [["created_at", "ASC"]],
   })
   return rows.map(publicDevice)
+}
+
+// Compact license summary for a POS-channel login: short numbers (store_id_int, plan_number,
+// location_id_int) instead of internal UUIDs, plus just enough store/location/plan detail for
+// the till to show on screen. Kept separate from publicLicense()/licenseExtras() (dashboard's
+// own, fuller license views) so this stays a small, stable shape for the POS client specifically.
+async function buildPosLicenseSummary(pos, user) {
+  if (!pos?.license_id) return null
+  const [license, store] = await Promise.all([
+    StoreLicense.findByPk(pos.license_id, {
+      include: [
+        {
+          model: Plan,
+          attributes: ["plan_number", "code", "name", "max_devices", "max_locations", "features"],
+        },
+      ],
+    }),
+    Store.findByPk(user.store_id, {
+      attributes: ["store_id_int", "name", "slug", "default_location_id"],
+    }),
+  ])
+  if (!license || !store) return null
+
+  const locationId = user.location_id || store.default_location_id
+  const location = locationId
+    ? await Location.findByPk(locationId, { attributes: ["location_id_int", "name"] })
+    : null
+
+  return {
+    id: license.id,
+    store_id: store.store_id_int,
+    plan_id: license.Plan?.plan_number ?? null,
+    location_id: location?.location_id_int ?? null,
+    license_key: license.license_key,
+    status: license.status,
+    starts_at: license.starts_at,
+    expires_at: license.expires_at,
+    store: { id: store.store_id_int, name: store.name, slug: store.slug },
+    location: location ? { id: location.location_id_int, name: location.name } : null,
+    plan: license.Plan
+      ? {
+          id: license.Plan.plan_number,
+          code: license.Plan.code,
+          name: license.Plan.name,
+          max_devices: license.Plan.max_devices,
+          max_locations: license.Plan.max_locations,
+          features: Array.isArray(license.Plan.features) ? license.Plan.features : [],
+        }
+      : null,
+  }
 }
 
 async function buildStaffSession(user) {
@@ -452,6 +503,7 @@ export async function login(input, meta = {}) {
     ...tokens,
     user: publicUser(user),
     ...(pos ? { device_id: pos.device_id, license_id: pos.license_id } : {}),
+    ...(pos ? { license: await buildPosLicenseSummary(pos, user) } : {}),
     ...(await buildStaffSession(user)),
   }
 }

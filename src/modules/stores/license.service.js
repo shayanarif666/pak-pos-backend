@@ -111,7 +111,10 @@ async function loadLicenseByKey(licenseKey) {
     where: { license_key: key },
     include: [
       { model: Store, attributes: ["id", "name", "slug", "is_active", "pos_enabled", "default_location_id"] },
-      { model: Plan, attributes: ["id", "code", "name", "max_devices", "max_locations", "features"] },
+      {
+        model: Plan,
+        attributes: ["id", "plan_number", "code", "name", "max_devices", "max_locations", "features"],
+      },
       { model: PosDevice, as: "device" },
     ],
   })
@@ -162,10 +165,26 @@ function licenseExtras(license) {
   }
 }
 
+// Minimal shape for the POS-facing /licenses/validate response. The till only needs to know
+// whether the key works and which plan it's on (by number, not the internal UUID) — never the
+// store/plan/device detail that publicLicense() exposes for the dashboard's own license screens.
+function posLicenseView(license, extras = {}) {
+  return {
+    plan_number: license.Plan?.plan_number ?? null,
+    status: license.status,
+    starts_at: license.starts_at,
+    expires_at: license.expires_at,
+    already_registered: Boolean(extras.already_registered),
+    suspended_at: license.suspended_at ?? null,
+    suspended_reason: license.suspended_reason ?? null,
+    valid: extras.valid !== false,
+  }
+}
+
 export async function inspectLicenseKey(licenseKey) {
   const license = await loadLicenseByKey(licenseKey)
   assertStoreUsable(license)
-  return publicLicense(license, licenseExtras(license))
+  return posLicenseView(license, { already_registered: false })
 }
 
 export async function validateLicenseKey(licenseKey) {
@@ -230,13 +249,7 @@ export async function activateLicenseKey(input, meta = {}) {
         await license.update({ status: "active" }, { transaction })
       }
       await existing.update({ last_seen_at: new Date() }, { transaction })
-      return publicLicense(license, {
-        ...licenseExtras(license),
-        device: existing,
-        devices,
-        already_registered: true,
-        valid: true,
-      })
+      return posLicenseView(license, { already_registered: true, valid: true })
     }
 
     const otherLicense = await findOtherLicenseWithDeviceUid(
@@ -293,13 +306,7 @@ export async function activateLicenseKey(input, meta = {}) {
       note: device.device_uid,
     })
 
-    return publicLicense(license, {
-      ...licenseExtras(license),
-      device,
-      devices: nextDevices,
-      already_registered: false,
-      valid: true,
-    })
+    return posLicenseView(license, { already_registered: false, valid: true })
   })
 }
 

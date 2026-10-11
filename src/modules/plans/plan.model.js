@@ -7,6 +7,9 @@ export const Plan = sequelize.define(
   "Plan",
   {
     id: uuidPk(),
+    // Short, human-friendly number for client-facing responses (e.g. POS license validation)
+    // that shouldn't expose the internal UUID. DB auto-increments it; never set on create.
+    plan_number: { type: DataTypes.INTEGER, allowNull: false, unique: true },
     code: { type: DataTypes.STRING(64), allowNull: false, unique: true },
     type: {
       type: DataTypes.ENUM(...PLAN_TYPE),
