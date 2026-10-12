@@ -54,7 +54,6 @@ export function publicUser(user, { includePin = false } = {}) {
 // the same info (as short numbers) already lives at the top level via buildPosLicenseSummary().
 function publicPosUser(user) {
   return {
-    id: user.id,
     name: user.name,
     email: user.email,
     phone: user.phone,
@@ -148,7 +147,6 @@ async function buildPosLicenseSummary(pos, user) {
     : null
 
   return {
-    id: license.id,
     store_id: store.store_id_int,
     plan_id: license.Plan?.plan_number ?? null,
     location_id: location?.location_id_int ?? null,
@@ -520,9 +518,9 @@ export async function login(input, meta = {}) {
   })
 
   return {
-    ...tokens,
+    ...(pos ? {...tokens} : null),
     user: pos ? publicPosUser(user) : publicUser(user),
-    ...(pos ? { device_id: pos.device_id } : {}),
+    ...(pos ? { device_id: pos.device_uid } : {}),
     // POS gets the till's license context flattened right onto data (id/store_id/plan_id/
     // location_id/license_key/status/.../store{}/location{}/plan{}) instead of the dashboard's
     // heavier store-settings + locations-array shape from buildStaffSession().
