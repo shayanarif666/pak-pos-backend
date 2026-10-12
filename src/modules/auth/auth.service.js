@@ -55,6 +55,7 @@ export function publicUser(user, { includePin = false } = {}) {
 // the same info (as short numbers) already lives at the top level via buildPosLicenseSummary().
 function publicPosUser(user) {
   return {
+    id: user.user_number,
     name: user.name,
     email: user.email,
     phone: user.phone,
