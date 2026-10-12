@@ -10,7 +10,6 @@ import { Store } from "../stores/store.model.js"
 import { StoreLicense } from "../stores/storeLicense.model.js"
 import { Location } from "../locations/location.model.js"
 import { PosDevice } from "../pos/posDevice.model.js"
-import { Plan } from "../plans/plan.model.js"
 import { findLiveStoreBySlug, publicStore } from "../stores/store.service.js"
 import { visibilityFromRecordChannel } from "../../db/channelVisibility.js"
 import { assertStoreLicenseUsable, publicLicense } from "../stores/license.service.js"
@@ -122,21 +121,14 @@ async function devicesForLocation(storeId, locationId) {
   return rows.map(publicDevice)
 }
 
-// Compact license summary for a POS-channel login: short numbers (store_id_int, plan_number,
-// location_id_int) instead of internal UUIDs, plus just enough store/location/plan detail for
-// the till to show on screen. Kept separate from publicLicense()/licenseExtras() (dashboard's
-// own, fuller license views) so this stays a small, stable shape for the POS client specifically.
+// Compact store/location summary for a POS-channel login — no license detail at all (that's
+// POST /licenses/validate's job now), no top-level store_id/location_id scalars, no plan. Kept
+// separate from publicLicense()/licenseExtras() (dashboard's own, fuller license views) so this
+// stays a small, stable shape for the POS client specifically.
 async function buildPosLicenseSummary(pos, user) {
   if (!pos?.license_id) return null
   const [license, store] = await Promise.all([
-    StoreLicense.findByPk(pos.license_id, {
-      include: [
-        {
-          model: Plan,
-          attributes: ["plan_number", "code", "name", "max_devices", "max_locations", "features"],
-        },
-      ],
-    }),
+    StoreLicense.findByPk(pos.license_id, { attributes: ["id"] }),
     Store.findByPk(user.store_id, {
       attributes: ["store_id_int", "name", "slug", "default_location_id"],
     }),
@@ -149,29 +141,8 @@ async function buildPosLicenseSummary(pos, user) {
     : null
 
   return {
-    store_id: store.store_id_int,
-    location_id: location?.location_id_int ?? null,
-    license_key: license.license_key,
-    status: license.status,
-    starts_at: license.starts_at,
-    expires_at: license.expires_at,
-    revoked_at: license.revoked_at,
-    revoked_reason: license.revoked_reason,
-    grace_days: license.grace_days ?? 0,
-    suspended_at: license.suspended_at ?? null,
-    suspended_reason: license.suspended_reason ?? null,
     store: { id: store.store_id_int, name: store.name, slug: store.slug },
     location: location ? { id: location.location_id_int, name: location.name } : null,
-    plan: license.Plan
-      ? {
-          id: license.Plan.plan_number,
-          code: license.Plan.code,
-          name: license.Plan.name,
-          max_devices: license.Plan.max_devices,
-          max_locations: license.Plan.max_locations,
-          features: Array.isArray(license.Plan.features) ? license.Plan.features : [],
-        }
-      : null,
   }
 }
 
@@ -540,9 +511,9 @@ export async function login(input, meta = {}) {
   return {
     ...(pos ? null : {...tokens}),
     user: pos ? publicPosUser(user) : publicUser(user),
-    // POS gets the till's license context flattened right onto data (id/store_id/location_id/
-    // license_key/status/.../store{}/location{}/plan{}) instead of the dashboard's heavier
-    // store-settings + locations-array shape from buildStaffSession().
+    // POS gets a store{}/location{} summary onto data (no license detail — that's
+    // POST /licenses/validate's job) instead of the dashboard's heavier store-settings +
+    // locations-array shape from buildStaffSession().
     ...(pos ? await buildPosLicenseSummary(pos, user) : await buildStaffSession(user)),
   }
 }

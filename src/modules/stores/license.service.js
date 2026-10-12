@@ -165,11 +165,14 @@ function licenseExtras(license) {
   }
 }
 
-// Minimal shape for the POS-facing /licenses/validate response. The till only needs to know
-// whether the key works and which plan it's on (by number, not the internal UUID) — never the
-// store/plan/device detail that publicLicense() exposes for the dashboard's own license screens.
+// Minimal shape for the POS-facing /licenses/validate response. The till needs to know whether
+// the key works and which plan it's on — never the store/device detail that publicLicense()
+// exposes for the dashboard's own license screens. This is also the only POS-facing response that
+// carries the license_key and the plan — POST /auth/login dropped both to keep the login payload
+// small.
 function posLicenseView(license, extras = {}) {
   return {
+    license_key: license.license_key,
     plan_number: license.Plan?.plan_number ?? null,
     device_id: extras.device_uid ?? null,
     status: license.status,
@@ -179,6 +182,16 @@ function posLicenseView(license, extras = {}) {
     suspended_at: license.suspended_at ?? null,
     suspended_reason: license.suspended_reason ?? null,
     valid: extras.valid !== false,
+    plan: license.Plan
+      ? {
+          id: license.Plan.plan_number,
+          code: license.Plan.code,
+          name: license.Plan.name,
+          max_devices: license.Plan.max_devices,
+          max_locations: license.Plan.max_locations,
+          features: Array.isArray(license.Plan.features) ? license.Plan.features : [],
+        }
+      : null,
   }
 }
 
