@@ -150,7 +150,6 @@ async function buildPosLicenseSummary(pos, user) {
 
   return {
     store_id: store.store_id_int,
-    plan_id: license.Plan?.plan_number ?? null,
     location_id: location?.location_id_int ?? null,
     license_key: license.license_key,
     status: license.status,
@@ -541,10 +540,9 @@ export async function login(input, meta = {}) {
   return {
     ...(pos ? null : {...tokens}),
     user: pos ? publicPosUser(user) : publicUser(user),
-    ...(pos ? { device_id: pos.device_uid ?? null } : {}),
-    // POS gets the till's license context flattened right onto data (id/store_id/plan_id/
-    // location_id/license_key/status/.../store{}/location{}/plan{}) instead of the dashboard's
-    // heavier store-settings + locations-array shape from buildStaffSession().
+    // POS gets the till's license context flattened right onto data (id/store_id/location_id/
+    // license_key/status/.../store{}/location{}/plan{}) instead of the dashboard's heavier
+    // store-settings + locations-array shape from buildStaffSession().
     ...(pos ? await buildPosLicenseSummary(pos, user) : await buildStaffSession(user)),
   }
 }
