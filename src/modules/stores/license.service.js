@@ -173,7 +173,6 @@ function licenseExtras(license) {
 function posLicenseView(license, extras = {}) {
   return {
     license_key: license.license_key,
-    plan_number: license.Plan?.plan_number ?? null,
     device_id: extras.device_uid ?? null,
     status: license.status,
     starts_at: license.starts_at,
