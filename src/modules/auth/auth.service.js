@@ -434,6 +434,17 @@ async function resolveStorePosLicense(user) {
   throw new AppError("License is not active", 403)
 }
 
+// Either identifies the till: device_id is the pos_devices row id, device_uid is the device's own
+// stable hardware id (what a POS client knows right after license activation). Unknown/stale
+// hints don't fail the login — the till just signs in without a device echoed back.
+async function resolveLoginDevice(storeId, { deviceId, deviceUid }) {
+  if (!deviceId && !deviceUid) return null
+  const where = { store_id: storeId, is_active: true }
+  if (deviceId) where.id = deviceId
+  else where.device_uid = deviceUid
+  return PosDevice.findOne({ where })
+}
+
 async function resolveLoginUser(input) {
   const user = input.pin
     ? await findUserByPin(input.pin)
@@ -445,6 +456,14 @@ async function resolveLoginUser(input) {
   if (!STAFF_ROLES.has(user.role)) throw new UnauthorizedError("Invalid credentials")
   await assertStoreLicenseUsable(user.store_id)
   const pos = await resolveStorePosLicense(user)
+  const device = await resolveLoginDevice(user.store_id, {
+    deviceId: input.device_id,
+    deviceUid: input.device_uid,
+  })
+  if (device) {
+    pos.device_id = device.id
+    pos.device_uid = device.device_uid
+  }
   return { user, channel: "pos", pos }
 }
 
@@ -522,7 +541,7 @@ export async function login(input, meta = {}) {
   return {
     ...(pos ? null : {...tokens}),
     user: pos ? publicPosUser(user) : publicUser(user),
-    ...(pos ? { device_id: pos.device_uid } : {}),
+    ...(pos ? { device_id: pos.device_uid ?? null } : {}),
     // POS gets the till's license context flattened right onto data (id/store_id/plan_id/
     // location_id/license_key/status/.../store{}/location{}/plan{}) instead of the dashboard's
     // heavier store-settings + locations-array shape from buildStaffSession().

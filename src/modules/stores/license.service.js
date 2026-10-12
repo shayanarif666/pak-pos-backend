@@ -171,6 +171,7 @@ function licenseExtras(license) {
 function posLicenseView(license, extras = {}) {
   return {
     plan_number: license.Plan?.plan_number ?? null,
+    device_id: extras.device_uid ?? null,
     status: license.status,
     starts_at: license.starts_at,
     expires_at: license.expires_at,
@@ -249,7 +250,11 @@ export async function activateLicenseKey(input, meta = {}) {
         await license.update({ status: "active" }, { transaction })
       }
       await existing.update({ last_seen_at: new Date() }, { transaction })
-      return posLicenseView(license, { already_registered: true, valid: true })
+      return posLicenseView(license, {
+        already_registered: true,
+        valid: true,
+        device_uid: input.device_uid,
+      })
     }
 
     const otherLicense = await findOtherLicenseWithDeviceUid(
@@ -306,7 +311,11 @@ export async function activateLicenseKey(input, meta = {}) {
       note: device.device_uid,
     })
 
-    return posLicenseView(license, { already_registered: false, valid: true })
+    return posLicenseView(license, {
+      already_registered: false,
+      valid: true,
+      device_uid: input.device_uid,
+    })
   })
 }
 
