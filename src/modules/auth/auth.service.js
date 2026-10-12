@@ -518,7 +518,7 @@ export async function login(input, meta = {}) {
   })
 
   return {
-    ...(pos ? {...tokens} : null),
+    ...(pos ? null : {...tokens}),
     user: pos ? publicPosUser(user) : publicUser(user),
     ...(pos ? { device_id: pos.device_uid } : {}),
     // POS gets the till's license context flattened right onto data (id/store_id/plan_id/
