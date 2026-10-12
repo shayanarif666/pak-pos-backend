@@ -50,6 +50,21 @@ export function publicUser(user, { includePin = false } = {}) {
   }
 }
 
+// POS login's user block: store_id/store_number/location_id/location_number dropped here since
+// the same info (as short numbers) already lives at the top level via buildPosLicenseSummary().
+function publicPosUser(user) {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    phone: user.phone,
+    role: user.role,
+    is_verified: user.is_verified,
+    is_active: user.is_active,
+    last_login_at: user.last_login_at,
+  }
+}
+
 function publicLocation(row) {
   if (!row) return null
   return {
@@ -506,7 +521,7 @@ export async function login(input, meta = {}) {
 
   return {
     ...tokens,
-    user: publicUser(user),
+    user: pos ? publicPosUser(user) : publicUser(user),
     ...(pos ? { device_id: pos.device_id } : {}),
     // POS gets the till's license context flattened right onto data (id/store_id/plan_id/
     // location_id/license_key/status/.../store{}/location{}/plan{}) instead of the dashboard's
