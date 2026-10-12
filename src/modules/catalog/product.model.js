@@ -10,6 +10,7 @@ export const Product = sequelize.define(
     id: uuidPk(),
     store_id: uuidCol(false),
     store_id_int: { type: DataTypes.INTEGER, allowNull: false },
+    product_number: { type: DataTypes.INTEGER, allowNull: false },
     category_id: uuidCol(false),
     title: { type: DataTypes.TEXT, allowNull: false },
     slug: { type: DataTypes.STRING(255), allowNull: false },
@@ -54,6 +55,7 @@ export const Product = sequelize.define(
     ...modelOptions,
     tableName: "products",
     indexes: [
+      { unique: true, fields: ["store_id", "product_number"] },
       { unique: true, fields: ["store_id", "sku"] },
       { unique: true, fields: ["store_id", "slug"] },
       { unique: true, fields: ["store_id", "barcode"] },

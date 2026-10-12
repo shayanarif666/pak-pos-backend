@@ -7,6 +7,7 @@ import { getCategory } from "../catalog/category.service.js"
 import { getLocation } from "../locations/location.service.js"
 import { Location } from "../locations/location.model.js"
 import { assertOfferRules } from "./offer.validation.js"
+import { nextOfferNumber } from "../../shared/utils/counter.util.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
@@ -35,6 +36,7 @@ function publicOffer(row) {
     id: json.id,
     store_id: json.store_id,
     store_number: json.store_id_int,
+    offer_number: json.offer_number,
     location_id: json.location_id,
     location_number: json.Location?.location_id_int ?? null,
     name: json.name,
@@ -139,6 +141,7 @@ export async function createOffer(store, fields, actor) {
   const row = await Offer.create({
     store_id: store.id,
     store_id_int: store.store_id_int,
+    offer_number: await nextOfferNumber(store.id),
     location_id,
     name: fields.name,
     type: fields.type,

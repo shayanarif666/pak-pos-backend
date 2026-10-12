@@ -10,6 +10,7 @@ export const Supplier = sequelize.define(
     id: uuidPk(),
     store_id: uuidCol(false),
     store_id_int: { type: DataTypes.INTEGER, allowNull: false },
+    supplier_number: { type: DataTypes.INTEGER, allowNull: false },
     name: { type: DataTypes.TEXT, allowNull: false },
     phone: { type: DataTypes.STRING(64), allowNull: true },
     email: { type: DataTypes.STRING(255), allowNull: true },
@@ -23,5 +24,9 @@ export const Supplier = sequelize.define(
     is_active: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
     ...catalogChannelVisibilityFields(),
   },
-  { ...modelOptions, tableName: "suppliers" }
+  {
+    ...modelOptions,
+    tableName: "suppliers",
+    indexes: [{ unique: true, fields: ["store_id", "supplier_number"] }],
+  }
 )

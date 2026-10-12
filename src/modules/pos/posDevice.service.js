@@ -6,6 +6,7 @@ import { Store } from "../stores/store.model.js"
 import { readDeviceUuids, validateLicenseKey } from "../stores/license.service.js"
 import { getStoreForManager } from "../stores/store.service.js"
 import { assertPlan } from "../../shared/utils/plan.util.js"
+import { nextDeviceNumber } from "../../shared/utils/counter.util.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
@@ -97,6 +98,7 @@ export async function registerDevice(
     await PosDevice.create({
       store_id: store.id,
       store_id_int: store.store_id_int,
+      device_number: await nextDeviceNumber(store.id),
       location_id: location?.id || null,
       location_id_int: location?.location_id_int ?? null,
       device_uid: input.device_uid,

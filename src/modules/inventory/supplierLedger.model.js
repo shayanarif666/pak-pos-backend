@@ -10,6 +10,8 @@ export const SupplierLedger = sequelize.define(
     id: uuidPk(),
     store_id: uuidCol(false),
     store_id_int: { type: DataTypes.INTEGER, allowNull: false },
+    // Per-supplier sequence (1,2,3...) — this supplier's own ledger entry number.
+    ledger_number: { type: DataTypes.INTEGER, allowNull: false },
     location_id: uuidCol(true),
     supplier_id: uuidCol(false),
     entry_type: { type: DataTypes.ENUM(...LEDGER_ENTRY_TYPE), allowNull: false },
@@ -21,5 +23,9 @@ export const SupplierLedger = sequelize.define(
     created_by: uuidCol(true),
     ...catalogChannelVisibilityFields(),
   },
-  { ...createdOnly, tableName: "supplier_ledger" }
+  {
+    ...createdOnly,
+    tableName: "supplier_ledger",
+    indexes: [{ unique: true, fields: ["supplier_id", "ledger_number"] }],
+  }
 )

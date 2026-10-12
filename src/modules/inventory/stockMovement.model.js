@@ -10,6 +10,7 @@ export const StockMovement = sequelize.define(
     id: uuidPk(),
     store_id: uuidCol(false),
     store_id_int: { type: DataTypes.INTEGER, allowNull: false },
+    movement_number: { type: DataTypes.INTEGER, allowNull: false },
     location_id: uuidCol(false),
     location_id_int: { type: DataTypes.INTEGER, allowNull: false },
     product_id: uuidCol(false),
@@ -26,6 +27,9 @@ export const StockMovement = sequelize.define(
   {
     ...createdOnly,
     tableName: "stock_movements",
-    indexes: [{ fields: ["store_id", "product_id", "created_at"] }],
+    indexes: [
+      { fields: ["store_id", "product_id", "created_at"] },
+      { unique: true, fields: ["store_id", "movement_number"] },
+    ],
   }
 )

@@ -23,7 +23,7 @@ import { issueLicense, publicLicense } from "../stores/license.service.js"
 import { createBilling, publicBilling } from "../billings/billing.service.js"
 import { hashPassword } from "../../shared/utils/hash.util.js"
 import { ensureUniqueSlug } from "../../shared/utils/slugify.js"
-import { ensureSequenceAtLeast } from "../../shared/utils/counter.util.js"
+import { ensureSequenceAtLeast, nextUserNumber } from "../../shared/utils/counter.util.js"
 import { issueUserSession } from "../auth/auth.service.js"
 import { assertPinAvailable } from "../auth/pin.util.js"
 import { AppError } from "../../shared/errors/AppError.js"
@@ -63,6 +63,7 @@ function publicUser(user, locationName = null) {
     is_active: user.is_active,
     store_id: user.store_id,
     store_number: user.store_id_int,
+    user_number: user.user_number,
     location_id: user.location_id,
     location_number: user.location_id_int,
     location_name: locationName,
@@ -128,6 +129,8 @@ export async function registerSuperAdmin(input, actor = null) {
     role: "superadmin",
     store_id: null,
     store_id_int: null,
+    // Superadmins have no store, so there's no per-store sequence to assign.
+    user_number: null,
     location_id: null,
     location_id_int: null,
     is_verified: true,
@@ -213,6 +216,7 @@ export async function registerStore(input, superadmin) {
       {
         store_id: store.id,
         store_id_int: store.store_id_int,
+        user_number: await nextUserNumber(store.id, transaction),
         location_id: null,
         location_id_int: null,
         name: input.admin_name,
@@ -232,6 +236,7 @@ export async function registerStore(input, superadmin) {
       {
         store_id: store.id,
         store_id_int: store.store_id_int,
+        user_number: await nextUserNumber(store.id, transaction),
         location_id: location.id,
         location_id_int: location.location_id_int,
         name: input.manager_name,

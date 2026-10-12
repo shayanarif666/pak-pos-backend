@@ -9,6 +9,8 @@ export const OrderItem = sequelize.define(
   {
     id: uuidPk(),
     order_id: uuidCol(false),
+    // Per-order line number (1,2,3...), assigned by position when the order's items are saved.
+    item_number: { type: DataTypes.INTEGER, allowNull: false },
     ...saleChannelVisibilityFields(),
     product_id: uuidCol(true),
     title: { type: DataTypes.TEXT, allowNull: false },
@@ -49,5 +51,9 @@ export const OrderItem = sequelize.define(
     category_tax_value: { type: DataTypes.DECIMAL(5, 2), allowNull: true },
     subtotal: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
   },
-  { ...noTimestamps, tableName: "order_items" }
+  {
+    ...noTimestamps,
+    tableName: "order_items",
+    indexes: [{ unique: true, fields: ["order_id", "item_number"] }],
+  }
 )

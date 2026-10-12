@@ -11,7 +11,11 @@ import { User } from "../auth/user.model.js"
 import { Location } from "../locations/location.model.js"
 import { Customer } from "../customers/customer.model.js"
 import { CustomerCreditEntry } from "../customers/customerCreditEntry.model.js"
-import { nextReceiptNumber } from "../../shared/utils/counter.util.js"
+import {
+  nextOrderRefundItemNumber,
+  nextOrderRefundNumber,
+  nextReceiptNumber,
+} from "../../shared/utils/counter.util.js"
 import { getStoreForManager } from "../stores/store.service.js"
 import { getLocation } from "../locations/location.service.js"
 import { getCustomer, recordLedgerEntry } from "../customers/customer.service.js"
@@ -600,6 +604,7 @@ function publicRefund(refund, extras = {}) {
   return {
     id: json.id,
     order_id: json.order_id,
+    refund_number: json.refund_number,
     reason: json.reason,
     amount: Number(json.amount),
     tax_amount: Number(json.tax_amount),
@@ -711,6 +716,7 @@ export async function refundOrderItem(actor, id, fields) {
       {
         store_id: store.id,
         store_id_int: store.store_id_int,
+        refund_number: await nextOrderRefundNumber(store.id, transaction),
         location_id: order.location_id,
         location_id_int: order.location_id_int,
         order_id: order.id,
@@ -727,6 +733,7 @@ export async function refundOrderItem(actor, id, fields) {
     const refundItem = await OrderRefundItem.create(
       {
         refund_id: refund.id,
+        item_number: await nextOrderRefundItemNumber(refund.id, transaction),
         ...visibilityFromOrderChannel(order.channel),
         order_item_id: item.id,
         product_id: item.product_id,

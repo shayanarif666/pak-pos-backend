@@ -7,6 +7,7 @@ import { Location } from "../locations/location.model.js"
 import { Store } from "../stores/store.model.js"
 import { StockMovement } from "../inventory/stockMovement.model.js"
 import { getProduct, publicStock } from "./product.service.js"
+import { nextStockMovementNumber } from "../../shared/utils/counter.util.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
@@ -132,6 +133,7 @@ export async function applyStockDelta(
       {
         store_id: storeId,
         store_id_int: storeIdInt,
+        movement_number: await nextStockMovementNumber(storeId, transaction),
         location_id: location.id,
         location_id_int: location.location_id_int,
         product_id: productId,

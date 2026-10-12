@@ -2,6 +2,7 @@ import { ForeignKeyConstraintError, UniqueConstraintError } from "sequelize"
 import { Category } from "./category.model.js"
 import { Product } from "./product.model.js"
 import { slugify } from "../../shared/utils/slugify.js"
+import { nextCategoryNumber } from "../../shared/utils/counter.util.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { AppError } from "../../shared/errors/AppError.js"
@@ -13,6 +14,7 @@ function publicCategory(row) {
     id: json.id,
     store_id: json.store_id,
     store_number: json.store_id_int,
+    category_number: json.category_number,
     name: json.name,
     slug: json.slug,
     parent_category_id: json.parent_category_id,
@@ -81,6 +83,7 @@ export async function createCategory(store, fields) {
     const row = await Category.create({
       store_id: store.id,
       store_id_int: store.store_id_int,
+      category_number: await nextCategoryNumber(store.id),
       name: fields.name,
       slug,
       parent_category_id: await resolveParent(store.id, fields.parent_category_id),

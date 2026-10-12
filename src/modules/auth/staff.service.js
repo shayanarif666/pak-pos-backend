@@ -7,6 +7,7 @@ import { hashPassword } from "../../shared/utils/hash.util.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { assertPinAvailable, PIN_TAKEN_MESSAGE } from "./pin.util.js"
+import { nextUserNumber } from "../../shared/utils/counter.util.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
 
@@ -95,6 +96,7 @@ export async function createStaff(actor, input) {
     const user = await User.create({
       store_id: actor.store_id,
       store_id_int: actor.store_id_int,
+      user_number: await nextUserNumber(actor.store_id),
       location_id: location.id,
       location_id_int: location.location_id_int,
       name: input.name,

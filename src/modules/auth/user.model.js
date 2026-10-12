@@ -9,6 +9,8 @@ export const User = sequelize.define(
     id: uuidPk(),
     store_id: uuidCol(true),
     store_id_int: { type: DataTypes.INTEGER, allowNull: true },
+    // Per-store sequence (1,2,3...); null for superadmins, who have no store_id.
+    user_number: { type: DataTypes.INTEGER, allowNull: true },
     location_id: uuidCol(true),
     location_id_int: { type: DataTypes.INTEGER, allowNull: true },
     name: { type: DataTypes.TEXT, allowNull: false },
@@ -27,6 +29,7 @@ export const User = sequelize.define(
     ...modelOptions,
     tableName: "users",
     indexes: [
+      { unique: true, fields: ["store_id", "user_number"] },
       { unique: true, fields: ["store_id", "email"] },
       { unique: true, fields: ["store_id", "pin"] },
       { fields: ["store_id", "role"] },

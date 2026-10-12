@@ -5,6 +5,7 @@ import { sequelize } from "../../db/sequelize.js"
 import {
   ensureSequenceAtLeast,
   nextLocationID,
+  nextUserNumber,
 } from "../../shared/utils/counter.util.js"
 import { setStoreDefaultLocation } from "../stores/store.service.js"
 import { assertPlan } from "../../shared/utils/plan.util.js"
@@ -110,6 +111,7 @@ async function createLocationManager(store, location, manager, transaction) {
       {
         store_id: store.id,
         store_id_int: store.store_id_int,
+        user_number: await nextUserNumber(store.id, transaction),
         location_id: location.id,
         location_id_int: location.location_id_int,
         name: manager.name,

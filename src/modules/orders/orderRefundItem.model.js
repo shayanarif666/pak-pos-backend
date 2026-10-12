@@ -8,6 +8,8 @@ export const OrderRefundItem = sequelize.define(
   {
     id: uuidPk(),
     refund_id: uuidCol(false),
+    // Per-refund line number (1,2,3...).
+    item_number: { type: DataTypes.INTEGER, allowNull: false },
     ...saleChannelVisibilityFields(),
     order_item_id: uuidCol(false),
     product_id: uuidCol(true),
@@ -17,5 +19,9 @@ export const OrderRefundItem = sequelize.define(
     tax_amount: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
     subtotal: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
   },
-  { ...noTimestamps, tableName: "order_refund_items" }
+  {
+    ...noTimestamps,
+    tableName: "order_refund_items",
+    indexes: [{ unique: true, fields: ["refund_id", "item_number"] }],
+  }
 )

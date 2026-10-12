@@ -9,6 +9,7 @@ export const RegisterSession = sequelize.define(
     id: uuidPk(),
     store_id: uuidCol(false),
     store_id_int: { type: DataTypes.INTEGER, allowNull: false },
+    session_number: { type: DataTypes.INTEGER, allowNull: false },
     location_id: uuidCol(false),
     location_id_int: { type: DataTypes.INTEGER, allowNull: false },
     cashier_id: uuidCol(false),
@@ -45,6 +46,9 @@ export const RegisterSession = sequelize.define(
   {
     ...modelOptions,
     tableName: "register_sessions",
-    indexes: [{ fields: ["store_id", "location_id", "status"] }],
+    indexes: [
+      { fields: ["store_id", "location_id", "status"] },
+      { unique: true, fields: ["store_id", "session_number"] },
+    ],
   }
 )

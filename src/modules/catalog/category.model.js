@@ -10,6 +10,7 @@ export const Category = sequelize.define(
     id: uuidPk(),
     store_id: uuidCol(false),
     store_id_int: { type: DataTypes.INTEGER, allowNull: false },
+    category_number: { type: DataTypes.INTEGER, allowNull: false },
     name: { type: DataTypes.TEXT, allowNull: false },
     slug: { type: DataTypes.STRING(255), allowNull: false },
     parent_category_id: uuidCol(true),
@@ -26,6 +27,9 @@ export const Category = sequelize.define(
   {
     ...modelOptions,
     tableName: "categories",
-    indexes: [{ unique: true, fields: ["store_id", "slug"] }],
+    indexes: [
+      { unique: true, fields: ["store_id", "slug"] },
+      { unique: true, fields: ["store_id", "category_number"] },
+    ],
   }
 )

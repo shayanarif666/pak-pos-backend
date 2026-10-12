@@ -9,6 +9,7 @@ export const OrderRefund = sequelize.define(
     id: uuidPk(),
     store_id: uuidCol(false),
     store_id_int: { type: DataTypes.INTEGER, allowNull: false },
+    refund_number: { type: DataTypes.INTEGER, allowNull: false },
     location_id: uuidCol(true),
     location_id_int: { type: DataTypes.INTEGER, allowNull: true },
     order_id: uuidCol(false),
@@ -22,6 +23,9 @@ export const OrderRefund = sequelize.define(
   {
     ...modelOptions,
     tableName: "order_refunds",
-    indexes: [{ fields: ["store_id", "order_id"] }],
+    indexes: [
+      { fields: ["store_id", "order_id"] },
+      { unique: true, fields: ["store_id", "refund_number"] },
+    ],
   }
 )

@@ -19,6 +19,7 @@ import { hashPassword, comparePassword } from "../../shared/utils/hash.util.js"
 import { hashToken, randomToken } from "../../shared/utils/token.util.js"
 import { isExpired } from "../../shared/utils/date.util.js"
 import { writeAudit } from "../../shared/utils/audit.util.js"
+import { nextCustomerNumber, nextUserNumber } from "../../shared/utils/counter.util.js"
 import {
   sendPasswordChangedEmail,
   sendPasswordResetEmail,
@@ -42,6 +43,7 @@ export function publicUser(user, { includePin = false } = {}) {
     role: user.role,
     store_id: user.store_id,
     store_number: user.store_id_int,
+    user_number: user.user_number,
     location_id: user.location_id,
     location_number: user.location_id_int,
     is_verified: user.is_verified,
@@ -652,6 +654,7 @@ export async function registerCustomer(input) {
       {
         store_id: store.id,
         store_id_int: store.store_id_int,
+        user_number: await nextUserNumber(store.id, transaction),
         location_id: store.default_location_id,
         location_id_int: store.default_location_id_int,
         name: input.name,
@@ -670,6 +673,7 @@ export async function registerCustomer(input) {
       {
         store_id: store.id,
         store_id_int: store.store_id_int,
+        customer_number: await nextCustomerNumber(store.id, transaction),
         location_id: store.default_location_id,
         user_id: user.id,
         name: input.name,

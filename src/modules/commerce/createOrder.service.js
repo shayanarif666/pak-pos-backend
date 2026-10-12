@@ -109,6 +109,7 @@ export function publicOrderItem(item) {
   return {
     id: json.id,
     order_id: json.order_id,
+    item_number: json.item_number,
     product_id: json.product_id,
     title: json.title,
     sku: json.sku,
@@ -531,8 +532,9 @@ export async function createOrder(actor, input) {
     }
 
     const savedItems = await OrderItem.bulkCreate(
-      priced.map((line) => ({
+      priced.map((line, idx) => ({
         order_id: order.id,
+        item_number: idx + 1,
         ...visibilityFromOrderChannel(channel),
         product_id: line.product_id,
         title: line.title,

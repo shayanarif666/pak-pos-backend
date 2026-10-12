@@ -51,3 +51,42 @@ export const nextOrderNumber = (storeId, transaction) =>
 
 export const nextReceiptNumber = (storeId, transaction) =>
   getNextSequence(`receipt:${storeId}`, transaction)
+
+export const nextUserNumber = (storeId, transaction) =>
+  getNextSequence(`user:${storeId}`, transaction)
+
+export const nextDeviceNumber = (storeId, transaction) =>
+  getNextSequence(`device:${storeId}`, transaction)
+
+export const nextSessionNumber = (storeId, transaction) =>
+  getNextSequence(`register_session:${storeId}`, transaction)
+
+export const nextCategoryNumber = (storeId, transaction) =>
+  getNextSequence(`category:${storeId}`, transaction)
+
+export const nextProductNumber = (storeId, transaction) =>
+  getNextSequence(`product:${storeId}`, transaction)
+
+export const nextOfferNumber = (storeId, transaction) =>
+  getNextSequence(`offer:${storeId}`, transaction)
+
+export const nextSupplierNumber = (storeId, transaction) =>
+  getNextSequence(`supplier:${storeId}`, transaction)
+
+export const nextSupplierLedgerNumber = (supplierId, transaction) =>
+  getNextSequence(`supplier_ledger:${supplierId}`, transaction)
+
+export const nextStockMovementNumber = (storeId, transaction) =>
+  getNextSequence(`stock_movement:${storeId}`, transaction)
+
+export const nextStockTransferNumber = (storeId, transaction) =>
+  getNextSequence(`stock_transfer:${storeId}`, transaction)
+
+export const nextCustomerNumber = (storeId, transaction) =>
+  getNextSequence(`customer:${storeId}`, transaction)
+
+export const nextOrderRefundNumber = (storeId, transaction) =>
+  getNextSequence(`order_refund:${storeId}`, transaction)
+
+export const nextOrderRefundItemNumber = (refundId, transaction) =>
+  getNextSequence(`order_refund_item:${refundId}`, transaction)

@@ -9,6 +9,7 @@ export const Offer = sequelize.define(
     id: uuidPk(),
     store_id: uuidCol(false),
     store_id_int: { type: DataTypes.INTEGER, allowNull: false },
+    offer_number: { type: DataTypes.INTEGER, allowNull: false },
     location_id: uuidCol(true),
     name: { type: DataTypes.TEXT, allowNull: false },
     type: { type: DataTypes.ENUM(...OFFER_TYPE), allowNull: false },
@@ -23,5 +24,9 @@ export const Offer = sequelize.define(
     is_active: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
     created_by: uuidCol(true),
   },
-  { ...modelOptions, tableName: "offers" }
+  {
+    ...modelOptions,
+    tableName: "offers",
+    indexes: [{ unique: true, fields: ["store_id", "offer_number"] }],
+  }
 )

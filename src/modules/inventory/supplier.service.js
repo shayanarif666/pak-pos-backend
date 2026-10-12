@@ -13,6 +13,10 @@ import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
 import { copyVisibility, publicVisibility } from "../../db/channelVisibility.js"
+import {
+  nextSupplierLedgerNumber,
+  nextSupplierNumber,
+} from "../../shared/utils/counter.util.js"
 
 const SUPPLIER_LOCATIONS_INCLUDE = {
   model: SupplierLocation,
@@ -26,6 +30,7 @@ function publicSupplier(row, extras = {}) {
   return {
     id: row.id,
     store_id: row.store_id,
+    supplier_number: row.supplier_number,
     name: row.name,
     phone: row.phone,
     email: row.email,
@@ -117,8 +122,9 @@ async function replaceSupplierLocations(supplier, locationIds, transaction) {
   await SupplierLocation.destroy({ where: { supplier_id: supplier.id }, transaction })
   if (!locationIds.length) return
   await SupplierLocation.bulkCreate(
-    locationIds.map((location_id) => ({
+    locationIds.map((location_id, idx) => ({
       store_id: supplier.store_id,
+      supplier_location_number: idx + 1,
       supplier_id: supplier.id,
       location_id,
     })),
@@ -161,6 +167,7 @@ export async function createSupplier(store, input, actor = null) {
       {
         store_id: store.id,
         store_id_int: store.store_id_int,
+        supplier_number: await nextSupplierNumber(store.id, transaction),
         name: fields.name,
         phone: fields.phone,
         email: fields.email,
@@ -258,6 +265,7 @@ export async function addLedgerEntry(store, supplierId, fields, actor) {
       {
         store_id: store.id,
         store_id_int: store.store_id_int,
+        ledger_number: await nextSupplierLedgerNumber(supplier.id, transaction),
         location_id: fields.location_id,
         supplier_id: supplier.id,
         entry_type: fields.entry_type,

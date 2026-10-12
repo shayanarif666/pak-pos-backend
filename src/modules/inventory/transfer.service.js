@@ -10,6 +10,7 @@ import { getStoreForManager } from "../stores/store.service.js"
 import { assertPlan } from "../../shared/utils/plan.util.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
+import { nextStockTransferNumber } from "../../shared/utils/counter.util.js"
 
 async function assertMultiBranch(store) {
   await assertPlan(store, "multi_branch_enabled")
@@ -42,6 +43,7 @@ export async function createTransfer(storeId, fields, actor) {
 
   return StockTransfer.create({
     store_id: storeId,
+    transfer_number: await nextStockTransferNumber(storeId),
     from_location_id: from.id,
     to_location_id: to.id,
     product_id: fields.product_id,

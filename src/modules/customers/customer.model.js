@@ -9,6 +9,7 @@ export const Customer = sequelize.define(
     id: uuidPk(),
     store_id: uuidCol(false),
     store_id_int: { type: DataTypes.INTEGER, allowNull: false },
+    customer_number: { type: DataTypes.INTEGER, allowNull: false },
     location_id: uuidCol(true),
     user_id: uuidCol(true),
     name: { type: DataTypes.TEXT, allowNull: false },
@@ -23,6 +24,9 @@ export const Customer = sequelize.define(
   {
     ...modelOptions,
     tableName: "customers",
-    indexes: [{ fields: ["store_id", "phone"] }],
+    indexes: [
+      { fields: ["store_id", "phone"] },
+      { unique: true, fields: ["store_id", "customer_number"] },
+    ],
   }
 )

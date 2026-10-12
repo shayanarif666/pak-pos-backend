@@ -4,6 +4,7 @@ import { Customer } from "./customer.model.js"
 import { CustomerCreditEntry } from "./customerCreditEntry.model.js"
 import { Location } from "../locations/location.model.js"
 import { copyVisibility, publicVisibility } from "../../db/channelVisibility.js"
+import { nextCustomerNumber } from "../../shared/utils/counter.util.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 
@@ -22,6 +23,7 @@ function publicCustomer(row) {
     id: json.id,
     store_id: json.store_id,
     store_number: json.store_id_int,
+    customer_number: json.customer_number,
     location_id: json.location_id,
     location_number: json.Location?.location_id_int ?? null,
     user_id: json.user_id,
@@ -93,6 +95,7 @@ export async function createCustomer(store, fields) {
   const row = await Customer.create({
     store_id: store.id,
     store_id_int: store.store_id_int,
+    customer_number: await nextCustomerNumber(store.id),
     location_id,
     name: fields.name,
     email: fields.email,

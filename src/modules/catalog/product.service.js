@@ -5,6 +5,7 @@ import { Category } from "./category.model.js"
 import { ProductStock } from "./productStock.model.js"
 import { ProductBulkTier } from "./productBulkTier.model.js"
 import { ensureUniqueSlug, slugify } from "../../shared/utils/slugify.js"
+import { nextProductNumber } from "../../shared/utils/counter.util.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { AppError } from "../../shared/errors/AppError.js"
@@ -115,6 +116,7 @@ function publicProduct(product, extras = {}) {
     id: json.id,
     store_id: json.store_id,
     store_number: json.store_id_int,
+    product_number: json.product_number,
     category_id: json.category_id,
     category: json.Category
       ? {
@@ -278,6 +280,7 @@ export async function createProduct(store, fields) {
     const created = await Product.create({
       store_id: store.id,
       store_id_int: store.store_id_int,
+      product_number: await nextProductNumber(store.id),
       category_id: fields.category_id,
       title: fields.title,
       slug,

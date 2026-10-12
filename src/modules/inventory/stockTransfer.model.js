@@ -8,6 +8,7 @@ export const StockTransfer = sequelize.define(
   {
     id: uuidPk(),
     store_id: uuidCol(false),
+    transfer_number: { type: DataTypes.INTEGER, allowNull: false },
     from_location_id: uuidCol(false),
     to_location_id: uuidCol(false),
     product_id: uuidCol(false),
@@ -20,5 +21,9 @@ export const StockTransfer = sequelize.define(
     note: { type: DataTypes.TEXT, allowNull: true },
     created_by: uuidCol(true),
   },
-  { ...modelOptions, tableName: "stock_transfers" }
+  {
+    ...modelOptions,
+    tableName: "stock_transfers",
+    indexes: [{ unique: true, fields: ["store_id", "transfer_number"] }],
+  }
 )

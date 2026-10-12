@@ -5,6 +5,7 @@ import { getLocation } from "../locations/location.service.js"
 import { getStoreForManager } from "../stores/store.service.js"
 import { money } from "../commerce/pricing.service.js"
 import { writeAudit } from "../../shared/utils/audit.util.js"
+import { nextSessionNumber } from "../../shared/utils/counter.util.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
@@ -165,6 +166,7 @@ export async function clockIn(actor, fields) {
   const row = await RegisterSession.create({
     store_id: store.id,
     store_id_int: store.store_id_int,
+    session_number: await nextSessionNumber(store.id),
     location_id: location.id,
     location_id_int: location.location_id_int,
     cashier_id: actor.id,
