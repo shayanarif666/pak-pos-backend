@@ -34,9 +34,12 @@ export function parseClockIn(body) {
   return {
     opening_cash,
     location_id: optionalUuid(body, "location_id"),
-    // Either identifies the till: device_id is the pos_devices row id, device_uid is the
-    // device's own stable hardware id (what a POS client knows right after license activation).
-    device_id: optionalUuid(body, "device_id"),
+    // device_id isn't required to be a UUID here — a client may send either the pos_devices row
+    // id or the device's own stable hardware id in this one field, and resolveDevice() matches
+    // whichever it turns out to be. device_uid stays as an explicit alternative for clients that
+    // already know their hardware id.
+    device_id:
+      body.device_id == null || body.device_id === "" ? null : String(body.device_id).trim(),
     device_uid:
       body.device_uid == null || body.device_uid === "" ? null : String(body.device_uid).trim(),
     note: body.note == null || body.note === "" ? null : String(body.note).trim(),

@@ -80,8 +80,15 @@ async function getSession(storeId, id) {
 async function resolveDevice(storeId, locationId, { deviceId, deviceUid } = {}) {
   if (!deviceId && !deviceUid) return null
   const where = { store_id: storeId, is_active: true }
-  if (deviceId) where.id = deviceId
-  else where.device_uid = deviceUid
+  if (deviceId && deviceUid) {
+    where[Op.or] = [{ id: deviceId }, { device_uid: deviceUid }]
+  } else if (deviceId) {
+    // deviceId isn't guaranteed to be the pos_devices row id — it may be the device_uid sent
+    // under the wrong key, so match either column.
+    where[Op.or] = [{ id: deviceId }, { device_uid: deviceId }]
+  } else {
+    where.device_uid = deviceUid
+  }
   const device = await PosDevice.findOne({ where })
   if (!device) throw new NotFoundError("Device not found")
   // A till with no branch yet can open a shift at the cashier's location.
