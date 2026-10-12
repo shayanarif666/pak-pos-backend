@@ -43,6 +43,8 @@ export async function ensureSequenceAtLeast(name, min, transaction) {
 
 export const nextStoreID = (transaction) => getNextSequence("store", transaction)
 
+export const nextPlanNumber = (transaction) => getNextSequence("plan", transaction)
+
 export const nextLocationID = (storeId, transaction) =>
   getNextSequence(`location:${storeId}`, transaction)
 

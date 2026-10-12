@@ -1,6 +1,7 @@
 import { UniqueConstraintError } from "sequelize"
 import { Plan } from "./plan.model.js"
 import { writeAudit } from "../../shared/utils/audit.util.js"
+import { nextPlanNumber } from "../../shared/utils/counter.util.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 
@@ -108,7 +109,7 @@ export async function upsertPlan(actor, fields) {
   }
 
   try {
-    const plan = await Plan.create(fields)
+    const plan = await Plan.create({ ...fields, plan_number: await nextPlanNumber() })
     await auditPlan(actor, "create", plan, null)
     return { plan: publicPlan(plan), created: true }
   } catch (err) {
