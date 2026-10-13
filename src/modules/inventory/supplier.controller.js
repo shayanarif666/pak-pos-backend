@@ -18,6 +18,9 @@ export const getOne = asyncHandler(async (req, res) => {
 export const create = asyncHandler(async (req, res) => {
   const store = await getStoreForManager(req.storeId)
   const data = await supplierService.createSupplier(store, req.body, req.user)
+  if (req.auth?.channel === "pos") {
+    return apiResponse(res, 201, "Supplier Successfully Created", null)
+  }
   return apiResponse(res, 201, "Supplier created", data)
 })
 
@@ -26,6 +29,9 @@ export const createBulk = asyncHandler(async (req, res) => {
   const data = await runBulk(extractBulkItems(req.body), async (item) => {
     return supplierService.createSupplier(store, parseCreateSupplier(item), req.user)
   })
+  if (req.auth?.channel === "pos") {
+    return apiResponse(res, bulkStatus(data), "Suppliers Successfully Created", null)
+  }
   return apiResponse(res, bulkStatus(data), "Bulk suppliers processed", data)
 })
 

@@ -21,6 +21,9 @@ export const create = asyncHandler(async (req, res) => {
     location_id: req.auth?.location_id || req.user.location_id,
   }
   const data = await staffService.createStaff(actor, req.body)
+  if (req.auth?.channel === "pos") {
+    return apiResponse(res, 201, "Staff Member Successfully Created", null)
+  }
   return apiResponse(res, 201, "Staff created", data)
 })
 
@@ -33,6 +36,9 @@ export const createBulk = asyncHandler(async (req, res) => {
   const data = await runBulk(extractBulkItems(req.body), async (item) => {
     return staffService.createStaff(actor, parseCreateStaff(item))
   })
+  if (req.auth?.channel === "pos") {
+    return apiResponse(res, bulkStatus(data), "Staff Members Successfully Created", null)
+  }
   return apiResponse(res, bulkStatus(data), "Bulk staff processed", data)
 })
 

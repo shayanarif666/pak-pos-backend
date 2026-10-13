@@ -18,6 +18,9 @@ export const getOne = asyncHandler(async (req, res) => {
 export const create = asyncHandler(async (req, res) => {
   const store = await getStoreForManager(req.storeId)
   const product = await productService.createProduct(store, req.body)
+  if (req.auth?.channel === "pos") {
+    return apiResponse(res, 201, "Product Successfully Created", null)
+  }
   return apiResponse(res, 201, "Product created", product)
 })
 
@@ -26,6 +29,9 @@ export const createBulk = asyncHandler(async (req, res) => {
   const data = await runBulk(extractBulkItems(req.body), async (item) => {
     return productService.createProduct(store, parseCreateProduct(item))
   })
+  if (req.auth?.channel === "pos") {
+    return apiResponse(res, bulkStatus(data), "Products Successfully Created", null)
+  }
   return apiResponse(res, bulkStatus(data), "Bulk products processed", data)
 })
 
