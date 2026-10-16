@@ -77,6 +77,18 @@ async function getSession(storeId, id) {
   return row
 }
 
+// Clock-out can target a session by its UUID id or its short session_number — whichever the
+// till has on hand.
+async function getSessionByIdOrNumber(storeId, idOrNumber) {
+  const isNumber = /^\d+$/.test(String(idOrNumber))
+  const where = isNumber
+    ? { session_number: Number(idOrNumber), store_id: storeId }
+    : { id: idOrNumber, store_id: storeId }
+  const row = await RegisterSession.findOne({ where })
+  if (!row) throw new NotFoundError("Register session not found")
+  return row
+}
+
 async function resolveDevice(storeId, locationId, { deviceId, deviceUid } = {}) {
   if (!deviceId && !deviceUid) return null
   const where = { store_id: storeId, is_active: true }
@@ -197,11 +209,11 @@ export async function clockIn(actor, fields) {
     channel: "pos",
   })
 
-  return publicSession(row)
+  return { session_number: row.session_number, opened_at: row.opened_at }
 }
 
 export async function clockOut(actor, id, fields) {
-  const row = await getSession(actor.store_id, id)
+  const row = await getSessionByIdOrNumber(actor.store_id, id)
   if (row.status !== "clock_in") {
     throw new ConflictError("Session is already closed")
   }
@@ -241,7 +253,11 @@ export async function clockOut(actor, id, fields) {
     note: `variance ${variance}`,
   })
 
-  return publicSession(row)
+  return {
+    session_number: row.session_number,
+    closed_at: row.closed_at,
+    counted_cash: Number(row.counted_cash),
+  }
 }
 
 // DATETIME columns are stored to the second, so allow a small edge on both ends.
