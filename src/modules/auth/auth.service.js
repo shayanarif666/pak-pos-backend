@@ -222,7 +222,14 @@ function posClaims(pos) {
   return { channel: "pos", license_id: pos.license_id, device_id: pos.device_id }
 }
 
+// POS tills are mostly offline and can't hit /auth/refresh to renew a short-lived token, so POS
+// sessions get a 10-year expiry on both tokens instead of the web dashboard's short-lived ones.
+const POS_TOKEN_EXPIRES_IN = "3650d"
+
 function signTokens(user, extras = {}, pos = null, sid = null) {
+  const accessExpiresIn = pos ? POS_TOKEN_EXPIRES_IN : env.JWT_ACCESS_EXPIRES_IN
+  const refreshExpiresIn = pos ? POS_TOKEN_EXPIRES_IN : env.JWT_REFRESH_EXPIRES_IN
+
   const access_token = jwt.sign(
     {
       sub: user.id,
@@ -237,16 +244,16 @@ function signTokens(user, extras = {}, pos = null, sid = null) {
       type: "access",
     },
     env.JWT_SECRET,
-    { expiresIn: env.JWT_ACCESS_EXPIRES_IN }
+    { expiresIn: accessExpiresIn }
   )
 
   const refresh_token = jwt.sign(
     { sub: user.id, sid, tv: user.token_version ?? 0, ...posClaims(pos), type: "refresh" },
     env.JWT_SECRET,
-    { expiresIn: env.JWT_REFRESH_EXPIRES_IN }
+    { expiresIn: refreshExpiresIn }
   )
 
-  return { access_token, refresh_token, expires_in: env.JWT_ACCESS_EXPIRES_IN }
+  return { access_token, refresh_token, expires_in: accessExpiresIn }
 }
 
 function refreshExpiry(refreshToken) {
@@ -510,7 +517,7 @@ export async function login(input, meta = {}) {
   })
 
   return {
-    ...(pos ? null : {...tokens}),
+    ...tokens,
     user: pos ? publicPosUser(user) : publicUser(user),
     // POS gets a store{}/location{} summary onto data (no license detail — that's
     // POST /licenses/validate's job) instead of the dashboard's heavier store-settings +
