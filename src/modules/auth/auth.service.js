@@ -517,7 +517,10 @@ export async function login(input, meta = {}) {
   })
 
   return {
-    ...tokens,
+    // POS gets a single long-lived `token` (the access_token) — no refresh_token/expires_in in
+    // the response, since a 10-year access token never needs renewing. Still generated and
+    // tracked server-side via UserSession for revocation; it's just not surfaced here.
+    ...(pos ? { token: tokens.access_token } : tokens),
     user: pos ? publicPosUser(user) : publicUser(user),
     // POS gets a store{}/location{} summary onto data (no license detail — that's
     // POST /licenses/validate's job) instead of the dashboard's heavier store-settings +
