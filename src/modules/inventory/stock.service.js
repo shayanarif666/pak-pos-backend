@@ -4,7 +4,7 @@ import { sequelize } from "../../db/sequelize.js"
 import { StockMovement } from "./stockMovement.model.js"
 import { Store } from "../stores/store.model.js"
 import { Location } from "../locations/location.model.js"
-import { getProduct, publicStock } from "../catalog/product.service.js"
+import { getProductByNumber, publicStock } from "../catalog/product.service.js"
 import {
   applyStockDelta,
   loadLocation,
@@ -72,7 +72,7 @@ export async function createMovement(actor, fields) {
     throw new ForbiddenError("You can only adjust stock at your location")
   }
 
-  const product = await getProduct(actor.store_id, fields.product_id)
+  const product = await getProductByNumber(actor.store_id, fields.product_number)
   const locationId = resolveLocationId(actor, fields.location_id)
   if (!locationId) throw new ForbiddenError("No location on this account")
   const location = await loadLocation(actor.store_id, locationId)

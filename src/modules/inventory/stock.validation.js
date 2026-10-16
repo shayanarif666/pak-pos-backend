@@ -20,6 +20,14 @@ function optionalUuid(body, key) {
   return requireUuid(body, key)
 }
 
+function requireInt(body, key, { min = 0 } = {}) {
+  const n = Number(body[key])
+  if (!Number.isInteger(n) || n < min) {
+    throw new AppError(`${key} must be an integer >= ${min}`, 400)
+  }
+  return n
+}
+
 export function parseCreateMovement(body) {
   const movement_type = String(body.movement_type || "")
   if (!MANUAL_TYPES.includes(movement_type)) {
@@ -44,7 +52,7 @@ export function parseCreateMovement(body) {
   }
 
   return {
-    product_id: requireUuid(body, "product_id"),
+    product_number: requireInt(body, "product_number"),
     location_id: optionalUuid(body, "location_id"),
     movement_type,
     reason,
