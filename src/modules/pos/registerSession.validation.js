@@ -26,6 +26,15 @@ function optionalNumber(body, key) {
   return n
 }
 
+// Lets an offline POS till report when the shift actually opened/closed, instead of the moment
+// the sync request happens to reach the server.
+function optionalDate(body, key) {
+  if (body[key] === undefined || body[key] === null || body[key] === "") return null
+  const date = new Date(body[key])
+  if (Number.isNaN(date.getTime())) throw new AppError(`${key} must be a valid date`, 400)
+  return date
+}
+
 export function parseClockIn(body) {
   const opening_cash = Number(body.opening_cash)
   if (Number.isNaN(opening_cash) || opening_cash < 0) {
@@ -43,6 +52,9 @@ export function parseClockIn(body) {
     device_uid:
       body.device_uid == null || body.device_uid === "" ? null : String(body.device_uid).trim(),
     note: body.note == null || body.note === "" ? null : String(body.note).trim(),
+    // Offline POS: when this shift actually opened, if that's earlier than when this request
+    // reaches the server. Defaults to now when omitted.
+    opened_at: optionalDate(body, "opened_at"),
   }
 }
 
@@ -58,5 +70,8 @@ export function parseClockOut(body) {
     counted_cash: optionalNumber(body, "counted_cash"),
     closing_cash: optionalNumber(body, "closing_cash"),
     note: body.note == null || body.note === "" ? null : String(body.note).trim(),
+    // Offline POS: when this shift actually closed (e.g. at day-end), if that's earlier than
+    // when this request reaches the server. Defaults to now when omitted.
+    closed_at: optionalDate(body, "closed_at"),
   }
 }

@@ -182,7 +182,7 @@ export async function clockIn(actor, fields) {
     opening_cash: fields.opening_cash,
     expected_cash: money(fields.opening_cash),
     note: fields.note,
-    opened_at: new Date(),
+    opened_at: fields.opened_at || new Date(),
   })
 
   await writeAudit({
@@ -225,7 +225,7 @@ export async function clockOut(actor, id, fields) {
     expected_cash: expected,
     cash_variance: variance,
     status: "clock_out",
-    closed_at: new Date(),
+    closed_at: fields.closed_at || new Date(),
   })
 
   await writeAudit({
