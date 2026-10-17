@@ -178,8 +178,9 @@ function publicProduct(product, extras = {}) {
     sell_loose: json.sell_loose,
     is_weight_based: json.is_weight_based,
     has_bulk_discount: json.has_bulk_discount,
-    net_selling_price:
-      json.net_selling_price == null ? null : Number(json.net_selling_price),
+    total_price_each_unit:
+      json.total_price_each_unit == null ? null : Number(json.total_price_each_unit),
+    total_pack_price: json.total_pack_price == null ? null : Number(json.total_pack_price),
     low_stock_threshold: json.low_stock_threshold,
     is_published: json.is_published,
     ...publicVisibility(json),

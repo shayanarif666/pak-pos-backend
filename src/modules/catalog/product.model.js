@@ -53,11 +53,14 @@ export const Product = sequelize.define(
       allowNull: false,
       defaultValue: 10,
     },
-    // MySQL STORED GENERATED COLUMN (selling_price minus the product's own discount, no tax) —
-    // see the net_selling_price expression in railway_bootstrap.sql / the migration SQL. The DB
-    // recomputes it whenever selling_price/discount_type/discount_value change; never assign it
-    // from app code — leaving it unset on create/update is what lets the DB compute it.
-    net_selling_price: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
+    // MySQL STORED GENERATED COLUMNS: the price after this product's own discount, then its own
+    // tax on the discounted price (e.g. 100 → 5% off → 95 → +5% tax → 99.75). Category tax,
+    // offers and store-level tax are applied at checkout, not here. total_pack_price does the
+    // same on pack_selling_price (fixed amounts count once per unit in the pack) and is NULL for
+    // loose items. Expressions: db/productTotals.sql.js. Never assign these from app code —
+    // leaving them unset on create/update is what lets the DB compute them.
+    total_price_each_unit: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
+    total_pack_price: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
     is_published: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     ...catalogChannelVisibilityFields(),
     is_active: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },

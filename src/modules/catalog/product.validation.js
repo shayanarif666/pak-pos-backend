@@ -43,15 +43,35 @@ function optionalBool(body, key) {
   return Boolean(value)
 }
 
-function requireNumber(body, key, { min = 0 } = {}) {
+function requireNumber(body, key, { min = 0, label = key } = {}) {
   if (body[key] === undefined || body[key] === null || body[key] === "") {
-    throw new AppError(`${key} is required`, 400)
+    throw new AppError(`${label} is required`, 400)
   }
   const n = Number(body[key])
   if (Number.isNaN(n) || n < min) {
-    throw new AppError(`${key} must be a number >= ${min}`, 400)
+    throw new AppError(`${label} must be a number >= ${min}`, 400)
   }
   return n
+}
+
+// Price fields as the API docs name them, mapped onto the column names. A loose item sends
+// cost/price; a pack product sends each_unit_cost/each_unit_price and pack_cost/pack_price.
+// The column names themselves are still accepted.
+const PRICE_ALIASES = {
+  cost_price: ["cost", "each_unit_cost"],
+  selling_price: ["price", "each_unit_price"],
+  pack_cost_price: ["pack_cost"],
+  pack_selling_price: ["pack_price"],
+}
+
+function withPriceAliases(body) {
+  const out = { ...body }
+  for (const [column, aliases] of Object.entries(PRICE_ALIASES)) {
+    if (out[column] !== undefined) continue
+    const alias = aliases.find((key) => body[key] !== undefined)
+    if (alias) out[column] = body[alias]
+  }
+  return out
 }
 
 function optionalNumber(body, key, { min = 0 } = {}) {
@@ -138,7 +158,8 @@ function resolveProductImages(body, { allowMissingImages = false } = {}) {
   return { images, featured_image }
 }
 
-export function parseCreateProduct(body) {
+export function parseCreateProduct(rawBody) {
+  const body = withPriceAliases(rawBody)
   const unit = body.unit === undefined ? "piece" : String(body.unit)
   if (!PRODUCT_UNIT.includes(unit)) {
     throw new AppError(`unit must be one of: ${PRODUCT_UNIT.join(", ")}`, 400)
@@ -157,10 +178,12 @@ export function parseCreateProduct(body) {
     unit,
     // Pack products may leave the per-unit prices out — createProduct() derives them from the
     // pack price ÷ pack_size.
-    cost_price: isPack ? optionalNumber(body, "cost_price") ?? null : requireNumber(body, "cost_price"),
+    cost_price: isPack
+      ? optionalNumber(body, "cost_price") ?? null
+      : requireNumber(body, "cost_price", { label: "cost" }),
     selling_price: isPack
       ? optionalNumber(body, "selling_price") ?? null
-      : requireNumber(body, "selling_price"),
+      : requireNumber(body, "selling_price", { label: "price" }),
     // Left undefined when not sent: createProduct() then derives it from discount_type/value.
     has_product_discount: optionalBool(body, "has_product_discount"),
     discount_type: body.discount_type || null,
@@ -194,7 +217,8 @@ export function parseCreateProduct(body) {
   return fields
 }
 
-export function parsePatchProduct(body) {
+export function parsePatchProduct(rawBody) {
+  const body = withPriceAliases(rawBody)
   const fields = {}
   if (body.title !== undefined) fields.title = requireString(body, "title")
   if (body.sku !== undefined) fields.sku = requireString(body, "sku")
