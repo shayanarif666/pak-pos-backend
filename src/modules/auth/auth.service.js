@@ -149,10 +149,14 @@ async function buildPosLicenseSummary(pos, user) {
     ? await Location.findByPk(locationId, { attributes: ["location_id_int", "name"] })
     : null
 
-  // A manager sees the managers and cashiers of their own location; a cashier only themself
-  // (a manager's PIN unlocks approvals, so it is not handed to cashiers).
+  // A manager sees the other managers and the cashiers of their own location (not themself);
+  // a cashier only themself (a manager's PIN unlocks approvals, so it is not handed to cashiers).
   const directory = locationId
-    ? await posStaffDirectory(user.store_id, locationId, user.role === "cashier" ? user.id : null)
+    ? await posStaffDirectory(
+        user.store_id,
+        locationId,
+        user.role === "cashier" ? { onlyUserId: user.id } : { excludeUserId: user.id }
+      )
     : { locations: [], users: [] }
 
   return {
@@ -165,9 +169,10 @@ async function buildPosLicenseSummary(pos, user) {
 /**
  * POS login lists: locations [{ id, name }] and users [{ id, name, role, pin, location_id }],
  * all ids being the store-level numbers (location_number / user_number) the POS works with.
- * locationId null = every active location of the store; onlyUserId limits users to that one.
+ * locationId null = every active location of the store; onlyUserId limits users to that one,
+ * excludeUserId leaves that one out (the signed-in manager).
  */
-async function posStaffDirectory(storeId, locationId, onlyUserId = null) {
+async function posStaffDirectory(storeId, locationId, { onlyUserId = null, excludeUserId = null } = {}) {
   const locationWhere = { store_id: storeId, is_active: true }
   if (locationId) locationWhere.id = locationId
   const locations = await Location.findAll({
@@ -184,6 +189,7 @@ async function posStaffDirectory(storeId, locationId, onlyUserId = null) {
     location_id: { [Op.in]: [...numberOf.keys()] },
   }
   if (onlyUserId) userWhere.id = onlyUserId
+  else if (excludeUserId) userWhere.id = { [Op.ne]: excludeUserId }
   const users = numberOf.size
     ? await User.findAll({
         where: userWhere,
