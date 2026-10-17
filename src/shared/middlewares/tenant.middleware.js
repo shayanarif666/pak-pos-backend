@@ -8,8 +8,9 @@ export function tenantMiddleware(req, res, next) {
 
   req.storeId = req.user.store_id
   req.storeNumber = req.user.store_id_int ?? req.auth?.store_number ?? null
-  req.locationId = req.user.location_id || req.auth?.location_id || null
-  req.locationNumber = req.user.location_id_int ?? req.auth?.location_number ?? null
+  // req.auth wins: for the store admin it holds the location chosen with X-Location-Id.
+  req.locationId = req.auth?.location_id || req.user.location_id || null
+  req.locationNumber = req.auth?.location_number ?? req.user.location_id_int ?? null
   req.storeIdInt = req.storeNumber
   next()
 }

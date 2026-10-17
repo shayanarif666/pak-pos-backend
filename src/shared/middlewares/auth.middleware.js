@@ -1,7 +1,13 @@
 import jwt from "jsonwebtoken"
 import { env } from "../../config/env.js"
 import { User } from "../../modules/auth/user.model.js"
+import { Location } from "../../modules/locations/location.model.js"
 import { UnauthorizedError } from "../errors/UnauthorizedError.js"
+import { AppError } from "../errors/AppError.js"
+import { NotFoundError } from "../errors/NotFoundError.js"
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 import {
   assertPosSessionUsable,
   assertSessionOpen,
@@ -55,10 +61,30 @@ export async function authMiddleware(req, res, next) {
       license_id: payload.license_id || null,
       sid: payload.sid || null,
     }
+    if (user.role === "store_admin") await applyChosenLocation(req)
     next()
   } catch (err) {
     next(err)
   }
+}
+
+/**
+ * The store admin works across every location of the store. An `X-Location-Id` header (the
+ * location's number, e.g. 2, or its UUID) picks the one this request acts on — register
+ * sessions, stock, staff and anything else that uses req.auth.location_id. Without the header
+ * the admin's own location is used, as before. Other roles stay on their own location.
+ */
+async function applyChosenLocation(req) {
+  const raw = String(req.headers["x-location-id"] || "").trim()
+  if (!raw || !req.auth.store_id) return
+  const where = { store_id: req.auth.store_id, is_active: true }
+  if (/^\d+$/.test(raw)) where.location_id_int = Number(raw)
+  else if (UUID_RE.test(raw)) where.id = raw
+  else throw new AppError("X-Location-Id must be a location number or UUID", 400)
+  const location = await Location.findOne({ where, attributes: ["id", "location_id_int"] })
+  if (!location) throw new NotFoundError("Location not found")
+  req.auth.location_id = location.id
+  req.auth.location_number = location.location_id_int
 }
 
 export function optionalAuth(req, res, next) {

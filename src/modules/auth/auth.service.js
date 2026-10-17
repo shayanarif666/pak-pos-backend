@@ -136,13 +136,18 @@ async function buildPosLicenseSummary(pos, user) {
   ])
   if (!license || !store) return null
 
+  const storeSummary = { id: store.store_id_int, name: store.name, slug: store.slug }
+  // The store admin works across every location (they pick one per request with the
+  // X-Location-Id header), so their login carries no single location.
+  if (user.role === "store_admin") return { store: storeSummary }
+
   const locationId = user.location_id || store.default_location_id
   const location = locationId
     ? await Location.findByPk(locationId, { attributes: ["location_id_int", "name"] })
     : null
 
   return {
-    store: { id: store.store_id_int, name: store.name, slug: store.slug },
+    store: storeSummary,
     location: location ? { id: location.location_id_int, name: location.name } : null,
   }
 }
@@ -392,13 +397,13 @@ async function findUserByPin(pin, { deviceId, deviceUid } = {}) {
     const devices = await PosDevice.findAll({ where })
     for (const device of devices) {
       const inStore = matches.filter((user) => user.store_id === device.store_id)
-      candidates.push(
-        ...(device.location_id
-          ? inStore.filter(
-              (user) => user.location_id === device.location_id || user.role === "store_admin"
-            )
-          : inStore)
-      )
+      if (!device.location_id) {
+        candidates.push(...inStore)
+        continue
+      }
+      // Staff of the till's own location first; the store admin may sign in at any till.
+      const here = inStore.filter((user) => user.location_id === device.location_id)
+      candidates.push(...(here.length ? here : inStore.filter((u) => u.role === "store_admin")))
     }
   }
   if (candidates.length === 1) return candidates[0]

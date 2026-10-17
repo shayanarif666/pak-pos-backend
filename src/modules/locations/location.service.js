@@ -104,7 +104,6 @@ async function assertManagerCredentialsFree(
     await assertPinAvailable(pin, {
       storeId,
       locationId,
-      role: "manager",
       exceptUserId,
       transaction,
     })

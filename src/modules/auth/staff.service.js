@@ -88,7 +88,6 @@ export async function createStaff(actor, input) {
   await assertPinAvailable(input.pin, {
     storeId: actor.store_id,
     locationId: location.id,
-    role: input.role,
   })
 
   try {
