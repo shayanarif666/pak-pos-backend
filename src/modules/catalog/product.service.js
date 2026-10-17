@@ -77,6 +77,15 @@ function assertPackRules(fields, current = {}) {
 
 const round2 = (n) => Math.round(Number(n) * 100) / 100
 
+/** Pack product: cost_price / selling_price of one unit = pack price ÷ pack_size. */
+function unitPricesFromPack({ pack_size, pack_cost_price, pack_selling_price }) {
+  const size = Number(pack_size)
+  return {
+    cost_price: round2(Number(pack_cost_price) / size),
+    selling_price: round2(Number(pack_selling_price) / size),
+  }
+}
+
 // The client normally doesn't send has_product_discount (the docs checkbox only adds/removes the
 // discount fields), so it's on whenever a discount is actually configured. An explicit value wins.
 function deriveHasDiscount(explicit, type, value) {
@@ -344,11 +353,11 @@ export async function createProduct(store, fields) {
       featured_image: fields.featured_image ?? null,
       description: fields.description,
       unit: fields.unit,
-      // Pack products sent without per-unit prices get them from the pack price ÷ pack_size
-      // (assertPackRules above guarantees both are present for pack products).
-      cost_price: fields.cost_price ?? round2(fields.pack_cost_price / fields.pack_size),
-      selling_price:
-        fields.selling_price ?? round2(fields.pack_selling_price / fields.pack_size),
+      // A pack product's per-unit prices are always pack price ÷ pack_size (assertPackRules
+      // above guarantees both are present); anything sent for them is ignored.
+      ...(fields.is_pack_product
+        ? unitPricesFromPack(fields)
+        : { cost_price: fields.cost_price, selling_price: fields.selling_price }),
       has_product_discount: deriveHasDiscount(
         fields.has_product_discount,
         fields.discount_type,
@@ -412,6 +421,18 @@ export async function updateProduct(storeId, id, fields) {
     patch.pack_size = null
     patch.pack_cost_price = null
     patch.pack_selling_price = null
+  }
+  // Still (or now) a pack product: keep the per-unit prices derived from the pack.
+  const isPack = fields.is_pack_product ?? product.is_pack_product
+  if (isPack) {
+    Object.assign(
+      patch,
+      unitPricesFromPack({
+        pack_size: fields.pack_size ?? product.pack_size,
+        pack_cost_price: fields.pack_cost_price ?? product.pack_cost_price,
+        pack_selling_price: fields.pack_selling_price ?? product.pack_selling_price,
+      })
+    )
   }
   if (
     fields.has_product_discount === undefined &&

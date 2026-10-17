@@ -55,11 +55,11 @@ function requireNumber(body, key, { min = 0, label = key } = {}) {
 }
 
 // Price fields as the API docs name them, mapped onto the column names. A loose item sends
-// cost/price; a pack product sends each_unit_cost/each_unit_price and pack_cost/pack_price.
-// The column names themselves are still accepted.
+// cost/price; a pack product sends pack_cost/pack_price only (its per-unit prices are always
+// calculated in product.service). The column names themselves are still accepted.
 const PRICE_ALIASES = {
-  cost_price: ["cost", "each_unit_cost"],
-  selling_price: ["price", "each_unit_price"],
+  cost_price: ["cost"],
+  selling_price: ["price"],
   pack_cost_price: ["pack_cost"],
   pack_selling_price: ["pack_price"],
 }
