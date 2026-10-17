@@ -34,14 +34,6 @@ function optionalBool(body, key) {
   return Boolean(value)
 }
 
-function requireInt(body, key, { min = 0 } = {}) {
-  const n = Number(body[key])
-  if (!Number.isInteger(n) || n < min) {
-    throw new AppError(`${key} must be an integer >= ${min}`, 400)
-  }
-  return n
-}
-
 function requireNumber(body, key, { min = 0 } = {}) {
   if (body[key] === undefined || body[key] === null || body[key] === "") {
     throw new AppError(`${key} is required`, 400)
@@ -158,7 +150,7 @@ export function parseCreateProduct(body) {
     images: imageFields.images ?? [],
     featured_image: imageFields.featured_image ?? null,
     description: optionalString(body, "description") ?? null,
-    category_number: requireInt(body, "category_number"),
+    category_id: requireUuid(body, "category_id"),
     unit,
     cost_price: requireNumber(body, "cost_price"),
     selling_price: requireNumber(body, "selling_price"),
