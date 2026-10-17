@@ -13,7 +13,7 @@ import { PosDevice } from "../pos/posDevice.model.js"
 import { findLiveStoreBySlug, publicStore } from "../stores/store.service.js"
 import { visibilityFromRecordChannel } from "../../db/channelVisibility.js"
 import { assertStoreLicenseUsable, publicLicense } from "../stores/license.service.js"
-import { assertPinAvailable, PIN_TAKEN_MESSAGE } from "./pin.util.js"
+import { assertUserPinAvailable, PIN_TAKEN_MESSAGE } from "./pin.util.js"
 import { hashPassword, comparePassword } from "../../shared/utils/hash.util.js"
 import { hashToken, randomToken } from "../../shared/utils/token.util.js"
 import { isExpired } from "../../shared/utils/date.util.js"
@@ -372,16 +372,39 @@ async function findUserByEmailPassword(email, password) {
   return matches[0] || null
 }
 
-// PINs are unique platform-wide (see pin.util.js), so the PIN alone identifies one staff member.
-async function findUserByPin(pin) {
+// PINs are unique per location (see pin.util.js), so the same PIN can belong to staff at other
+// locations or stores. When it does, the till the login comes from (device_id / device_uid,
+// bound on license activation) picks its store and location.
+async function findUserByPin(pin, { deviceId, deviceUid } = {}) {
   const matches = await User.findAll({
     where: { pin, is_active: true, role: { [Op.in]: [...STAFF_ROLES] } },
-    limit: 2,
   })
-  if (matches.length > 1) {
-    throw new ConflictError("This PIN is shared by more than one account. Ask your admin to set a new PIN")
+  if (matches.length <= 1) return matches[0] || null
+
+  let candidates = []
+  if (deviceId || deviceUid) {
+    const where = {
+      store_id: { [Op.in]: [...new Set(matches.map((user) => user.store_id))] },
+      is_active: true,
+    }
+    if (deviceId) where.id = deviceId
+    else where.device_uid = deviceUid
+    const devices = await PosDevice.findAll({ where })
+    for (const device of devices) {
+      const inStore = matches.filter((user) => user.store_id === device.store_id)
+      candidates.push(
+        ...(device.location_id
+          ? inStore.filter(
+              (user) => user.location_id === device.location_id || user.role === "store_admin"
+            )
+          : inStore)
+      )
+    }
   }
-  return matches[0] || null
+  if (candidates.length === 1) return candidates[0]
+  throw new ConflictError(
+    "This PIN is used at more than one location. Sign in from this location's till (send device_uid)"
+  )
 }
 
 /**
@@ -425,7 +448,7 @@ async function resolveLoginDevice(storeId, { deviceId, deviceUid }) {
 
 async function resolveLoginUser(input) {
   const user = input.pin
-    ? await findUserByPin(input.pin)
+    ? await findUserByPin(input.pin, { deviceId: input.device_id, deviceUid: input.device_uid })
     : await findUserByEmailPassword(input.email, input.password)
   if (!user) throw new UnauthorizedError("Invalid credentials")
 
@@ -620,7 +643,7 @@ export async function patchMe(user, fields) {
     if (!STAFF_ROLES.has(user.role) || !user.store_id) {
       throw new AppError("PIN is only for store staff", 400)
     }
-    await assertPinAvailable(fields.pin, { exceptUserId: user.id })
+    await assertUserPinAvailable(user, fields.pin)
     patch.pin = fields.pin
   }
 

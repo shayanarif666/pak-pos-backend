@@ -25,7 +25,7 @@ import { hashPassword } from "../../shared/utils/hash.util.js"
 import { ensureUniqueSlug } from "../../shared/utils/slugify.js"
 import { ensureSequenceAtLeast, nextUserNumber } from "../../shared/utils/counter.util.js"
 import { issueUserSession } from "../auth/auth.service.js"
-import { assertPinAvailable } from "../auth/pin.util.js"
+import { assertUserPinAvailable } from "../auth/pin.util.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
@@ -159,9 +159,8 @@ export async function registerStore(input, superadmin) {
   if (!slug) throw new AppError("Store name must contain letters or numbers for a slug", 400)
 
   return sequelize.transaction(async (transaction) => {
-    // PINs are unique across all stores because POS sign-in sends only the PIN.
-    await assertPinAvailable(input.admin_pin, { transaction })
-    await assertPinAvailable(input.manager_pin, { transaction })
+    // PINs are unique per location; a new store has no staff yet, and admin_pin !== manager_pin
+    // is checked in validation.
     const plan = await Plan.findByPk(input.plan_id, { transaction })
     if (!plan || !plan.is_active) throw new NotFoundError("Plan not found")
     if (plan.max_locations < 1) {
@@ -573,7 +572,7 @@ export async function patchStore(id, fields) {
       if (fields.admin_email !== undefined) adminPatch.email = fields.admin_email
       if (fields.admin_phone !== undefined) adminPatch.phone = fields.admin_phone
       if (fields.admin_pin !== undefined) {
-        await assertPinAvailable(fields.admin_pin, { exceptUserId: admin.id, transaction })
+        await assertUserPinAvailable(admin, fields.admin_pin, { transaction })
         adminPatch.pin = fields.admin_pin
       }
       if (fields.admin_password) adminPatch.password = await hashPassword(fields.admin_password)
@@ -592,7 +591,7 @@ export async function patchStore(id, fields) {
       if (fields.manager_email !== undefined) managerPatch.email = fields.manager_email
       if (fields.manager_phone !== undefined) managerPatch.phone = fields.manager_phone
       if (fields.manager_pin !== undefined) {
-        await assertPinAvailable(fields.manager_pin, { exceptUserId: manager.id, transaction })
+        await assertUserPinAvailable(manager, fields.manager_pin, { transaction })
         managerPatch.pin = fields.manager_pin
       }
       if (fields.manager_password) {

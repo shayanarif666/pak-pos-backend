@@ -9,6 +9,7 @@ import * as supplierLocations from "./migrations/20261006120000-supplier-locatio
 import * as reportLocationIndexes from "./migrations/20261006130000-report-location-indexes.js"
 import * as catalogPricingFields from "./migrations/20261018120000-catalog-pricing-fields.js"
 import * as productTotalPrices from "./migrations/20261019120000-product-total-prices.js"
+import * as userPinPerLocation from "./migrations/20261020120000-user-pin-per-location.js"
 
 // Migrations the running code cannot work without (e.g. users.token_version is read on every
 // authenticated request). Each one checks before it changes anything, so running it on a
@@ -28,6 +29,8 @@ const REQUIRED = [
   catalogPricingFields,
   // The Product model reads total_price_each_unit / total_pack_price.
   productTotalPrices,
+  // Without it the old (store_id, pin) index rejects a PIN reused at another location.
+  userPinPerLocation,
 ]
 
 export async function ensureSchema() {

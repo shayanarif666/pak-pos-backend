@@ -22,10 +22,23 @@ export const create = asyncHandler(async (req, res) => {
   }
   const data = await staffService.createStaff(actor, req.body)
   if (req.auth?.channel === "pos") {
-    return apiResponse(res, 201, "Staff Member Successfully Created", null)
+    return apiResponse(res, 201, createdMessage([data]), posStaff(data))
   }
   return apiResponse(res, 201, "Staff created", data)
 })
+
+/** POS create response: { id (user_number), name, role }. */
+function posStaff(user) {
+  return { id: user.user_number, name: user.name, role: user.role }
+}
+
+// "Cashier Successfully Created" / "Managers Successfully Created"; mixed roles say "Staff".
+function createdMessage(users) {
+  const roles = new Set(users.map((user) => user.role))
+  if (roles.size !== 1) return "Staff Successfully Created"
+  const label = roles.has("manager") ? "Manager" : "Cashier"
+  return `${label}${users.length > 1 ? "s" : ""} Successfully Created`
+}
 
 export const createBulk = asyncHandler(async (req, res) => {
   const actor = {
@@ -37,7 +50,12 @@ export const createBulk = asyncHandler(async (req, res) => {
     return staffService.createStaff(actor, parseCreateStaff(item))
   })
   if (req.auth?.channel === "pos") {
-    return apiResponse(res, bulkStatus(data), "Staff Members Successfully Created", null)
+    return apiResponse(
+      res,
+      bulkStatus(data),
+      createdMessage(data.created),
+      data.created.map(posStaff)
+    )
   }
   return apiResponse(res, bulkStatus(data), "Bulk staff processed", data)
 })

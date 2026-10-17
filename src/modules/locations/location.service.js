@@ -89,7 +89,8 @@ async function assertManagerCredentialsFree(
   email,
   pin,
   transaction,
-  exceptUserId = null
+  exceptUserId = null,
+  locationId = null
 ) {
   if (email) {
     const where = { store_id: storeId, email }
@@ -98,13 +99,28 @@ async function assertManagerCredentialsFree(
     if (emailTaken) throw new ConflictError("Manager email already registered in this store")
   }
 
-  // PINs are unique across all stores because POS sign-in sends only the PIN.
-  if (pin) await assertPinAvailable(pin, { exceptUserId, transaction })
+  // PINs are unique per location (see pin.util.js).
+  if (pin) {
+    await assertPinAvailable(pin, {
+      storeId,
+      locationId,
+      role: "manager",
+      exceptUserId,
+      transaction,
+    })
+  }
 }
 
 async function createLocationManager(store, location, manager, transaction) {
   if (!manager) throw new AppError("manager is required", 400)
-  await assertManagerCredentialsFree(store.id, manager.email, manager.pin, transaction)
+  await assertManagerCredentialsFree(
+    store.id,
+    manager.email,
+    manager.pin,
+    transaction,
+    null,
+    location.id
+  )
 
   try {
     return await User.create(
@@ -362,7 +378,8 @@ export async function updateLocation(storeId, locationId, fields, actor) {
             null,
             managerFields.pin,
             transaction,
-            managerUser.id
+            managerUser.id,
+            location.id
           )
           patch.pin = managerFields.pin
         }

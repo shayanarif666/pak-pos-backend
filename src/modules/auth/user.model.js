@@ -31,7 +31,8 @@ export const User = sequelize.define(
     indexes: [
       { unique: true, fields: ["store_id", "user_number"] },
       { unique: true, fields: ["store_id", "email"] },
-      { unique: true, fields: ["store_id", "pin"] },
+      // PIN is unique per location; the store-admin rule is enforced in pin.util.js.
+      { unique: true, fields: ["store_id", "location_id", "pin"] },
       { fields: ["store_id", "role"] },
       { fields: ["store_id", "location_id"] },
     ],

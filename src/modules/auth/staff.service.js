@@ -6,7 +6,7 @@ import { publicUser } from "./auth.service.js"
 import { hashPassword } from "../../shared/utils/hash.util.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
-import { assertPinAvailable, PIN_TAKEN_MESSAGE } from "./pin.util.js"
+import { assertPinAvailable, assertUserPinAvailable, PIN_TAKEN_MESSAGE } from "./pin.util.js"
 import { nextUserNumber } from "../../shared/utils/counter.util.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
@@ -54,11 +54,6 @@ function staffPayload(user, plaintextPassword = null) {
   return { ...publicUser(user, { includePin: true }), password: plaintextPassword }
 }
 
-// PINs are unique across all stores because POS sign-in sends only the PIN.
-async function assertPinFree(pin, exceptId) {
-  await assertPinAvailable(pin, { exceptUserId: exceptId })
-}
-
 export async function listStaff(actor) {
   const rows = await User.findAll({
     where: staffWhere(actor),
@@ -90,7 +85,11 @@ export async function createStaff(actor, input) {
   }
 
   await assertEmailFree(actor.store_id, input.email)
-  await assertPinFree(input.pin)
+  await assertPinAvailable(input.pin, {
+    storeId: actor.store_id,
+    locationId: location.id,
+    role: input.role,
+  })
 
   try {
     const user = await User.create({
@@ -147,10 +146,6 @@ export async function patchStaff(actor, id, fields) {
     patch.role = fields.role
   }
   if (fields.password) patch.password = await hashPassword(fields.password)
-  if (fields.pin) {
-    await assertPinFree(fields.pin, user.id)
-    patch.pin = fields.pin
-  }
   if (fields.location_id) {
     if (actor.role === "manager" && fields.location_id !== actor.location_id) {
       throw new ForbiddenError("Managers cannot move staff to another location")
@@ -159,12 +154,17 @@ export async function patchStaff(actor, id, fields) {
     patch.location_id = location.id
     patch.location_id_int = location.location_id_int
   }
+  // PINs are unique per location, so a move re-checks the (new or current) PIN there.
+  if (fields.pin || patch.location_id) {
+    await assertUserPinAvailable(user, fields.pin || user.pin, { locationId: patch.location_id })
+    if (fields.pin) patch.pin = fields.pin
+  }
 
   try {
     await user.update(patch)
   } catch (err) {
     if (err instanceof UniqueConstraintError) {
-      throw new ConflictError("PIN or email is already used in this store")
+      throw new ConflictError("PIN or email is already in use")
     }
     throw err
   }
