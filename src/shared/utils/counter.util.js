@@ -76,7 +76,9 @@ export const nextDeviceNumber = (storeId, transaction) =>
   getNextSequence(`device:${storeId}`, transaction)
 
 export const nextSessionNumber = (storeId, transaction) =>
-  getNextSequence(`register_session:${storeId}`, transaction)
+  getNextSequence(`register_session:${storeId}`, transaction, {
+    restartWhenEmpty: { table: "register_sessions", storeId },
+  })
 
 export const nextCategoryNumber = (storeId, transaction) =>
   getNextSequence(`category:${storeId}`, transaction, {

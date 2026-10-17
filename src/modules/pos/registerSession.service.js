@@ -209,7 +209,7 @@ export async function clockIn(actor, fields) {
     channel: "pos",
   })
 
-  return { session_number: row.session_number, opened_at: row.opened_at }
+  return { id: row.session_number, opened_at: row.opened_at }
 }
 
 export async function clockOut(actor, id, fields) {
@@ -254,7 +254,7 @@ export async function clockOut(actor, id, fields) {
   })
 
   return {
-    session_number: row.session_number,
+    id: row.session_number,
     closed_at: row.closed_at,
     counted_cash: Number(row.counted_cash),
   }
