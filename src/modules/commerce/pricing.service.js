@@ -230,9 +230,11 @@ export function priceCustomLine(item) {
 }
 
 export function lineTaxBreakdown(store, product, category, taxable) {
+  const productTaxOn = Boolean(product?.has_product_tax)
   const breakdown = {
-    product_tax_type: product?.tax_type || null,
-    product_tax_value: product?.tax_value == null ? null : Number(product.tax_value),
+    product_tax_type: productTaxOn ? product?.tax_type || null : null,
+    product_tax_value:
+      productTaxOn && product?.tax_value != null ? Number(product.tax_value) : null,
     category_tax_type: category?.tax_type || null,
     category_tax_value: category?.tax_value == null ? null : Number(category.tax_value),
     default_tax_rate:
@@ -245,7 +247,7 @@ export function lineTaxBreakdown(store, product, category, taxable) {
   if (!store?.charge_tax_on_sales) return breakdown
 
   const base = money(taxable)
-  if (product?.tax_type && product.tax_value != null) {
+  if (productTaxOn && product?.tax_type && product.tax_value != null) {
     breakdown.product_tax_amount = applyDiscount(base, product.tax_type, product.tax_value)
   }
   if (category?.tax_type && category.tax_value != null) {

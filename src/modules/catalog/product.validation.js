@@ -157,6 +157,7 @@ export function parseCreateProduct(body) {
     has_product_discount: optionalBool(body, "has_product_discount") ?? false,
     discount_type: body.discount_type || null,
     discount_value: optionalNumber(body, "discount_value") ?? null,
+    has_product_tax: optionalBool(body, "has_product_tax") ?? false,
     tax_type: body.tax_type || null,
     tax_value: optionalNumber(body, "tax_value") ?? null,
     is_pack_product: optionalBool(body, "is_pack_product") ?? false,
@@ -223,6 +224,9 @@ export function parsePatchProduct(body) {
   }
   if (body.discount_value !== undefined) {
     fields.discount_value = optionalNumber(body, "discount_value")
+  }
+  if (body.has_product_tax !== undefined) {
+    fields.has_product_tax = optionalBool(body, "has_product_tax")
   }
   if (body.tax_type !== undefined) {
     if (body.tax_type === null || body.tax_type === "") {

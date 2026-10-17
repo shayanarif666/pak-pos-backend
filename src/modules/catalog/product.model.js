@@ -34,6 +34,11 @@ export const Product = sequelize.define(
     },
     discount_type: { type: DataTypes.ENUM(...DISCOUNT_TYPE), allowNull: true },
     discount_value: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
+    has_product_tax: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
     tax_type: { type: DataTypes.ENUM(...TAX_AMOUNT_TYPE), allowNull: true },
     tax_value: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
     is_pack_product: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
