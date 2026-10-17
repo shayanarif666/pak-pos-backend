@@ -1,7 +1,12 @@
 import { sequelize } from "../../db/sequelize.js"
 import { Counter } from "./counter.model.js"
 
-export async function getNextSequence(name, transaction) {
+/**
+ * `restartWhenEmpty: { table, storeId }` starts the numbering over at 1 when that store has no
+ * rows left in the table (e.g. every category was deleted), instead of continuing after the
+ * highest number ever handed out.
+ */
+export async function getNextSequence(name, transaction, { restartWhenEmpty } = {}) {
   const t = transaction ?? (await sequelize.transaction())
   const ownsTransaction = !transaction
 
@@ -12,10 +17,20 @@ export async function getNextSequence(name, transaction) {
       transaction: t,
     })
 
-    await sequelize.query(
-      "UPDATE counters SET seq = LAST_INSERT_ID(seq + 1) WHERE name = ?",
-      { replacements: [name], transaction: t }
-    )
+    if (restartWhenEmpty) {
+      // The table name is one of our own constants below, never user input.
+      await sequelize.query(
+        `UPDATE counters SET seq = LAST_INSERT_ID(
+           IF(EXISTS(SELECT 1 FROM ${restartWhenEmpty.table} WHERE store_id = ?), seq + 1, 1)
+         ) WHERE name = ?`,
+        { replacements: [restartWhenEmpty.storeId, name], transaction: t }
+      )
+    } else {
+      await sequelize.query(
+        "UPDATE counters SET seq = LAST_INSERT_ID(seq + 1) WHERE name = ?",
+        { replacements: [name], transaction: t }
+      )
+    }
 
     const [rows] = await sequelize.query("SELECT LAST_INSERT_ID() AS seq", {
       transaction: t,
@@ -64,10 +79,14 @@ export const nextSessionNumber = (storeId, transaction) =>
   getNextSequence(`register_session:${storeId}`, transaction)
 
 export const nextCategoryNumber = (storeId, transaction) =>
-  getNextSequence(`category:${storeId}`, transaction)
+  getNextSequence(`category:${storeId}`, transaction, {
+    restartWhenEmpty: { table: "categories", storeId },
+  })
 
 export const nextProductNumber = (storeId, transaction) =>
-  getNextSequence(`product:${storeId}`, transaction)
+  getNextSequence(`product:${storeId}`, transaction, {
+    restartWhenEmpty: { table: "products", storeId },
+  })
 
 export const nextOfferNumber = (storeId, transaction) =>
   getNextSequence(`offer:${storeId}`, transaction)
