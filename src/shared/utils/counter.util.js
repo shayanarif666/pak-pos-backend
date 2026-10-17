@@ -89,10 +89,14 @@ export const nextProductNumber = (storeId, transaction) =>
   })
 
 export const nextOfferNumber = (storeId, transaction) =>
-  getNextSequence(`offer:${storeId}`, transaction)
+  getNextSequence(`offer:${storeId}`, transaction, {
+    restartWhenEmpty: { table: "offers", storeId },
+  })
 
 export const nextSupplierNumber = (storeId, transaction) =>
-  getNextSequence(`supplier:${storeId}`, transaction)
+  getNextSequence(`supplier:${storeId}`, transaction, {
+    restartWhenEmpty: { table: "suppliers", storeId },
+  })
 
 export const nextSupplierLedgerNumber = (supplierId, transaction) =>
   getNextSequence(`supplier_ledger:${supplierId}`, transaction)
@@ -104,7 +108,9 @@ export const nextStockTransferNumber = (storeId, transaction) =>
   getNextSequence(`stock_transfer:${storeId}`, transaction)
 
 export const nextCustomerNumber = (storeId, transaction) =>
-  getNextSequence(`customer:${storeId}`, transaction)
+  getNextSequence(`customer:${storeId}`, transaction, {
+    restartWhenEmpty: { table: "customers", storeId },
+  })
 
 export const nextOrderRefundNumber = (storeId, transaction) =>
   getNextSequence(`order_refund:${storeId}`, transaction)
