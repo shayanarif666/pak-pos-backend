@@ -54,12 +54,24 @@ function assertPackRules(fields, current = {}) {
   const is_pack = fields.is_pack_product ?? current.is_pack_product
   const is_weight = fields.is_weight_based ?? current.is_weight_based
   const pack_size = fields.pack_size !== undefined ? fields.pack_size : current.pack_size
+  const pack_cost_price =
+    fields.pack_cost_price !== undefined ? fields.pack_cost_price : current.pack_cost_price
+  const pack_selling_price =
+    fields.pack_selling_price !== undefined
+      ? fields.pack_selling_price
+      : current.pack_selling_price
 
   if (is_pack && is_weight) {
     throw new AppError("A product cannot be both pack-based and weight-based", 400)
   }
   if (is_pack && (!pack_size || pack_size < 2)) {
     throw new AppError("pack_size must be >= 2 for pack products", 400)
+  }
+  if (is_pack && !(pack_cost_price > 0)) {
+    throw new AppError("pack_cost_price is required for pack products", 400)
+  }
+  if (is_pack && !(pack_selling_price > 0)) {
+    throw new AppError("pack_selling_price is required for pack products", 400)
   }
 }
 
@@ -148,10 +160,14 @@ function publicProduct(product, extras = {}) {
     tax_value: json.tax_value,
     is_pack_product: json.is_pack_product,
     pack_size: json.pack_size,
+    pack_cost_price: json.pack_cost_price == null ? null : Number(json.pack_cost_price),
+    pack_selling_price:
+      json.pack_selling_price == null ? null : Number(json.pack_selling_price),
     sell_loose: json.sell_loose,
     is_weight_based: json.is_weight_based,
     has_bulk_discount: json.has_bulk_discount,
-    expiry_date: json.expiry_date || null,
+    net_selling_price:
+      json.net_selling_price == null ? null : Number(json.net_selling_price),
     low_stock_threshold: json.low_stock_threshold,
     is_published: json.is_published,
     ...publicVisibility(json),
@@ -165,6 +181,7 @@ function publicProduct(product, extras = {}) {
 function publicWebProduct(product, extras = {}) {
   const row = publicProduct(product, extras)
   delete row.cost_price
+  delete row.pack_cost_price
   return row
 }
 
@@ -320,6 +337,8 @@ export async function createProduct(store, fields) {
       tax_value: fields.tax_value,
       is_pack_product: fields.is_pack_product,
       pack_size: fields.is_pack_product ? fields.pack_size : null,
+      pack_cost_price: fields.is_pack_product ? fields.pack_cost_price : null,
+      pack_selling_price: fields.is_pack_product ? fields.pack_selling_price : null,
       sell_loose: fields.sell_loose,
       is_weight_based: fields.is_weight_based,
       has_bulk_discount: fields.has_bulk_discount,
@@ -364,8 +383,11 @@ export async function updateProduct(storeId, id, fields) {
   if (fields.category_id !== undefined) {
     await resolveCategory(storeId, fields.category_id)
   }
-  if (fields.is_pack_product === false) patch.pack_size = null
-  delete patch.expiry_date
+  if (fields.is_pack_product === false) {
+    patch.pack_size = null
+    patch.pack_cost_price = null
+    patch.pack_selling_price = null
+  }
 
   try {
     await product.update(patch)

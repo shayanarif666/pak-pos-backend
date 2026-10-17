@@ -169,10 +169,14 @@ export function parseCreateProduct(body) {
     tax_value: optionalNumber(body, "tax_value") ?? null,
     is_pack_product: optionalBool(body, "is_pack_product") ?? false,
     pack_size: optionalInt(body, "pack_size", { min: 2 }) ?? null,
+    // Whole-pack cost/price — independent of cost_price/selling_price × pack_size, since bulk
+    // purchase/sale economics differ from per-unit. Required when is_pack_product (enforced in
+    // assertPackRules, same as pack_size).
+    pack_cost_price: optionalNumber(body, "pack_cost_price") ?? null,
+    pack_selling_price: optionalNumber(body, "pack_selling_price") ?? null,
     sell_loose: optionalBool(body, "sell_loose") ?? false,
     is_weight_based: optionalBool(body, "is_weight_based") ?? false,
     has_bulk_discount: optionalBool(body, "has_bulk_discount") ?? false,
-    expiry_date: optionalString(body, "expiry_date"),
     low_stock_threshold: optionalNumber(body, "low_stock_threshold") ?? 10,
     is_published: optionalBool(body, "is_published") ?? false,
     ...parseCatalogVisibility(body),
@@ -244,6 +248,12 @@ export function parsePatchProduct(body) {
   if (body.pack_size !== undefined) {
     fields.pack_size = optionalInt(body, "pack_size", { min: 2 })
   }
+  if (body.pack_cost_price !== undefined) {
+    fields.pack_cost_price = optionalNumber(body, "pack_cost_price")
+  }
+  if (body.pack_selling_price !== undefined) {
+    fields.pack_selling_price = optionalNumber(body, "pack_selling_price")
+  }
   if (body.sell_loose !== undefined) fields.sell_loose = optionalBool(body, "sell_loose")
   if (body.is_weight_based !== undefined) {
     fields.is_weight_based = optionalBool(body, "is_weight_based")
@@ -251,7 +261,6 @@ export function parsePatchProduct(body) {
   if (body.has_bulk_discount !== undefined) {
     fields.has_bulk_discount = optionalBool(body, "has_bulk_discount")
   }
-  if (body.expiry_date !== undefined) fields.expiry_date = optionalString(body, "expiry_date")
   if (body.low_stock_threshold !== undefined) {
     fields.low_stock_threshold = optionalNumber(body, "low_stock_threshold")
   }

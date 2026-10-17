@@ -38,15 +38,23 @@ export const Product = sequelize.define(
     tax_value: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
     is_pack_product: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     pack_size: { type: DataTypes.INTEGER, allowNull: true },
+    // Whole-pack cost/price, independent of cost_price/selling_price × pack_size (bulk purchase/
+    // sale economics differ from per-unit). Required when is_pack_product — see assertPackRules.
+    pack_cost_price: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
+    pack_selling_price: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
     sell_loose: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     is_weight_based: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     has_bulk_discount: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
-    expiry_date: { type: DataTypes.DATEONLY, allowNull: true },
     low_stock_threshold: {
       type: DataTypes.DECIMAL(12, 4),
       allowNull: false,
       defaultValue: 10,
     },
+    // MySQL STORED GENERATED COLUMN (selling_price minus the product's own discount, no tax) —
+    // see the net_selling_price expression in railway_bootstrap.sql / the migration SQL. The DB
+    // recomputes it whenever selling_price/discount_type/discount_value change; never assign it
+    // from app code — leaving it unset on create/update is what lets the DB compute it.
+    net_selling_price: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
     is_published: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     ...catalogChannelVisibilityFields(),
     is_active: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
