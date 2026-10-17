@@ -704,6 +704,9 @@ export async function logout(user, meta = {}) {
     ip_address: meta.ip,
     user_agent: meta.userAgent,
   })
+
+  // Same short id as the login response (the store-level user number).
+  return { id: user.user_number ?? null, status: user.status }
 }
 
 export async function getMe(user) {
