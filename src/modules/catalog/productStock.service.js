@@ -87,6 +87,7 @@ export async function applyStockDelta(
     order_id,
     low_stock_threshold,
     expiry_date,
+    visibility,
   },
   { transaction }
 ) {
@@ -145,7 +146,8 @@ export async function applyStockDelta(
         staff_id: staff_id || null,
         supplier_id: supplier_id || null,
         order_id: order_id || null,
-        ...copyVisibility(row),
+        // A manual movement may name its own visibility; otherwise it follows the stock row.
+        ...(visibility || copyVisibility(row)),
       },
       { transaction }
     )

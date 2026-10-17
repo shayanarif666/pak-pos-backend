@@ -1,13 +1,25 @@
 import { AppError } from "../../shared/errors/AppError.js"
 import { STOCK_MOVEMENT_REASON } from "../../db/enums.js"
+import { parseCatalogVisibility } from "../../db/channelVisibility.js"
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 const MANUAL_TYPES = ["stock_in", "stock_out", "adjustment"]
+// "sale" is allowed so the POS can post a sale-driven adjustment; refund/transfer/custom_sale
+// movements are only written by their own flows.
 const MANUAL_REASONS = STOCK_MOVEMENT_REASON.filter(
-  (reason) => !["sale", "refund", "transfer", "custom_sale"].includes(reason)
+  (reason) => !["refund", "transfer", "custom_sale"].includes(reason)
 )
+
+/** product_id: the product's short product_number (e.g. 1) or its UUID. product_number is the old key. */
+function requireProductRef(body) {
+  const raw = body.product_id ?? body.product_number
+  const value = raw === undefined || raw === null ? "" : String(raw).trim()
+  if (/^\d+$/.test(value) && Number(value) > 0) return { product_number: Number(value) }
+  if (UUID_RE.test(value)) return { product_id: value }
+  throw new AppError("product_id must be the product number or its UUID", 400)
+}
 
 function requireUuid(body, key) {
   const value = String(body[key] || "")
@@ -18,14 +30,6 @@ function requireUuid(body, key) {
 function optionalUuid(body, key) {
   if (body[key] === undefined || body[key] === null || body[key] === "") return null
   return requireUuid(body, key)
-}
-
-function requireInt(body, key, { min = 0 } = {}) {
-  const n = Number(body[key])
-  if (!Number.isInteger(n) || n < min) {
-    throw new AppError(`${key} must be an integer >= ${min}`, 400)
-  }
-  return n
 }
 
 export function parseCreateMovement(body) {
@@ -51,8 +55,17 @@ export function parseCreateMovement(body) {
     throw new AppError("stock_out qty must be negative", 400)
   }
 
+  if (body.expiry_date === undefined || body.expiry_date === null || body.expiry_date === "") {
+    throw new AppError("expiry_date is required", 400)
+  }
+  const expiry_date = new Date(body.expiry_date)
+  if (Number.isNaN(expiry_date.getTime())) {
+    throw new AppError("expiry_date is invalid", 400)
+  }
+
   return {
-    product_number: requireInt(body, "product_number"),
+    product: requireProductRef(body),
+    // Normally taken from the token; a store admin may still name another location.
     location_id: optionalUuid(body, "location_id"),
     movement_type,
     reason,
@@ -61,15 +74,7 @@ export function parseCreateMovement(body) {
       body.reason_note === undefined || body.reason_note === null
         ? null
         : String(body.reason_note).trim(),
-    expiry_date:
-      body.expiry_date === undefined || body.expiry_date === null || body.expiry_date === ""
-        ? undefined
-        : (() => {
-            const date = new Date(body.expiry_date)
-            if (Number.isNaN(date.getTime())) {
-              throw new AppError("expiry_date is invalid", 400)
-            }
-            return date
-          })(),
+    expiry_date,
+    visibility: parseCatalogVisibility(body),
   }
 }

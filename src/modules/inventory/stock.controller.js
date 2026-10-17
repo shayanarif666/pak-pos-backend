@@ -10,9 +10,9 @@ export const list = asyncHandler(async (req, res) => {
 })
 
 export const create = asyncHandler(async (req, res) => {
-  const data = await stockService.createMovement(movementActor(req), req.body)
+  const { summary, ...data } = await stockService.createMovement(movementActor(req), req.body)
   if (req.auth?.channel === "pos") {
-    return apiResponse(res, 201, "Stock Movement Successfully Created", null)
+    return apiResponse(res, 201, "Stock Successfully Created", summary)
   }
   return apiResponse(res, 201, "Stock movement recorded", data)
 })
@@ -31,7 +31,13 @@ export const createBulk = asyncHandler(async (req, res) => {
     return stockService.createMovement(actor, parseCreateMovement(item))
   })
   if (req.auth?.channel === "pos") {
-    return apiResponse(res, bulkStatus(data), "Stock Movements Successfully Created", null)
+    return apiResponse(
+      res,
+      bulkStatus(data),
+      "Stock Successfully Created",
+      data.created.map((row) => row.summary)
+    )
   }
-  return apiResponse(res, bulkStatus(data), "Bulk stock movements processed", data)
+  const created = data.created.map(({ summary, ...row }) => row)
+  return apiResponse(res, bulkStatus(data), "Bulk stock movements processed", { ...data, created })
 })
