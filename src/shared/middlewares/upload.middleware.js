@@ -147,7 +147,6 @@ export function applyProductImages({ kind = "products" } = {}) {
 
       req.body.images = images
       req.body.featured_image = featuredUrl
-      req.body.image_url = featuredUrl
       next()
     } catch (err) {
       next(err)

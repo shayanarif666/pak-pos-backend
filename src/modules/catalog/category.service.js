@@ -1,7 +1,7 @@
 import { ForeignKeyConstraintError, UniqueConstraintError } from "sequelize"
 import { Category } from "./category.model.js"
 import { Product } from "./product.model.js"
-import { slugify } from "../../shared/utils/slugify.js"
+import { ensureUniqueSlug, slugify } from "../../shared/utils/slugify.js"
 import { nextCategoryNumber } from "../../shared/utils/counter.util.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
@@ -22,8 +22,10 @@ function publicCategory(row) {
     description: json.description,
     tax_type: json.tax_type,
     tax_value: json.tax_value == null ? null : Number(json.tax_value),
+    tax_name: json.tax_name,
     discount_type: json.discount_type,
     discount_value: json.discount_value == null ? null : Number(json.discount_value),
+    discount_name: json.discount_name,
     is_active: json.is_active,
     sort_order: json.sort_order,
     ...publicVisibility(json),
@@ -75,9 +77,12 @@ export async function getCategoryView(storeId, id) {
 }
 
 export async function createCategory(store, fields) {
-  const slug = slugify(fields.slug || fields.name)
+  // Creating the same category again is allowed: the slug gets a -2, -3... suffix instead of a
+  // 409, so storefront lookups by slug stay unambiguous.
+  const slug = await ensureUniqueSlug(fields.slug || fields.name, async (candidate) =>
+    Boolean(await Category.findOne({ where: { store_id: store.id, slug: candidate } }))
+  )
   if (!slug) throw new AppError("slug is required", 400)
-  await assertUniqueSlug(store.id, slug)
 
   try {
     const row = await Category.create({
@@ -91,8 +96,10 @@ export async function createCategory(store, fields) {
       description: fields.description,
       tax_type: fields.tax_type,
       tax_value: fields.tax_value,
+      tax_name: fields.tax_name,
       discount_type: fields.discount_type,
       discount_value: fields.discount_value,
+      discount_name: fields.discount_name,
       is_active: fields.is_active,
       sort_order: fields.sort_order,
       is_pos_visible: fields.is_pos_visible,

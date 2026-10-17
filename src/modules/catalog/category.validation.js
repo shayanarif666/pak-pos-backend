@@ -102,8 +102,10 @@ export function parseCreateCategory(body) {
     description: optionalString(body, "description") ?? null,
     tax_type: optionalTaxType(body, "tax_type") ?? null,
     tax_value: optionalNumber(body, "tax_value") ?? null,
+    tax_name: optionalString(body, "tax_name") ?? null,
     discount_type: optionalDiscountType(body, "discount_type") ?? null,
     discount_value: optionalNumber(body, "discount_value") ?? null,
+    discount_name: optionalString(body, "discount_name") ?? null,
     is_active: body.is_active === undefined ? true : Boolean(body.is_active),
     sort_order:
       body.sort_order === undefined || body.sort_order === null
@@ -129,11 +131,15 @@ export function parsePatchCategory(body) {
   }
   if (body.tax_type !== undefined) fields.tax_type = optionalTaxType(body, "tax_type")
   if (body.tax_value !== undefined) fields.tax_value = optionalNumber(body, "tax_value")
+  if (body.tax_name !== undefined) fields.tax_name = optionalString(body, "tax_name")
   if (body.discount_type !== undefined) {
     fields.discount_type = optionalDiscountType(body, "discount_type")
   }
   if (body.discount_value !== undefined) {
     fields.discount_value = optionalNumber(body, "discount_value")
+  }
+  if (body.discount_name !== undefined) {
+    fields.discount_name = optionalString(body, "discount_name")
   }
   if (body.tax_type !== undefined || body.tax_value !== undefined) {
     assertPair(

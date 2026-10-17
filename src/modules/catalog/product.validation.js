@@ -10,9 +10,9 @@ function requireString(body, key) {
   return value.trim()
 }
 
-// Accepts either the category's internal UUID id or its short category_number under the same
-// "category_id" key — resolveCategoryFlexible() in product.service.js decides which it is.
-function requireIdOrNumber(body, key) {
+// Required value sent as either a string or a number (e.g. category_id: 1 for a category_number,
+// or a UUID string; a barcode typed as digits). Returned as a trimmed string.
+function requireStringOrNumber(body, key) {
   if (body[key] == null || body[key] === "") {
     throw new AppError(`${key} is required`, 400)
   }
@@ -110,38 +110,32 @@ function normalizeImages(raw) {
     .filter((item) => item?.url)
 }
 
+// `image` is the simple single-URL input; `image_url` is still read as a legacy alias (the
+// column itself is gone). An empty string means "no image", not an error.
 function resolveProductImages(body, { allowMissingImages = false } = {}) {
   let images = normalizeImages(body.images)
+  const aliasKey =
+    body.image !== undefined ? "image" : body.image_url !== undefined ? "image_url" : null
   let featured_image =
-    body.featured_image === undefined
-      ? undefined
-      : optionalString(body, "featured_image")
-  let image_url =
-    body.image_url === undefined ? undefined : optionalString(body, "image_url")
+    body.featured_image !== undefined
+      ? optionalString(body, "featured_image")
+      : aliasKey
+        ? optionalString(body, aliasKey)
+        : undefined
 
-  if (images === undefined && featured_image === undefined && image_url === undefined) {
-    return {}
-  }
+  if (images === undefined && featured_image === undefined) return {}
 
   if (images === undefined) {
-    if (allowMissingImages) {
-      const featured = featured_image || image_url || null
-      return featured === undefined
-        ? {}
-        : { featured_image: featured, image_url: featured }
-    }
+    if (allowMissingImages) return { featured_image: featured_image ?? null }
     images = []
   }
-  if (!featured_image) featured_image = image_url || images[0]?.url || null
+  if (!featured_image) featured_image = images[0]?.url || null
   if (featured_image && !images.some((item) => item.url === featured_image)) {
     images = [{ url: featured_image }, ...images]
   }
-  if (images.length === 1) {
-    featured_image = images[0].url
-  }
-  image_url = featured_image || null
+  if (images.length === 1) featured_image = images[0].url
 
-  return { images, featured_image, image_url }
+  return { images, featured_image }
 }
 
 export function parseCreateProduct(body) {
@@ -151,25 +145,31 @@ export function parseCreateProduct(body) {
   }
 
   const imageFields = resolveProductImages(body)
+  const isPack = optionalBool(body, "is_pack_product") ?? false
 
   const fields = {
     title: requireString(body, "title"),
-    barcode: optionalString(body, "barcode") ?? null,
-    image_url: imageFields.image_url ?? null,
+    barcode: requireStringOrNumber(body, "barcode"),
     images: imageFields.images ?? [],
     featured_image: imageFields.featured_image ?? null,
     description: optionalString(body, "description") ?? null,
-    category_id: requireIdOrNumber(body, "category_id"),
+    category_id: requireStringOrNumber(body, "category_id"),
     unit,
-    cost_price: requireNumber(body, "cost_price"),
-    selling_price: requireNumber(body, "selling_price"),
-    has_product_discount: optionalBool(body, "has_product_discount") ?? false,
+    // Pack products may leave the per-unit prices out — createProduct() derives them from the
+    // pack price ÷ pack_size.
+    cost_price: isPack ? optionalNumber(body, "cost_price") ?? null : requireNumber(body, "cost_price"),
+    selling_price: isPack
+      ? optionalNumber(body, "selling_price") ?? null
+      : requireNumber(body, "selling_price"),
+    // Left undefined when not sent: createProduct() then derives it from discount_type/value.
+    has_product_discount: optionalBool(body, "has_product_discount"),
     discount_type: body.discount_type || null,
     discount_value: optionalNumber(body, "discount_value") ?? null,
-    has_product_tax: optionalBool(body, "has_product_tax") ?? false,
+    discount_name: optionalString(body, "discount_name") ?? null,
     tax_type: body.tax_type || null,
     tax_value: optionalNumber(body, "tax_value") ?? null,
-    is_pack_product: optionalBool(body, "is_pack_product") ?? false,
+    tax_name: optionalString(body, "tax_name") ?? null,
+    is_pack_product: isPack,
     pack_size: optionalInt(body, "pack_size", { min: 2 }) ?? null,
     // Whole-pack cost/price — independent of cost_price/selling_price × pack_size, since bulk
     // purchase/sale economics differ from per-unit. Required when is_pack_product (enforced in
@@ -200,6 +200,7 @@ export function parsePatchProduct(body) {
   if (body.sku !== undefined) fields.sku = requireString(body, "sku")
   if (body.barcode !== undefined) fields.barcode = optionalString(body, "barcode")
   if (
+    body.image !== undefined ||
     body.image_url !== undefined ||
     body.images !== undefined ||
     body.featured_image !== undefined
@@ -234,8 +235,8 @@ export function parsePatchProduct(body) {
   if (body.discount_value !== undefined) {
     fields.discount_value = optionalNumber(body, "discount_value")
   }
-  if (body.has_product_tax !== undefined) {
-    fields.has_product_tax = optionalBool(body, "has_product_tax")
+  if (body.discount_name !== undefined) {
+    fields.discount_name = optionalString(body, "discount_name")
   }
   if (body.tax_type !== undefined) {
     if (body.tax_type === null || body.tax_type === "") {
@@ -247,6 +248,7 @@ export function parsePatchProduct(body) {
     }
   }
   if (body.tax_value !== undefined) fields.tax_value = optionalNumber(body, "tax_value")
+  if (body.tax_name !== undefined) fields.tax_name = optionalString(body, "tax_name")
   if (body.is_pack_product !== undefined) {
     fields.is_pack_product = optionalBool(body, "is_pack_product")
   }

@@ -16,7 +16,6 @@ export const Product = sequelize.define(
     slug: { type: DataTypes.STRING(255), allowNull: false },
     sku: { type: DataTypes.STRING(255), allowNull: false },
     barcode: { type: DataTypes.STRING(255), allowNull: true },
-    image_url: { type: DataTypes.TEXT, allowNull: true },
     images: { type: DataTypes.JSON, allowNull: true, defaultValue: [] },
     featured_image: { type: DataTypes.TEXT, allowNull: true },
     description: { type: DataTypes.TEXT, allowNull: true },
@@ -27,6 +26,8 @@ export const Product = sequelize.define(
     },
     cost_price: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
     selling_price: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
+    // Derived on create/update from whether discount_type + discount_value are set, unless the
+    // client sends it explicitly. Kept as a column because net_selling_price is generated from it.
     has_product_discount: {
       type: DataTypes.BOOLEAN,
       allowNull: false,
@@ -34,13 +35,10 @@ export const Product = sequelize.define(
     },
     discount_type: { type: DataTypes.ENUM(...DISCOUNT_TYPE), allowNull: true },
     discount_value: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
-    has_product_tax: {
-      type: DataTypes.BOOLEAN,
-      allowNull: false,
-      defaultValue: false,
-    },
+    discount_name: { type: DataTypes.STRING(255), allowNull: true },
     tax_type: { type: DataTypes.ENUM(...TAX_AMOUNT_TYPE), allowNull: true },
     tax_value: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
+    tax_name: { type: DataTypes.STRING(255), allowNull: true },
     is_pack_product: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     pack_size: { type: DataTypes.INTEGER, allowNull: true },
     // Whole-pack cost/price, independent of cost_price/selling_price × pack_size (bulk purchase/

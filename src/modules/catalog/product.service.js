@@ -75,6 +75,15 @@ function assertPackRules(fields, current = {}) {
   }
 }
 
+const round2 = (n) => Math.round(Number(n) * 100) / 100
+
+// The client normally doesn't send has_product_discount (the docs checkbox only adds/removes the
+// discount fields), so it's on whenever a discount is actually configured. An explicit value wins.
+function deriveHasDiscount(explicit, type, value) {
+  if (explicit !== undefined && explicit !== null) return Boolean(explicit)
+  return Boolean(type) && value != null
+}
+
 function numberOfPacks(qty, packSize) {
   const size = Number(packSize)
   const amount = Number(qty)
@@ -146,9 +155,10 @@ function publicProduct(product, extras = {}) {
     slug: json.slug,
     sku: json.sku,
     barcode: json.barcode,
-    image_url: json.featured_image || json.image_url || null,
+    // image_url is no longer a column; still returned (= featured_image) for older clients.
+    image_url: json.featured_image || null,
     images: Array.isArray(json.images) ? json.images : [],
-    featured_image: json.featured_image || json.image_url || null,
+    featured_image: json.featured_image || null,
     description: json.description,
     unit: json.unit,
     cost_price: json.cost_price,
@@ -156,9 +166,10 @@ function publicProduct(product, extras = {}) {
     has_product_discount: json.has_product_discount,
     discount_type: json.discount_type,
     discount_value: json.discount_value,
-    has_product_tax: json.has_product_tax,
+    discount_name: json.discount_name,
     tax_type: json.tax_type,
     tax_value: json.tax_value,
+    tax_name: json.tax_name,
     is_pack_product: json.is_pack_product,
     pack_size: json.pack_size,
     pack_cost_price: json.pack_cost_price == null ? null : Number(json.pack_cost_price),
@@ -328,19 +339,26 @@ export async function createProduct(store, fields) {
       slug,
       sku,
       barcode: fields.barcode,
-      image_url: fields.image_url ?? null,
       images: fields.images ?? [],
       featured_image: fields.featured_image ?? null,
       description: fields.description,
       unit: fields.unit,
-      cost_price: fields.cost_price,
-      selling_price: fields.selling_price,
-      has_product_discount: fields.has_product_discount,
+      // Pack products sent without per-unit prices get them from the pack price ÷ pack_size
+      // (assertPackRules above guarantees both are present for pack products).
+      cost_price: fields.cost_price ?? round2(fields.pack_cost_price / fields.pack_size),
+      selling_price:
+        fields.selling_price ?? round2(fields.pack_selling_price / fields.pack_size),
+      has_product_discount: deriveHasDiscount(
+        fields.has_product_discount,
+        fields.discount_type,
+        fields.discount_value
+      ),
       discount_type: fields.discount_type,
       discount_value: fields.discount_value,
-      has_product_tax: fields.has_product_tax,
+      discount_name: fields.discount_name,
       tax_type: fields.tax_type,
       tax_value: fields.tax_value,
+      tax_name: fields.tax_name,
       is_pack_product: fields.is_pack_product,
       pack_size: fields.is_pack_product ? fields.pack_size : null,
       pack_cost_price: fields.is_pack_product ? fields.pack_cost_price : null,
@@ -393,6 +411,16 @@ export async function updateProduct(storeId, id, fields) {
     patch.pack_size = null
     patch.pack_cost_price = null
     patch.pack_selling_price = null
+  }
+  if (
+    fields.has_product_discount === undefined &&
+    (fields.discount_type !== undefined || fields.discount_value !== undefined)
+  ) {
+    patch.has_product_discount = deriveHasDiscount(
+      undefined,
+      fields.discount_type !== undefined ? fields.discount_type : product.discount_type,
+      fields.discount_value !== undefined ? fields.discount_value : product.discount_value
+    )
   }
 
   try {

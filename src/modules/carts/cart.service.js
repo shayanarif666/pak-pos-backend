@@ -48,7 +48,7 @@ function publicItem(row) {
           sku: product.sku,
           selling_price: Number(product.selling_price),
           unit: product.unit,
-          image_url: product.image_url,
+          image_url: product.featured_image,
           is_weight_based: product.is_weight_based,
           is_web_visible: product.is_web_visible,
           is_published: product.is_published,
