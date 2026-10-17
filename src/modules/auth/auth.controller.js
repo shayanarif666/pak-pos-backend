@@ -9,8 +9,24 @@ function requestMeta(req) {
   }
 }
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+// The POS till identifies itself with a header, so the login body stays credentials + channel.
+// X-Device-Uid: the till's stable hardware id (sent on license activation); X-Device-Id: its
+// pos_devices row id. Both optional; they pick the right user when a PIN exists at several
+// locations and tag the session with the till.
+function loginDeviceHint(req) {
+  const deviceUid = String(req.get("x-device-uid") || "").trim()
+  const deviceId = String(req.get("x-device-id") || "").trim()
+  return {
+    device_uid: deviceUid || null,
+    device_id: UUID_RE.test(deviceId) ? deviceId : null,
+  }
+}
+
 export const login = asyncHandler(async (req, res) => {
-  const data = await authService.login(req.body, requestMeta(req))
+  const data = await authService.login({ ...req.body, ...loginDeviceHint(req) }, requestMeta(req))
   return apiResponse(res, 200, "Logged in", data)
 })
 

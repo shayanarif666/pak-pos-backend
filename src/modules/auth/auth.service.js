@@ -138,17 +138,69 @@ async function buildPosLicenseSummary(pos, user) {
 
   const storeSummary = { id: store.store_id_int, name: store.name, slug: store.slug }
   // The store admin works across every location (they pick one per request with the
-  // X-Location-Id header), so their login carries no single location.
-  if (user.role === "store_admin") return { store: storeSummary }
+  // X-Location-Id header), so their login carries no single location, but it lists them all
+  // together with every manager and cashier so the till can switch staff by PIN.
+  if (user.role === "store_admin") {
+    return { store: storeSummary, ...(await posStaffDirectory(user.store_id, null)) }
+  }
 
   const locationId = user.location_id || store.default_location_id
   const location = locationId
     ? await Location.findByPk(locationId, { attributes: ["location_id_int", "name"] })
     : null
 
+  // A manager sees the managers and cashiers of their own location; a cashier only themself
+  // (a manager's PIN unlocks approvals, so it is not handed to cashiers).
+  const directory = locationId
+    ? await posStaffDirectory(user.store_id, locationId, user.role === "cashier" ? user.id : null)
+    : { locations: [], users: [] }
+
   return {
     store: storeSummary,
     location: location ? { id: location.location_id_int, name: location.name } : null,
+    ...directory,
+  }
+}
+
+/**
+ * POS login lists: locations [{ id, name }] and users [{ id, name, role, pin, location_id }],
+ * all ids being the store-level numbers (location_number / user_number) the POS works with.
+ * locationId null = every active location of the store; onlyUserId limits users to that one.
+ */
+async function posStaffDirectory(storeId, locationId, onlyUserId = null) {
+  const locationWhere = { store_id: storeId, is_active: true }
+  if (locationId) locationWhere.id = locationId
+  const locations = await Location.findAll({
+    where: locationWhere,
+    attributes: ["id", "location_id_int", "name"],
+    order: [["location_id_int", "ASC"]],
+  })
+  const numberOf = new Map(locations.map((row) => [row.id, row.location_id_int]))
+
+  const userWhere = {
+    store_id: storeId,
+    is_active: true,
+    role: { [Op.in]: ["manager", "cashier"] },
+    location_id: { [Op.in]: [...numberOf.keys()] },
+  }
+  if (onlyUserId) userWhere.id = onlyUserId
+  const users = numberOf.size
+    ? await User.findAll({
+        where: userWhere,
+        attributes: ["id", "user_number", "name", "role", "pin", "location_id"],
+        order: [["user_number", "ASC"]],
+      })
+    : []
+
+  return {
+    locations: locations.map((row) => ({ id: row.location_id_int, name: row.name })),
+    users: users.map((row) => ({
+      id: row.user_number,
+      name: row.name,
+      role: row.role,
+      pin: row.pin || null,
+      location_id: numberOf.get(row.location_id) ?? null,
+    })),
   }
 }
 
@@ -408,7 +460,7 @@ async function findUserByPin(pin, { deviceId, deviceUid } = {}) {
   }
   if (candidates.length === 1) return candidates[0]
   throw new ConflictError(
-    "This PIN is used at more than one location. Sign in from this location's till (send device_uid)"
+    "This PIN is used at more than one location. Sign in from this location's till (send the X-Device-Uid header)"
   )
 }
 

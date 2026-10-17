@@ -25,27 +25,14 @@ function optionalPin(body, key) {
   return pin
 }
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-
-function optionalUuid(body, key) {
-  const value = optionalString(body, key)
-  if (!value) return null
-  if (!UUID_RE.test(value)) throw new AppError(`${key} must be a UUID`, 400)
-  return value
-}
-
-// Login takes credentials + channel: { email, password, channel } or { pin, channel }, plus an
-// optional device hint on POS so the response can echo back which till just signed in — either
-// device_id (the pos_devices row id) or device_uid (the till's own stable hardware id, known
-// right after license activation). Store and license are resolved on the server either way;
-// anything else in the body is ignored.
+// Login body is only credentials + channel: { email, password, channel } or { pin, channel }.
+// channel defaults to "pos". Store and license are resolved on the server; the till that signs
+// in is identified by the optional X-Device-Uid / X-Device-Id header (see auth.controller.js),
+// not by the body. Anything else in the body is ignored.
 export function parseLogin(body) {
   const email = optionalString(body, "email")
   const password = optionalString(body, "password")
   const pin = optionalPin(body, "pin")
-  const device_id = optionalUuid(body, "device_id")
-  const device_uid = optionalString(body, "device_uid")
 
   const channel = optionalString(body, "channel")
   if (channel && !ORDER_CHANNEL.includes(channel)) {
@@ -60,19 +47,12 @@ export function parseLogin(body) {
     if (channel && channel !== "pos") {
       throw new AppError("PIN login is only available on POS", 400)
     }
-    return { email: null, password: null, pin, channel: "pos", device_id, device_uid }
+    return { email: null, password: null, pin, channel: "pos" }
   }
 
   if (!email) throw new AppError("email is required", 400)
   if (!password) throw new AppError("password is required", 400)
-  return {
-    email: email.toLowerCase(),
-    password,
-    pin: null,
-    channel: channel || "web",
-    device_id,
-    device_uid,
-  }
+  return { email: email.toLowerCase(), password, pin: null, channel: channel || "pos" }
 }
 
 export function parseRefresh(body) {
