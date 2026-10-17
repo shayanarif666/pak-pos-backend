@@ -47,8 +47,23 @@ export function publicUser(user, { includePin = false } = {}) {
     location_number: user.location_id_int,
     is_verified: user.is_verified,
     is_active: user.is_active,
+    status: user.status,
     last_login_at: user.last_login_at,
   }
+}
+
+/**
+ * On-duty flag for store staff: "clock_in" after login / register clock-in, "clock_out" after
+ * logout / register clock-out. Super Admins and customers are not tracked.
+ */
+export async function setStaffClockStatus(userOrId, status, { transaction } = {}) {
+  const user =
+    typeof userOrId === "string"
+      ? await User.findByPk(userOrId, { attributes: ["id", "role", "status"], transaction })
+      : userOrId
+  if (!user || !STAFF_ROLES.has(user.role) || user.status === status) return
+  await User.update({ status }, { where: { id: user.id }, transaction })
+  user.status = status
 }
 
 // POS login's user block: store_id/store_number/location_id/location_number dropped here since
@@ -62,6 +77,7 @@ function publicPosUser(user) {
     role: user.role,
     is_verified: user.is_verified,
     is_active: user.is_active,
+    status: user.status,
     last_login_at: user.last_login_at,
   }
 }
@@ -193,7 +209,7 @@ async function posStaffDirectory(storeId, locationId, { onlyUserId = null, exclu
   const users = numberOf.size
     ? await User.findAll({
         where: userWhere,
-        attributes: ["id", "user_number", "name", "role", "pin", "location_id"],
+        attributes: ["id", "user_number", "name", "role", "pin", "location_id", "status"],
         order: [["user_number", "ASC"]],
       })
     : []
@@ -205,6 +221,7 @@ async function posStaffDirectory(storeId, locationId, { onlyUserId = null, exclu
       name: row.name,
       role: row.role,
       pin: row.pin || null,
+      status: row.status,
       location_id: numberOf.get(row.location_id) ?? null,
     })),
   }
@@ -585,7 +602,11 @@ export async function login(input, meta = {}) {
 
   const last_login_at = new Date()
   const tokens = await startSession(user, { pos, channel, meta })
-  await user.update({ last_login_at })
+  await user.update({
+    last_login_at,
+    // Store staff are on duty from the moment they sign in (email or PIN, POS or dashboard).
+    ...(STAFF_ROLES.has(user.role) ? { status: "clock_in" } : {}),
+  })
   user.last_login_at = last_login_at
 
   await writeAudit({
@@ -670,6 +691,7 @@ export async function logout(user, meta = {}) {
       { where: { id: meta.sid, user_id: user.id } }
     )
   }
+  await setStaffClockStatus(user, "clock_out")
   await writeAudit({
     action: "logout",
     entity_type: "users",

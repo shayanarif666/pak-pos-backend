@@ -22,6 +22,8 @@ export const BUSINESS_TYPE = [
   "other",
 ]
 export const LICENSE_STATUS = ["pending", "active", "expired", "revoked", "suspended"]
+/** users.status: on duty (signed in / register open) or off duty. */
+export const USER_CLOCK_STATUS = ["clock_in", "clock_out"]
 export const USER_ROLE = [
   "superadmin",
   "store_admin",

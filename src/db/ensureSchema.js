@@ -10,6 +10,7 @@ import * as reportLocationIndexes from "./migrations/20261006130000-report-locat
 import * as catalogPricingFields from "./migrations/20261018120000-catalog-pricing-fields.js"
 import * as productTotalPrices from "./migrations/20261019120000-product-total-prices.js"
 import * as userPinPerLocation from "./migrations/20261020120000-user-pin-per-location.js"
+import * as userClockStatus from "./migrations/20261021120000-user-clock-status.js"
 
 // Migrations the running code cannot work without (e.g. users.token_version is read on every
 // authenticated request). Each one checks before it changes anything, so running it on a
@@ -31,6 +32,8 @@ const REQUIRED = [
   productTotalPrices,
   // Without it the old (store_id, pin) index rejects a PIN reused at another location.
   userPinPerLocation,
+  // The User model reads status (clock_in / clock_out) on every request.
+  userClockStatus,
 ]
 
 export async function ensureSchema() {

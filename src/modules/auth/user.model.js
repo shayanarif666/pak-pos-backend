@@ -1,7 +1,7 @@
 import { DataTypes } from "sequelize"
 import { sequelize } from "../../db/sequelize.js"
 import { modelOptions, uuidCol, uuidPk } from "../../db/columnTypes.js"
-import { USER_ROLE } from "../../db/enums.js"
+import { USER_CLOCK_STATUS, USER_ROLE } from "../../db/enums.js"
 
 export const User = sequelize.define(
   "User",
@@ -21,6 +21,12 @@ export const User = sequelize.define(
     role: { type: DataTypes.ENUM(...USER_ROLE), allowNull: false },
     is_verified: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
     is_active: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+    // clock_in after a staff login / register clock-in, clock_out after logout / register clock-out.
+    status: {
+      type: DataTypes.ENUM(...USER_CLOCK_STATUS),
+      allowNull: false,
+      defaultValue: "clock_out",
+    },
     last_login_at: { type: DataTypes.DATE, allowNull: true },
     refresh_token_hash: { type: DataTypes.TEXT, allowNull: true },
     token_version: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },

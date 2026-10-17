@@ -5,6 +5,7 @@ import { getLocation } from "../locations/location.service.js"
 import { getStoreForManager } from "../stores/store.service.js"
 import { money } from "../commerce/pricing.service.js"
 import { writeAudit } from "../../shared/utils/audit.util.js"
+import { setStaffClockStatus } from "../auth/auth.service.js"
 import { nextSessionNumber } from "../../shared/utils/counter.util.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
@@ -196,6 +197,7 @@ export async function clockIn(actor, fields) {
     note: fields.note,
     opened_at: fields.opened_at || new Date(),
   })
+  await setStaffClockStatus(actor.id, "clock_in")
 
   await writeAudit({
     action: "clock_in",
@@ -239,6 +241,8 @@ export async function clockOut(actor, id, fields) {
     status: "clock_out",
     closed_at: fields.closed_at || new Date(),
   })
+  // The session owner goes off duty, even when a manager closes their drawer.
+  await setStaffClockStatus(row.cashier_id, "clock_out")
 
   await writeAudit({
     action: "clock_out",

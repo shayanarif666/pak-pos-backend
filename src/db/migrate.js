@@ -26,6 +26,7 @@ import * as licenseSuspendExtend from "./migrations/20261004120000-license-suspe
 import * as posDeviceOptionalLocation from "./migrations/20261004130000-pos-device-optional-location.js"
 import * as supplierLocations from "./migrations/20261006120000-supplier-locations.js"
 import * as reportLocationIndexes from "./migrations/20261006130000-report-location-indexes.js"
+import * as userClockStatus from "./migrations/20261021120000-user-clock-status.js"
 
 const migrations = [
   initSchema,
@@ -53,6 +54,7 @@ const migrations = [
   posDeviceOptionalLocation,
   supplierLocations,
   reportLocationIndexes,
+  userClockStatus,
 ]
 
 async function migrate() {
