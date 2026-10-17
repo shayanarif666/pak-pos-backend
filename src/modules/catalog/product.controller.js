@@ -19,7 +19,9 @@ export const create = asyncHandler(async (req, res) => {
   const store = await getStoreForManager(req.storeId)
   const product = await productService.createProduct(store, req.body)
   if (req.auth?.channel === "pos") {
-    return apiResponse(res, 201, "Product Successfully Created", null)
+    return apiResponse(res, 201, "Product Successfully Created", {
+      product_number: product.product_number,
+    })
   }
   return apiResponse(res, 201, "Product created", product)
 })
@@ -30,7 +32,10 @@ export const createBulk = asyncHandler(async (req, res) => {
     return productService.createProduct(store, parseCreateProduct(item))
   })
   if (req.auth?.channel === "pos") {
-    return apiResponse(res, bulkStatus(data), "Products Successfully Created", null)
+    return apiResponse(res, bulkStatus(data), "Products Successfully Created", {
+      product_numbers: data.created.map((row) => row.product_number),
+      failed: data.failed,
+    })
   }
   return apiResponse(res, bulkStatus(data), "Bulk products processed", data)
 })
