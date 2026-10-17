@@ -113,7 +113,22 @@ export function parseCreateOffer(body) {
     throw new AppError("apply_to must be product or category", 400)
   }
 
+  // The target sits in the same flat payload (category_id / product_id, promo_price,
+  // free_product_id); a `targets` array is still accepted for several targets at once.
+  const targets = Array.isArray(body.targets)
+    ? body.targets.map(parseTargetRow)
+    : [parseTargetRow(body)]
+  for (const target of targets) {
+    if (apply_to === "category" && !target.category_ref) {
+      throw new AppError("category_id is required when apply_to is category", 400)
+    }
+    if (apply_to === "product" && !target.product_ref) {
+      throw new AppError("product_id is required when apply_to is product", 400)
+    }
+  }
+
   const fields = {
+    targets,
     name: requireString(body, "name"),
     type,
     apply_to,
@@ -162,20 +177,29 @@ export function parsePatchOffer(body) {
   return patch
 }
 
+/** A product/category reference: its short number (e.g. 1) or its UUID, kept as a string. */
+function optionalRef(body, key) {
+  if (body[key] === undefined || body[key] === null || body[key] === "") return null
+  const value = String(body[key]).trim()
+  if ((/^\d+$/.test(value) && Number(value) > 0) || UUID_RE.test(value)) return value
+  throw new AppError(`${key} must be a number or a UUID`, 400)
+}
+
+// Refs are resolved to UUIDs in offer.service (resolveTarget).
 function parseTargetRow(row) {
   if (!row || typeof row !== "object") throw new AppError("Invalid target", 400)
-  const product_id = optionalUuid(row, "product_id")
-  const category_id = optionalUuid(row, "category_id")
-  if (product_id && category_id) {
+  const product_ref = optionalRef(row, "product_id")
+  const category_ref = optionalRef(row, "category_id")
+  if (product_ref && category_ref) {
     throw new AppError("A target cannot have both product_id and category_id", 400)
   }
-  if (!product_id && !category_id) {
+  if (!product_ref && !category_ref) {
     throw new AppError("Each target needs product_id or category_id", 400)
   }
   return {
-    product_id,
-    category_id,
-    free_product_id: optionalUuid(row, "free_product_id"),
+    product_ref,
+    category_ref,
+    free_product_ref: optionalRef(row, "free_product_id"),
     promo_price: optionalNumber(row, "promo_price"),
   }
 }

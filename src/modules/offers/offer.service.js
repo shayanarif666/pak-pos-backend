@@ -2,8 +2,8 @@ import { Op } from "sequelize"
 import { sequelize } from "../../db/sequelize.js"
 import { Offer } from "./offer.model.js"
 import { OfferTarget } from "./offerTarget.model.js"
-import { getProduct } from "../catalog/product.service.js"
-import { getCategory } from "../catalog/category.service.js"
+import { Product } from "../catalog/product.model.js"
+import { Category } from "../catalog/category.model.js"
 import { getLocation } from "../locations/location.service.js"
 import { Location } from "../locations/location.model.js"
 import { assertOfferRules } from "./offer.validation.js"
@@ -132,31 +132,104 @@ export async function getOfferView(actor, id) {
   return publicOffer(row)
 }
 
+/** A product/category ref from the request: its short number (e.g. 1) or its UUID. */
+async function findByRef(model, numberColumn, storeId, ref, label) {
+  const where = { store_id: storeId }
+  if (/^\d+$/.test(ref)) where[numberColumn] = Number(ref)
+  else where.id = ref
+  const row = await model.findOne({ where, attributes: ["id", numberColumn] })
+  if (!row) throw new NotFoundError(`${label} not found`)
+  return row
+}
+
+/** Turns a parsed target's refs into the UUID columns offer_targets stores. */
+async function resolveTarget(storeId, offer, target) {
+  if (offer.apply_to === "product" && !target.product_ref) {
+    throw new AppError("This offer applies to products", 400)
+  }
+  if (offer.apply_to === "category" && !target.category_ref) {
+    throw new AppError("This offer applies to categories", 400)
+  }
+  const product = target.product_ref
+    ? await findByRef(Product, "product_number", storeId, target.product_ref, "Product")
+    : null
+  const category = target.category_ref
+    ? await findByRef(Category, "category_number", storeId, target.category_ref, "Category")
+    : null
+  const free = target.free_product_ref
+    ? await findByRef(Product, "product_number", storeId, target.free_product_ref, "Free product")
+    : null
+  return {
+    product_id: product?.id || null,
+    category_id: category?.id || null,
+    free_product_id: free?.id || null,
+    promo_price: target.promo_price,
+    // Not stored — only for the POS create response.
+    product_number: product?.product_number ?? null,
+    category_number: category?.category_number ?? null,
+  }
+}
+
+function targetRow(offerId, { product_number, category_number, ...columns }) {
+  return { offer_id: offerId, ...columns }
+}
+
+/**
+ * Creates the offer and its target(s) together. The POS create response is
+ * { id: offer_number, type, name, product_id | category_id: that number }.
+ */
 export async function createOffer(store, fields, actor) {
   const location_id = await resolveLocationId(
     store.id,
     actor,
     fields.location_id
   )
-  const row = await Offer.create({
-    store_id: store.id,
-    store_id_int: store.store_id_int,
-    offer_number: await nextOfferNumber(store.id),
-    location_id,
-    name: fields.name,
-    type: fields.type,
-    apply_to: fields.apply_to,
-    discount_type: fields.discount_type,
-    discount_value: fields.discount_value,
-    min_qty: fields.min_qty,
-    buy_qty: fields.buy_qty,
-    get_qty: fields.get_qty,
-    start_at: fields.start_at,
-    end_at: fields.end_at,
-    is_active: fields.is_active,
-    created_by: actor.id,
+  const targets = []
+  for (const target of fields.targets || []) {
+    targets.push(await resolveTarget(store.id, fields, target))
+  }
+
+  const row = await sequelize.transaction(async (transaction) => {
+    const offer = await Offer.create(
+      {
+        store_id: store.id,
+        store_id_int: store.store_id_int,
+        offer_number: await nextOfferNumber(store.id),
+        location_id,
+        name: fields.name,
+        type: fields.type,
+        apply_to: fields.apply_to,
+        discount_type: fields.discount_type,
+        discount_value: fields.discount_value,
+        min_qty: fields.min_qty,
+        buy_qty: fields.buy_qty,
+        get_qty: fields.get_qty,
+        start_at: fields.start_at,
+        end_at: fields.end_at,
+        is_active: fields.is_active,
+        created_by: actor.id,
+      },
+      { transaction }
+    )
+    if (targets.length) {
+      await OfferTarget.bulkCreate(
+        targets.map((target) => targetRow(offer.id, target)),
+        { transaction }
+      )
+    }
+    return offer
   })
-  return publicOffer(await getOffer(store.id, row.id))
+
+  const first = targets[0] || {}
+  const summary = {
+    id: row.offer_number,
+    type: row.type,
+    name: row.name,
+    ...(row.apply_to === "product"
+      ? { product_id: first.product_number ?? null }
+      : { category_id: first.category_number ?? null }),
+  }
+  return { ...publicOffer(await getOffer(store.id, row.id)), summary }
 }
 
 export async function updateOffer(actor, id, fields) {
@@ -208,20 +281,6 @@ export async function deactivateOffer(actor, id) {
   return publicOffer(await getOffer(actor.store_id, id))
 }
 
-async function assertTargetsMatchOffer(storeId, offer, targets) {
-  for (const target of targets) {
-    if (offer.apply_to === "product" && !target.product_id) {
-      throw new AppError("This offer applies to products", 400)
-    }
-    if (offer.apply_to === "category" && !target.category_id) {
-      throw new AppError("This offer applies to categories", 400)
-    }
-    if (target.product_id) await getProduct(storeId, target.product_id)
-    if (target.category_id) await getCategory(storeId, target.category_id)
-    if (target.free_product_id) await getProduct(storeId, target.free_product_id)
-  }
-}
-
 export async function listTargets(actor, offerId) {
   const offer = await getOffer(actor.store_id, offerId)
   assertCanSee(actor, offer)
@@ -231,13 +290,14 @@ export async function listTargets(actor, offerId) {
 export async function replaceTargets(actor, offerId, targets) {
   const offer = await getOffer(actor.store_id, offerId)
   assertCanSee(actor, offer)
-  await assertTargetsMatchOffer(actor.store_id, offer, targets)
+  const resolved = []
+  for (const target of targets) resolved.push(await resolveTarget(actor.store_id, offer, target))
 
   await sequelize.transaction(async (transaction) => {
     await OfferTarget.destroy({ where: { offer_id: offer.id }, transaction })
-    if (targets.length) {
+    if (resolved.length) {
       await OfferTarget.bulkCreate(
-        targets.map((target) => ({ offer_id: offer.id, ...target })),
+        resolved.map((target) => targetRow(offer.id, target)),
         { transaction }
       )
     }
