@@ -209,6 +209,19 @@ async function resolveCategory(storeId, categoryId) {
   return category
 }
 
+// Product create takes category_id as either the category's internal UUID or its short
+// category_number under the same key — whichever it turns out to be. PATCH still uses
+// resolveCategory() above (UUID only).
+async function resolveCategoryFlexible(storeId, idOrNumber) {
+  const isNumber = /^\d+$/.test(String(idOrNumber))
+  const where = isNumber
+    ? { category_number: Number(idOrNumber), store_id: storeId }
+    : { id: idOrNumber, store_id: storeId }
+  const category = await Category.findOne({ where })
+  if (!category) throw new NotFoundError("Category not found")
+  return category
+}
+
 export async function getProduct(storeId, id) {
   const product = await Product.findOne({
     where: { id, store_id: storeId },
@@ -301,7 +314,7 @@ export async function createProduct(store, fields) {
   })
   if (!slug) throw new AppError("title must contain letters or numbers for a slug", 400)
 
-  await resolveCategory(store.id, fields.category_id)
+  const category = await resolveCategoryFlexible(store.id, fields.category_id)
   const sku = await ensureUniqueSku(store.id, fields.title)
   await assertUnique(store.id, "barcode", fields.barcode)
 
@@ -310,7 +323,7 @@ export async function createProduct(store, fields) {
       store_id: store.id,
       store_id_int: store.store_id_int,
       product_number: await nextProductNumber(store.id),
-      category_id: fields.category_id,
+      category_id: category.id,
       title: fields.title,
       slug,
       sku,

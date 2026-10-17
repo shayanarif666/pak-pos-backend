@@ -10,6 +10,15 @@ function requireString(body, key) {
   return value.trim()
 }
 
+// Accepts either the category's internal UUID id or its short category_number under the same
+// "category_id" key — resolveCategoryFlexible() in product.service.js decides which it is.
+function requireIdOrNumber(body, key) {
+  if (body[key] == null || body[key] === "") {
+    throw new AppError(`${key} is required`, 400)
+  }
+  return String(body[key]).trim()
+}
+
 function optionalString(body, key, { max = 20000 } = {}) {
   if (body[key] === undefined) return undefined
   if (body[key] === null || body[key] === "") return null
@@ -150,7 +159,7 @@ export function parseCreateProduct(body) {
     images: imageFields.images ?? [],
     featured_image: imageFields.featured_image ?? null,
     description: optionalString(body, "description") ?? null,
-    category_id: requireUuid(body, "category_id"),
+    category_id: requireIdOrNumber(body, "category_id"),
     unit,
     cost_price: requireNumber(body, "cost_price"),
     selling_price: requireNumber(body, "selling_price"),

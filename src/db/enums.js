@@ -53,7 +53,25 @@ export const PAYMENT_METHOD = [
 export const PAYMENT_ROW_STATUS = ["initiated", "success", "failed"]
 export const DISCOUNT_TYPE = ["percentage", "fixed"]
 export const TAX_AMOUNT_TYPE = ["percentage", "fixed"]
-export const PRODUCT_UNIT = ["piece", "kg", "gram", "liter", "packet", "box"]
+export const PRODUCT_UNIT = [
+  "piece",
+  "kg",
+  "gram",
+  "liter",
+  "ml",
+  "packet",
+  "box",
+  "dozen",
+  "pair",
+  "meter",
+  "yard",
+  "roll",
+  "set",
+  "carton",
+  "bag",
+  "bottle",
+  "can",
+]
 export const OFFER_TYPE = ["flash_sale", "bulk_discount", "bogo", "promotional"]
 export const OFFER_APPLY_TO = ["product", "category"]
 export const STOCK_MOVEMENT_TYPE = [
