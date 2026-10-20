@@ -39,9 +39,12 @@ function parseLocationScope(body) {
     if (!Array.isArray(body.location_ids)) {
       throw new AppError("location_ids must be an array of location ids", 400)
     }
-    ids = [...new Set(body.location_ids.map((value) => String(value)))]
+    // Location numbers (1, 2, 3 — what the POS uses) or location UUIDs (the dashboard).
+    ids = [...new Set(body.location_ids.map((value) => String(value).trim()))]
     for (const id of ids) {
-      if (!UUID_RE.test(id)) throw new AppError("location_ids must contain UUIDs", 400)
+      if (!/^[1-9]\d*$/.test(id) && !UUID_RE.test(id)) {
+        throw new AppError("location_ids must contain location numbers (1, 2, 3...) or UUIDs", 400)
+      }
     }
   }
 

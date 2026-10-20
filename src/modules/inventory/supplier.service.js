@@ -11,7 +11,7 @@ const SUPPLIER_LOCATIONS_INCLUDE = {
   model: SupplierLocation,
   as: "supplierLocations",
   attributes: ["location_id"],
-  include: [{ model: Location, attributes: ["id", "name"] }],
+  include: [{ model: Location, attributes: ["id", "location_id_int", "name"] }],
 }
 
 function publicSupplier(row, extras = {}) {
@@ -30,6 +30,7 @@ function publicSupplier(row, extras = {}) {
     location_ids: links.map((link) => link.location_id),
     locations: links.map((link) => ({
       id: link.location_id,
+      location_number: link.Location?.location_id_int ?? null,
       name: link.Location?.name || null,
     })),
     is_active: row.is_active,
@@ -76,16 +77,28 @@ function resolveScopeForActor(actor, fields, { creating }) {
     : rest
 }
 
-async function assertStoreLocations(storeId, locationIds, transaction) {
-  if (!locationIds.length) return
+/**
+ * location_ids may hold location numbers (1, 2, 3...) or UUIDs; returns the matching active
+ * locations' UUIDs, or 404 when any of them is not a location of this store.
+ */
+async function resolveStoreLocations(storeId, values, transaction) {
+  if (!values.length) return []
+  const numbers = values.filter((value) => /^\d+$/.test(value)).map(Number)
+  const uuids = values.filter((value) => !/^\d+$/.test(value))
+  const or = []
+  if (numbers.length) or.push({ location_id_int: { [Op.in]: numbers } })
+  if (uuids.length) or.push({ id: { [Op.in]: uuids } })
   const found = await Location.findAll({
-    where: { store_id: storeId, id: { [Op.in]: locationIds }, is_active: true },
-    attributes: ["id"],
+    where: { store_id: storeId, is_active: true, [Op.or]: or },
+    attributes: ["id", "location_id_int"],
+    order: [["location_id_int", "ASC"]],
     transaction,
   })
-  if (found.length !== locationIds.length) {
+  const matched = new Set(found.flatMap((row) => [row.id, String(row.location_id_int)]))
+  if (values.some((value) => !matched.has(value))) {
     throw new NotFoundError("One or more locations were not found in this store")
   }
+  return found.map((row) => row.id)
 }
 
 async function replaceSupplierLocations(supplier, locationIds, transaction) {
@@ -127,10 +140,10 @@ export async function getSupplierView(storeId, id, actor = null) {
 export async function createSupplier(store, input, actor = null) {
   const fields = resolveScopeForActor(actor, input, { creating: true })
   const scope = fields.location_scope || "all"
-  const locationIds = scope === "selected" ? fields.location_ids || [] : []
+  const requested = scope === "selected" ? (fields.location_ids || []).map(String) : []
 
   const id = await sequelize.transaction(async (transaction) => {
-    await assertStoreLocations(store.id, locationIds, transaction)
+    const locationIds = await resolveStoreLocations(store.id, requested, transaction)
     const row = await Supplier.create(
       {
         store_id: store.id,
@@ -158,8 +171,8 @@ export async function updateSupplier(storeId, id, input, actor = null) {
 
   await sequelize.transaction(async (transaction) => {
     if (fields.location_scope !== undefined) {
-      const ids = fields.location_scope === "selected" ? location_ids || [] : []
-      await assertStoreLocations(storeId, ids, transaction)
+      const requested = fields.location_scope === "selected" ? (location_ids || []).map(String) : []
+      const ids = await resolveStoreLocations(storeId, requested, transaction)
       await replaceSupplierLocations(row, ids, transaction)
     }
     await row.update(fields, { transaction })
