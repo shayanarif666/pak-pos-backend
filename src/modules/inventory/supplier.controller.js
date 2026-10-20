@@ -49,19 +49,3 @@ export const remove = asyncHandler(async (req, res) => {
   const data = await supplierService.deactivateSupplier(req.storeId, req.params.id, req.user)
   return apiResponse(res, 200, "Supplier deactivated", data)
 })
-
-export const listLedger = asyncHandler(async (req, res) => {
-  const data = await supplierService.listLedger(req.storeId, req.params.id, req.user)
-  return apiResponse(res, 200, "OK", data)
-})
-
-export const addLedger = asyncHandler(async (req, res) => {
-  const store = await getStoreForManager(req.storeId)
-  const data = await supplierService.addLedgerEntry(
-    store,
-    req.params.id,
-    req.body,
-    req.user
-  )
-  return apiResponse(res, 201, "Ledger entry recorded", data)
-})

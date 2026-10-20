@@ -6,18 +6,12 @@ import {
   tenantMiddleware,
 } from "../../shared/middlewares/tenant.middleware.js"
 import { validate } from "../../shared/middlewares/validate.middleware.js"
+import { parseCreateSupplier, parsePatchSupplier } from "./supplier.validation.js"
 import {
-  parseCreateSupplier,
-  parseLedgerEntry,
-  parsePatchSupplier,
-} from "./supplier.validation.js"
-import {
-  addLedger,
   create,
   createBulk,
   getOne,
   list,
-  listLedger,
   patch,
   remove,
 } from "./supplier.controller.js"
@@ -26,7 +20,8 @@ const router = Router()
 
 router.use(
   authMiddleware,
-  authorize("store_admin", "manager"),
+  // Cashiers add suppliers too, for their own location (see supplier.service.js).
+  authorize("store_admin", "manager", "cashier"),
   tenantMiddleware,
   requireTenantStore
 )
@@ -34,8 +29,6 @@ router.use(
 router.get("/", list)
 router.post("/", validate(parseCreateSupplier), create)
 router.post("/bulk", createBulk)
-router.get("/:id/ledger", listLedger)
-router.post("/:id/ledger", validate(parseLedgerEntry), addLedger)
 router.get("/:id", getOne)
 router.patch("/:id", validate(parsePatchSupplier), patch)
 router.delete("/:id", remove)
