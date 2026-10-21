@@ -167,18 +167,20 @@ async function buildPosLicenseSummary(pos, user) {
 
   // A manager sees the other managers and the cashiers of their own location (not themself);
   // a cashier only themself (a manager's PIN unlocks approvals, so it is not handed to cashiers).
-  const directory = locationId
+  // The directory's locations[] would only repeat this one location, so it is left out:
+  // managers and cashiers get location{}, the store admin gets locations[].
+  const { users } = locationId
     ? await posStaffDirectory(
         user.store_id,
         locationId,
         user.role === "cashier" ? { onlyUserId: user.id } : { excludeUserId: user.id }
       )
-    : { locations: [], users: [] }
+    : { users: [] }
 
   return {
     store: storeSummary,
     location: location ? { id: location.location_id_int, name: location.name } : null,
-    ...directory,
+    users,
   }
 }
 

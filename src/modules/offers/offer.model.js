@@ -1,7 +1,12 @@
 import { DataTypes } from "sequelize"
 import { sequelize } from "../../db/sequelize.js"
 import { modelOptions, uuidCol, uuidPk } from "../../db/columnTypes.js"
-import { DISCOUNT_TYPE, OFFER_APPLY_TO, OFFER_TYPE } from "../../db/enums.js"
+import {
+  DISCOUNT_TYPE,
+  OFFER_APPLY_TO,
+  OFFER_TYPE,
+  SUPPLIER_LOCATION_SCOPE,
+} from "../../db/enums.js"
 
 export const Offer = sequelize.define(
   "Offer",
@@ -10,10 +15,15 @@ export const Offer = sequelize.define(
     store_id: uuidCol(false),
     store_id_int: { type: DataTypes.INTEGER, allowNull: false },
     offer_number: { type: DataTypes.INTEGER, allowNull: false },
-    location_id: uuidCol(true),
     name: { type: DataTypes.TEXT, allowNull: false },
     type: { type: DataTypes.ENUM(...OFFER_TYPE), allowNull: false },
     apply_to: { type: DataTypes.ENUM(...OFFER_APPLY_TO), allowNull: false },
+    // "all" = every location; "selected" = only the locations in offer_locations.
+    location_scope: {
+      type: DataTypes.ENUM(...SUPPLIER_LOCATION_SCOPE),
+      allowNull: false,
+      defaultValue: "all",
+    },
     discount_type: { type: DataTypes.ENUM(...DISCOUNT_TYPE), allowNull: true },
     discount_value: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
     min_qty: { type: DataTypes.DECIMAL(12, 4), allowNull: true },

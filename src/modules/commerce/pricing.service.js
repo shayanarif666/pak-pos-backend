@@ -1,6 +1,7 @@
 import { Op } from "sequelize"
 import { Offer } from "../offers/offer.model.js"
 import { OfferTarget } from "../offers/offerTarget.model.js"
+import { OfferLocation } from "../offers/offerLocation.model.js"
 import { ProductBulkTier } from "../catalog/productBulkTier.model.js"
 import { PaymentMethodTaxRate } from "../stores/paymentMethodTaxRate.model.js"
 import { getShipping } from "../stores/store.service.js"
@@ -52,7 +53,11 @@ function targetMatches(target, product) {
 
 export function offerIsLive(offer, { locationId, now = new Date() } = {}) {
   if (!offer.is_active) return false
-  if (offer.location_id && offer.location_id !== locationId) return false
+  // location_scope "selected": only at the locations in offer_locations.
+  if (offer.location_scope === "selected") {
+    const links = offer.offerLocations || []
+    if (!links.some((link) => link.location_id === locationId)) return false
+  }
   if (offer.start_at && now < new Date(offer.start_at)) return false
   if (offer.end_at && now > new Date(offer.end_at)) return false
   return true
@@ -388,7 +393,10 @@ export async function loadPricingContext(storeId, { locationId, now } = {}) {
   const [offers, taxRates, shippingRule] = await Promise.all([
     Offer.findAll({
       where: { store_id: storeId },
-      include: [{ model: OfferTarget }],
+      include: [
+        { model: OfferTarget },
+        { model: OfferLocation, as: "offerLocations", attributes: ["location_id"] },
+      ],
     }),
     PaymentMethodTaxRate.findAll({ where: { store_id: storeId } }),
     getShipping(storeId),

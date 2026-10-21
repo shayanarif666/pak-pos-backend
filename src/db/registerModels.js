@@ -30,6 +30,7 @@ import { CartItem } from "../modules/carts/cartItem.model.js"
 import { Address } from "../modules/addresses/address.model.js"
 import { Offer } from "../modules/offers/offer.model.js"
 import { OfferTarget } from "../modules/offers/offerTarget.model.js"
+import { OfferLocation } from "../modules/offers/offerLocation.model.js"
 import { Coupon } from "../modules/coupons/coupon.model.js"
 import { CouponRedemption } from "../modules/coupons/couponRedemption.model.js"
 import { Order } from "../modules/orders/order.model.js"
@@ -184,7 +185,9 @@ export function registerModels() {
   CouponRedemption.belongsTo(Store, { foreignKey: "store_id" })
 
   Offer.belongsTo(Store, { foreignKey: "store_id" })
-  Offer.belongsTo(Location, { foreignKey: "location_id" })
+  Offer.hasMany(OfferLocation, { foreignKey: "offer_id", as: "offerLocations" })
+  OfferLocation.belongsTo(Offer, { foreignKey: "offer_id" })
+  OfferLocation.belongsTo(Location, { foreignKey: "location_id" })
   Offer.belongsTo(User, { foreignKey: "created_by", as: "createdBy" })
   Offer.hasMany(OfferTarget, { foreignKey: "offer_id" })
   OfferTarget.belongsTo(Offer, { foreignKey: "offer_id" })
@@ -260,6 +263,7 @@ export {
   Address,
   Offer,
   OfferTarget,
+  OfferLocation,
   Coupon,
   CouponRedemption,
   Order,

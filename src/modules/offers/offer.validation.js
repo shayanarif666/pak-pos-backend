@@ -1,5 +1,10 @@
 import { AppError } from "../../shared/errors/AppError.js"
-import { DISCOUNT_TYPE, OFFER_APPLY_TO, OFFER_TYPE } from "../../db/enums.js"
+import {
+  DISCOUNT_TYPE,
+  OFFER_APPLY_TO,
+  OFFER_TYPE,
+  SUPPLIER_LOCATION_SCOPE,
+} from "../../db/enums.js"
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -12,13 +17,6 @@ function requireString(body, key, { max = 500 } = {}) {
   const trimmed = value.trim()
   if (trimmed.length > max) throw new AppError(`${key} is too long`, 400)
   return trimmed
-}
-
-function optionalUuid(body, key) {
-  if (body[key] === undefined || body[key] === null || body[key] === "") return null
-  const value = String(body[key])
-  if (!UUID_RE.test(value)) throw new AppError(`${key} must be a UUID`, 400)
-  return value
 }
 
 function optionalDate(body, key) {
@@ -55,6 +53,47 @@ function optionalDiscountType(body) {
     throw new AppError("discount_type must be percentage or fixed", 400)
   }
   return value
+}
+
+/**
+ * Where the offer runs (store admin only; a manager's or cashier's offer is always for their own
+ * location, see offer.service.js):
+ * - location_scope "all"                          -> every location (location_ids ignored)
+ * - location_scope "selected" + location_ids [..] -> one location or several
+ * Sending only location_ids implies "selected"; an old single location_id is read the same way.
+ */
+function parseLocationScope(body) {
+  const legacyId =
+    body.location_ids === undefined && body.location_id !== undefined && body.location_id !== null
+      ? body.location_id
+      : undefined
+  const rawIds = legacyId !== undefined && legacyId !== "" ? [legacyId] : body.location_ids
+  const hasScope = body.location_scope !== undefined && body.location_scope !== null
+  const hasIds = rawIds !== undefined && rawIds !== null
+  if (!hasScope && !hasIds) return {}
+
+  let ids = []
+  if (hasIds) {
+    if (!Array.isArray(rawIds)) {
+      throw new AppError("location_ids must be an array of location ids", 400)
+    }
+    // Location numbers (1, 2, 3 — what the POS uses) or location UUIDs.
+    ids = [...new Set(rawIds.map((value) => String(value).trim()))]
+    for (const id of ids) {
+      if (!/^[1-9]\d*$/.test(id) && !UUID_RE.test(id)) {
+        throw new AppError("location_ids must contain location numbers (1, 2, 3...) or UUIDs", 400)
+      }
+    }
+  }
+
+  const scope = hasScope ? String(body.location_scope) : ids.length ? "selected" : "all"
+  if (!SUPPLIER_LOCATION_SCOPE.includes(scope)) {
+    throw new AppError("location_scope must be all or selected", 400)
+  }
+  if (scope === "selected" && !ids.length) {
+    throw new AppError("location_ids is required when location_scope is selected", 400)
+  }
+  return { location_scope: scope, location_ids: scope === "selected" ? ids : [] }
 }
 
 function assertWindow(start_at, end_at) {
@@ -132,7 +171,7 @@ export function parseCreateOffer(body) {
     name: requireString(body, "name"),
     type,
     apply_to,
-    location_id: optionalUuid(body, "location_id"),
+    ...parseLocationScope(body),
     discount_type: optionalDiscountType(body),
     discount_value: optionalNumber(body, "discount_value"),
     min_qty: optionalNumber(body, "min_qty"),
@@ -162,7 +201,7 @@ export function parsePatchOffer(body) {
     }
     patch.apply_to = apply_to
   }
-  if (body.location_id !== undefined) patch.location_id = optionalUuid(body, "location_id")
+  Object.assign(patch, parseLocationScope(body))
   if (body.discount_type !== undefined) patch.discount_type = optionalDiscountType(body)
   if (body.discount_value !== undefined) {
     patch.discount_value = optionalNumber(body, "discount_value")

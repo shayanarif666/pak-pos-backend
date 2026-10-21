@@ -21,7 +21,7 @@ export const env = {
   DB_PASSWORD: process.env.DB_PASSWORD ?? "",
   JWT_SECRET: required("JWT_SECRET"),
   DB_POOL_MAX: Number(process.env.DB_POOL_MAX) || 20,
-  JWT_ACCESS_EXPIRES_IN: process.env.JWT_ACCESS_EXPIRES_IN || "1h",
+  JWT_ACCESS_EXPIRES_IN: process.env.JWT_ACCESS_EXPIRES_IN || "1d",
   JWT_REFRESH_EXPIRES_IN: process.env.JWT_REFRESH_EXPIRES_IN || "30d",
   SUPERADMIN_EMAIL: process.env.SUPERADMIN_EMAIL || "superadmin@platform.local",
   SUPERADMIN_PASSWORD: process.env.SUPERADMIN_PASSWORD || "ChangeMeSuperAdmin1",

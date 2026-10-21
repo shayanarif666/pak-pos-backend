@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto"
 import { Plan } from "../../modules/plans/plan.model.js"
+import { nextPlanNumber } from "../../shared/utils/counter.util.js"
 
 const PLANS = [
   {
@@ -53,12 +54,16 @@ export async function seedPlans() {
   const created = []
 
   for (const plan of PLANS) {
-    const [row, wasCreated] = await Plan.findOrCreate({
-      where: { code: plan.code },
-      defaults: { id: randomUUID(), ...plan, is_active: true },
-    })
-    if (wasCreated) {
-      created.push(row.code)
+    const row = await Plan.findOne({ where: { code: plan.code } })
+    if (!row) {
+      // plan_number is required; take it from the same counter POST /plans uses.
+      await Plan.create({
+        id: randomUUID(),
+        ...plan,
+        plan_number: await nextPlanNumber(),
+        is_active: true,
+      })
+      created.push(plan.code)
       continue
     }
     const features = row.features

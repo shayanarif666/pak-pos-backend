@@ -11,6 +11,7 @@ import * as catalogPricingFields from "./migrations/20261018120000-catalog-prici
 import * as productTotalPrices from "./migrations/20261019120000-product-total-prices.js"
 import * as userPinPerLocation from "./migrations/20261020120000-user-pin-per-location.js"
 import * as userClockStatus from "./migrations/20261021120000-user-clock-status.js"
+import * as offerLocations from "./migrations/20261022120000-offer-locations.js"
 
 // Migrations the running code cannot work without (e.g. users.token_version is read on every
 // authenticated request). Each one checks before it changes anything, so running it on a
@@ -34,6 +35,8 @@ const REQUIRED = [
   userPinPerLocation,
   // The User model reads status (clock_in / clock_out) on every request.
   userClockStatus,
+  // The Offer model reads location_scope and its offer_locations.
+  offerLocations,
 ]
 
 export async function ensureSchema() {

@@ -1,6 +1,4 @@
 import { sequelize } from "./sequelize.js"
-import { registerModels } from "./registerModels.js"
-import { seedPlans } from "./seeders/plans.seeder.js"
 import * as initSchema from "./migrations/20260830120000-init-schema.js"
 import * as storeDefaultLocation from "./migrations/20260830180000-stores-default-location.js"
 import * as posStaffRoleManager from "./migrations/20260830190000-pos-staff-role-manager.js"
@@ -84,9 +82,8 @@ async function migrate() {
     console.log(`Applied: ${migration.name}`)
   }
 
-  registerModels()
-  const planCodes = await seedPlans()
-  console.log("Plans seeded:", planCodes.join(", "))
+  // No default data: plans are created from the dashboard (POST /plans). The sample
+  // packages are still available on demand with npm run db:seed:plans.
 
   await sequelize.close()
 }

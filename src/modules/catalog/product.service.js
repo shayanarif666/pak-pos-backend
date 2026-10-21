@@ -52,7 +52,6 @@ async function ensureUniqueSku(storeId, title, excludeId) {
 
 function assertPackRules(fields, current = {}) {
   const is_pack = fields.is_pack_product ?? current.is_pack_product
-  const is_weight = fields.is_weight_based ?? current.is_weight_based
   const pack_size = fields.pack_size !== undefined ? fields.pack_size : current.pack_size
   const pack_cost_price =
     fields.pack_cost_price !== undefined ? fields.pack_cost_price : current.pack_cost_price
@@ -61,9 +60,6 @@ function assertPackRules(fields, current = {}) {
       ? fields.pack_selling_price
       : current.pack_selling_price
 
-  if (is_pack && is_weight) {
-    throw new AppError("A product cannot be both pack-based and weight-based", 400)
-  }
   if (is_pack && (!pack_size || pack_size < 2)) {
     throw new AppError("pack_size must be >= 2 for pack products", 400)
   }

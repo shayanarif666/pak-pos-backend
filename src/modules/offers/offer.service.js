@@ -2,9 +2,9 @@ import { Op } from "sequelize"
 import { sequelize } from "../../db/sequelize.js"
 import { Offer } from "./offer.model.js"
 import { OfferTarget } from "./offerTarget.model.js"
+import { OfferLocation } from "./offerLocation.model.js"
 import { Product } from "../catalog/product.model.js"
 import { Category } from "../catalog/category.model.js"
-import { getLocation } from "../locations/location.service.js"
 import { Location } from "../locations/location.model.js"
 import { assertOfferRules } from "./offer.validation.js"
 import { nextOfferNumber } from "../../shared/utils/counter.util.js"
@@ -14,9 +14,13 @@ import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 
 const targetInclude = { model: OfferTarget }
 const locationInclude = {
-  model: Location,
-  attributes: ["id", "name", "location_id_int"],
+  model: OfferLocation,
+  as: "offerLocations",
+  attributes: ["location_id"],
+  include: [{ model: Location, attributes: ["id", "location_id_int", "name"] }],
 }
+
+const BRANCH_ROLES = new Set(["manager", "cashier"])
 
 function publicTarget(row) {
   const json = row.toJSON ? row.toJSON() : row
@@ -37,11 +41,16 @@ function publicOffer(row) {
     store_id: json.store_id,
     store_number: json.store_id_int,
     offer_number: json.offer_number,
-    location_id: json.location_id,
-    location_number: json.Location?.location_id_int ?? null,
     name: json.name,
     type: json.type,
     apply_to: json.apply_to,
+    // "all" = every location; "selected" = only the locations below.
+    location_scope: json.location_scope || "all",
+    location_ids: (json.offerLocations || []).map((link) => link.Location?.location_id_int ?? null),
+    locations: (json.offerLocations || []).map((link) => ({
+      id: link.Location?.location_id_int ?? null,
+      name: link.Location?.name || null,
+    })),
     discount_type: json.discount_type,
     discount_value:
       json.discount_value == null ? null : Number(json.discount_value),
@@ -58,17 +67,15 @@ function publicOffer(row) {
   }
 }
 
-function locationScope(actor, query = {}) {
-  if (actor.role === "store_admin") {
-    const locationId = query.locationId || query.location_id
-    if (!locationId) return null
-    return {
-      [Op.or]: [{ location_id: null }, { location_id: locationId }],
-    }
-  }
-  return {
-    [Op.or]: [{ location_id: null }, { location_id: actor.location_id }],
-  }
+/** Managers and cashiers work with their own location only; the store admin may filter. */
+function scopedLocationId(actor, query = {}) {
+  if (BRANCH_ROLES.has(actor?.role)) return actor.location_id || null
+  return query.location_id || query.locationId || null
+}
+
+function runsAtLocation(offer, locationId) {
+  if (!locationId || offer.location_scope !== "selected") return true
+  return (offer.offerLocations || []).some((link) => link.location_id === locationId)
 }
 
 function activeWindow(now = new Date()) {
@@ -81,29 +88,65 @@ function activeWindow(now = new Date()) {
   }
 }
 
-async function resolveLocationId(storeId, actor, locationId) {
-  if (!locationId) return null
-  if (
-    actor.role !== "store_admin" &&
-    locationId !== actor.location_id
-  ) {
-    throw new ForbiddenError("You can only set offers for your location")
-  }
-  const location = await getLocation(storeId, locationId)
-  return location.id
-}
-
 function assertCanSee(actor, offer) {
-  if (actor.role === "store_admin") return
-  if (offer.location_id && offer.location_id !== actor.location_id) {
+  if (BRANCH_ROLES.has(actor.role) && !runsAtLocation(offer, actor.location_id)) {
     throw new NotFoundError("Offer not found")
   }
 }
 
+/**
+ * Only the store admin chooses where an offer runs (all locations or selected ones). A manager's
+ * or cashier's offer is always for the location in their token, and editing it does not move it.
+ */
+function resolveScopeForActor(actor, fields, { creating }) {
+  if (!BRANCH_ROLES.has(actor?.role)) return fields
+  if (!actor.location_id) throw new ForbiddenError("Your account has no location")
+  const { location_scope: _scope, location_ids: _ids, ...rest } = fields
+  return creating
+    ? { ...rest, location_scope: "selected", location_ids: [actor.location_id] }
+    : rest
+}
+
+/**
+ * location_ids may hold location numbers (1, 2, 3...) or UUIDs; returns the matching active
+ * locations' UUIDs, or 404 when any of them is not a location of this store.
+ */
+async function resolveStoreLocations(storeId, values, transaction) {
+  if (!values.length) return []
+  const numbers = values.filter((value) => /^\d+$/.test(value)).map(Number)
+  const uuids = values.filter((value) => !/^\d+$/.test(value))
+  const or = []
+  if (numbers.length) or.push({ location_id_int: { [Op.in]: numbers } })
+  if (uuids.length) or.push({ id: { [Op.in]: uuids } })
+  const found = await Location.findAll({
+    where: { store_id: storeId, is_active: true, [Op.or]: or },
+    attributes: ["id", "location_id_int"],
+    order: [["location_id_int", "ASC"]],
+    transaction,
+  })
+  const matched = new Set(found.flatMap((row) => [row.id, String(row.location_id_int)]))
+  if (values.some((value) => !matched.has(value))) {
+    throw new NotFoundError("One or more locations were not found in this store")
+  }
+  return found.map((row) => row.id)
+}
+
+async function replaceOfferLocations(offer, locationIds, transaction) {
+  await OfferLocation.destroy({ where: { offer_id: offer.id }, transaction })
+  if (!locationIds.length) return
+  await OfferLocation.bulkCreate(
+    locationIds.map((location_id) => ({
+      store_id: offer.store_id,
+      offer_id: offer.id,
+      location_id,
+    })),
+    { transaction }
+  )
+}
+
 export async function listOffers(actor, query = {}) {
   const where = { store_id: actor.store_id }
-  const loc = locationScope(actor, query)
-  if (loc) Object.assign(where, loc)
+  const locationId = scopedLocationId(actor, query)
   if (query.type) where.type = query.type
   if (query.pos === "1" || query.active === "1" || actor.role === "cashier") {
     Object.assign(where, activeWindow())
@@ -114,7 +157,7 @@ export async function listOffers(actor, query = {}) {
     include: [targetInclude, locationInclude],
     order: [["created_at", "DESC"]],
   })
-  return rows.map(publicOffer)
+  return rows.filter((row) => runsAtLocation(row, locationId)).map(publicOffer)
 }
 
 export async function getOffer(storeId, id) {
@@ -178,27 +221,26 @@ function targetRow(offerId, { product_number, category_number, ...columns }) {
  * Creates the offer and its target(s) together. The POS create response is
  * { id: offer_number, type, name, product_id | category_id: that number }.
  */
-export async function createOffer(store, fields, actor) {
-  const location_id = await resolveLocationId(
-    store.id,
-    actor,
-    fields.location_id
-  )
+export async function createOffer(store, input, actor) {
+  const fields = resolveScopeForActor(actor, input, { creating: true })
+  const scope = fields.location_scope || "all"
+  const requested = scope === "selected" ? (fields.location_ids || []).map(String) : []
   const targets = []
   for (const target of fields.targets || []) {
     targets.push(await resolveTarget(store.id, fields, target))
   }
 
   const row = await sequelize.transaction(async (transaction) => {
+    const locationIds = await resolveStoreLocations(store.id, requested, transaction)
     const offer = await Offer.create(
       {
         store_id: store.id,
         store_id_int: store.store_id_int,
         offer_number: await nextOfferNumber(store.id),
-        location_id,
         name: fields.name,
         type: fields.type,
         apply_to: fields.apply_to,
+        location_scope: scope,
         discount_type: fields.discount_type,
         discount_value: fields.discount_value,
         min_qty: fields.min_qty,
@@ -211,6 +253,7 @@ export async function createOffer(store, fields, actor) {
       },
       { transaction }
     )
+    await replaceOfferLocations(offer, locationIds, transaction)
     if (targets.length) {
       await OfferTarget.bulkCreate(
         targets.map((target) => targetRow(offer.id, target)),
@@ -232,17 +275,11 @@ export async function createOffer(store, fields, actor) {
   return { ...publicOffer(await getOffer(store.id, row.id)), summary }
 }
 
-export async function updateOffer(actor, id, fields) {
+export async function updateOffer(actor, id, input) {
   const row = await getOffer(actor.store_id, id)
   assertCanSee(actor, row)
+  const { location_ids, ...fields } = resolveScopeForActor(actor, input, { creating: false })
   const patch = { ...fields }
-  if (fields.location_id !== undefined) {
-    patch.location_id = await resolveLocationId(
-      actor.store_id,
-      actor,
-      fields.location_id
-    )
-  }
   assertOfferRules({
     type: patch.type ?? row.type,
     apply_to: patch.apply_to ?? row.apply_to,
@@ -270,7 +307,15 @@ export async function updateOffer(actor, id, fields) {
       throw new AppError("end_at must be on or after start_at", 400)
     }
   }
-  await row.update(patch)
+  await sequelize.transaction(async (transaction) => {
+    if (fields.location_scope !== undefined) {
+      const requested =
+        fields.location_scope === "selected" ? (location_ids || []).map(String) : []
+      const ids = await resolveStoreLocations(actor.store_id, requested, transaction)
+      await replaceOfferLocations(row, ids, transaction)
+    }
+    await row.update(patch, { transaction })
+  })
   return publicOffer(await getOffer(actor.store_id, id))
 }
 
