@@ -69,22 +69,35 @@ export async function authMiddleware(req, res, next) {
 }
 
 /**
- * The store admin works across every location of the store. An `X-Location-Id` header (the
- * location's number, e.g. 2, or its UUID) picks the one this request acts on — register
- * sessions, stock, staff and anything else that uses req.auth.location_id. Without the header
- * the admin's own location is used, as before. Other roles stay on their own location.
+ * The store admin works across every location of the store; their token carries only the store.
+ * A location_id in the request body (the location's number, e.g. 2, or its UUID), or the older
+ * X-Location-Id header, picks the one this request acts on — register sessions, stock movements,
+ * orders and anything else that uses req.auth.location_id. Without either, the admin's own
+ * location is used, as before. Managers and cashiers always stay on their token's location.
  */
 async function applyChosenLocation(req) {
-  const raw = String(req.headers["x-location-id"] || "").trim()
+  // A write request may name the location in its body: { location_id: 1, ... } or, for a bulk
+  // request, { location_id: 1, items: [...] } (locationId is accepted too).
+  const body = req.method !== "GET" && req.body && typeof req.body === "object" ? req.body : null
+  const bodyKey = body
+    ? ["location_id", "locationId"].find((key) => body[key] !== undefined && body[key] !== null && body[key] !== "")
+    : null
+  const raw = String(bodyKey ? body[bodyKey] : req.headers["x-location-id"] || "").trim()
   if (!raw || !req.auth.store_id) return
+  const label = bodyKey || "X-Location-Id"
   const where = { store_id: req.auth.store_id, is_active: true }
   if (/^\d+$/.test(raw)) where.location_id_int = Number(raw)
   else if (UUID_RE.test(raw)) where.id = raw
-  else throw new AppError("X-Location-Id must be a location number or UUID", 400)
+  else throw new AppError(`${label} must be a location number or UUID`, 400)
   const location = await Location.findOne({ where, attributes: ["id", "location_id_int"] })
   if (!location) throw new NotFoundError("Location not found")
   req.auth.location_id = location.id
   req.auth.location_number = location.location_id_int
+  // Validators downstream expect the location's UUID under location_id.
+  if (bodyKey) {
+    delete body.locationId
+    body.location_id = location.id
+  }
 }
 
 export function optionalAuth(req, res, next) {
