@@ -61,6 +61,12 @@ export async function up(queryInterface) {
 
   // Licenses: "trial" status and the last renewal time.
   if (!(await columnType(sequelize, "store_licenses", "status")).includes("'trial'")) {
+    // MODIFY copies the table and re-checks foreign keys: drop links to devices that no longer exist.
+    await sequelize.query(
+      `UPDATE store_licenses l LEFT JOIN pos_devices d ON d.id = l.device_id
+       SET l.device_id = NULL
+       WHERE l.device_id IS NOT NULL AND d.id IS NULL`
+    )
     await sequelize.query(
       "ALTER TABLE store_licenses MODIFY COLUMN status ENUM('pending','trial','active','expired','revoked','suspended') NOT NULL DEFAULT 'pending'"
     )

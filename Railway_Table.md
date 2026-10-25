@@ -27,6 +27,11 @@ ALTER TABLE stores ADD COLUMN trial_ends_at DATETIME NULL AFTER status;
 
 ### store_licenses
 ```sql
+-- Some licenses point at devices that were deleted; the MODIFY below re-checks that link and fails.
+UPDATE store_licenses l LEFT JOIN pos_devices d ON d.id = l.device_id
+SET l.device_id = NULL
+WHERE l.device_id IS NOT NULL AND d.id IS NULL;
+
 ALTER TABLE store_licenses
   MODIFY COLUMN status ENUM('pending','trial','active','expired','revoked','suspended') NOT NULL DEFAULT 'pending';
 ALTER TABLE store_licenses ADD COLUMN renewed_at DATETIME NULL;
