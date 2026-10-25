@@ -308,6 +308,8 @@ export async function createLocation(store, fields) {
       await setStoreDefaultLocation(store.id, location, { transaction })
     }
 
+    // The manager is optional here; the store admin can add one later with POST /staff.
+    if (!fields.manager) return publicLocation(location, { manager: null })
     const manager = await createLocationManager(
       store,
       location,

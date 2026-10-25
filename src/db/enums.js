@@ -21,9 +21,19 @@ export const BUSINESS_TYPE = [
   "wholesale",
   "other",
 ]
-export const LICENSE_STATUS = ["pending", "active", "expired", "revoked", "suspended"]
-/** users.status: on duty (signed in / register open) or off duty. */
-export const USER_CLOCK_STATUS = ["clock_in", "clock_out"]
+// "trial": a trial store's license — usable like "active" until it expires (3 days).
+export const LICENSE_STATUS = ["pending", "trial", "active", "expired", "revoked", "suspended"]
+/** License statuses that let the store work (pending = not yet bound to a till). */
+export const USABLE_LICENSE_STATUS = ["pending", "trial", "active"]
+/** stores.status: on a free trial, or a paid (purchased) plan. */
+export const STORE_STATUS = ["trial", "active"]
+/** Days a new trial store runs; after it ends the owner has a few more days to decide. */
+export const TRIAL_DAYS = 3
+export const TRIAL_DECISION_DAYS = 2
+/** plans.reporting_level */
+export const REPORTING_LEVEL = ["basic", "standard", "advanced", "custom"]
+/** staff_sessions.status: staff attendance (clock in / clock out). */
+export const STAFF_SESSION_STATUS = ["clock_in", "clock_out"]
 export const USER_ROLE = [
   "superadmin",
   "store_admin",
@@ -103,7 +113,8 @@ export const STOCK_MOVEMENT_REASON = [
   "custom_sale",
   "other",
 ]
-export const REGISTER_SESSION_STATUS = ["clock_in", "clock_out"]
+/** register_sessions (batches = cash drawer): open until the batch is closed. */
+export const REGISTER_SESSION_STATUS = ["open", "closed"]
 export const APPROVAL_STATUS = ["pending", "approved", "rejected"]
 export const APPROVAL_TYPE = [
   "void_order",
@@ -133,7 +144,7 @@ export const AUDIT_ACTION = [
   "backup",
   "restore",
 ]
-export const TRANSFER_STATUS = ["pending", "completed", "cancelled"]
+export const TRANSFER_STATUS = ["pending", "on_the_way", "completed", "cancelled"]
 export const LEDGER_ENTRY_TYPE = ["debit", "credit"]
 /** suppliers.location_scope: delivers to every branch, or only to supplier_locations rows. */
 export const SUPPLIER_LOCATION_SCOPE = ["all", "selected"]

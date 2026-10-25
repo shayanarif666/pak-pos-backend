@@ -1,7 +1,7 @@
 import { sequelize } from "../../db/sequelize.js"
 import { StockTransfer } from "./stockTransfer.model.js"
 import { ProductStock } from "../catalog/productStock.model.js"
-import { getProduct } from "../catalog/product.service.js"
+import { getProduct, getProductByNumber } from "../catalog/product.service.js"
 import {
   applyStockDelta,
   loadLocation,
@@ -28,13 +28,17 @@ export async function listTransfers(storeId) {
 export async function createTransfer(storeId, fields, actor) {
   const store = await getStoreForManager(storeId)
   // await assertMultiBranch(store)
-  await getProduct(storeId, fields.product_id)
+  // product_id / location ids: short numbers (as the POS sends them) or UUIDs.
+  const product = /^\d+$/.test(String(fields.product_id))
+    ? await getProductByNumber(storeId, Number(fields.product_id))
+    : await getProduct(storeId, fields.product_id)
   const from = await loadLocation(storeId, fields.from_location_id)
   const to = await loadLocation(storeId, fields.to_location_id)
+  if (from.id === to.id) throw new ConflictError("from and to locations must be different")
 
-  // Reject up front instead of letting an impossible transfer sit pending.
+  // Reject up front instead of letting an impossible transfer sit on the way.
   const source = await ProductStock.findOne({
-    where: { location_id: from.id, product_id: fields.product_id },
+    where: { location_id: from.id, product_id: product.id },
   })
   const available = Number(source?.qty || 0)
   if (Number(fields.qty) > available) {
@@ -46,10 +50,11 @@ export async function createTransfer(storeId, fields, actor) {
     transfer_number: await nextStockTransferNumber(storeId),
     from_location_id: from.id,
     to_location_id: to.id,
-    product_id: fields.product_id,
+    product_id: product.id,
     qty: fields.qty,
     note: fields.note,
-    status: "pending",
+    // Sent from the source; stock moves when the destination completes it.
+    status: "on_the_way",
     created_by: actor.id,
   })
 }
@@ -64,8 +69,8 @@ export async function completeTransfer(storeId, id, actor) {
   const store = await getStoreForManager(storeId)
   // await assertMultiBranch(store)
   const row = await getTransfer(storeId, id)
-  if (row.status !== "pending") {
-    throw new ConflictError("Only a pending transfer can be completed")
+  if (!["pending", "on_the_way"].includes(row.status)) {
+    throw new ConflictError("Only a transfer on the way can be completed")
   }
 
   const from = await loadLocation(storeId, row.from_location_id)
@@ -117,8 +122,8 @@ export async function cancelTransfer(storeId, id) {
   const store = await getStoreForManager(storeId)
   // await assertMultiBranch(store)
   const row = await getTransfer(storeId, id)
-  if (row.status !== "pending") {
-    throw new ConflictError("Only a pending transfer can be cancelled")
+  if (!["pending", "on_the_way"].includes(row.status)) {
+    throw new ConflictError("Only a transfer on the way can be cancelled")
   }
   await row.update({ status: "cancelled" })
   return row

@@ -31,6 +31,7 @@ import {
   refundItem,
   refundItemsBulk,
   refundReceipt,
+  refundReceiptById,
   voidOne,
 } from "./order.controller.js"
 
@@ -54,6 +55,7 @@ router.get("/", ...listRoles, list)
 router.get("/custom", ...staff, listCustom)
 router.get("/cancelled", ...cancelled, listCancelled)
 router.get("/refunds", ...staff, listRefunds)
+router.get("/refunds/:refundId/receipt", ...staff, refundReceiptById)
 router.get("/summary/locations", ...cancelled, salesByLocation)
 router.post("/refunds/bulk", ...manage, refundItemsBulk)
 router.post("/refunds/complete/bulk", ...manage, refundCompleteBulk)

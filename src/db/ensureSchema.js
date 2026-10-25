@@ -12,6 +12,12 @@ import * as productTotalPrices from "./migrations/20261019120000-product-total-p
 import * as userPinPerLocation from "./migrations/20261020120000-user-pin-per-location.js"
 import * as userClockStatus from "./migrations/20261021120000-user-clock-status.js"
 import * as offerLocations from "./migrations/20261022120000-offer-locations.js"
+import * as posWorkflowV2 from "./migrations/20261024120000-pos-workflow-v2.js"
+import * as taxV2 from "./migrations/20261025120000-tax-v2.js"
+import * as salesTaxToggle from "./migrations/20261025130000-sales-tax-toggle.js"
+import * as currencies from "./migrations/20261026120000-currencies.js"
+import * as refundType from "./migrations/20261027120000-refund-type.js"
+import * as transactionNumber from "./migrations/20261028120000-transaction-number.js"
 
 // Migrations the running code cannot work without (e.g. users.token_version is read on every
 // authenticated request). Each one checks before it changes anything, so running it on a
@@ -37,6 +43,18 @@ const REQUIRED = [
   userClockStatus,
   // The Offer model reads location_scope and its offer_locations.
   offerLocations,
+  // Trial/active, plan features, staff_sessions, batches, unit_sold, custom_category.
+  posWorkflowV2,
+  // Sales tax / product taxes list / payment GST switch (the models read the new columns).
+  taxV2,
+  // stores.sales_tax_enabled (sales tax on / off, default 18%).
+  salesTaxToggle,
+  // The store currency table (PKR by default).
+  currencies,
+  // order_refunds.refund_type (complete | partial) for the refund history.
+  refundType,
+  // payments.transaction_number (the transaction id the POS sees).
+  transactionNumber,
 ]
 
 export async function ensureSchema() {

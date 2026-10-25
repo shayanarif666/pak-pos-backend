@@ -337,6 +337,10 @@ export async function listOrderRefunds(actor, query = {}) {
     })
     return {
       id: json.id,
+      refund_number: json.refund_number,
+      refund_type: json.refund_type,
+      location_id: json.location_id,
+      location_number: json.location_id_int,
       order_id: json.order_id,
       order_number: row.Order?.order_number,
       order_status: row.Order?.order_status,
@@ -516,7 +520,7 @@ export async function voidOrder(actor, id, fields) {
       const session = await RegisterSession.findByPk(order.register_session_id, {
         transaction,
       })
-      if (session && session.status === "clock_in") {
+      if (session && session.status === "open") {
         await applySessionSale(
           session,
           {
@@ -633,7 +637,11 @@ export async function refundOrderItem(actor, id, fields) {
     throw new ConflictError("Only a completed sale can be item-refunded")
   }
 
-  const item = (order.OrderItems || []).find((row) => row.id === fields.order_item_id)
+  // The line by UUID, or by its item number inside this order (1, 2, 3...).
+  const ref = String(fields.order_item_id)
+  const item = (order.OrderItems || []).find(
+    (row) => row.id === ref || String(row.item_number) === ref
+  )
   if (!item) throw new NotFoundError("Order item not found")
 
   const sold = Number(item.quantity)
@@ -724,6 +732,7 @@ export async function refundOrderItem(actor, id, fields) {
         cashier_id: actor.id,
         receipt_id: receipt.id,
         reason: fields.reason,
+        refund_type: fields.refund_type === "complete" ? "complete" : "partial",
         amount: refundTotal,
         tax_amount: refundTax,
       },
@@ -764,7 +773,7 @@ export async function refundOrderItem(actor, id, fields) {
       const session = await RegisterSession.findByPk(order.register_session_id, {
         transaction,
       })
-      if (session && session.status === "clock_in") {
+      if (session && session.status === "open") {
         await applySessionSale(
           session,
           {
@@ -843,6 +852,7 @@ export async function refundEntireOrder(actor, id, fields) {
         order_item_id: item.id,
         quantity: remaining,
         reason: fields.reason,
+        refund_type: "complete",
       })
     )
   }

@@ -1,5 +1,6 @@
 import { AppError } from "../../shared/errors/AppError.js"
 import { BILLING_STATUS, BUSINESS_TYPE } from "../../db/enums.js"
+import { parsePutTaxRates } from "../stores/taxRate.validation.js"
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -21,9 +22,34 @@ function optionalString(body, key) {
   return String(body[key]).trim()
 }
 
+// Multipart bodies send booleans as text, so "false" / "0" read as false.
 function optionalBool(body, key, fallback) {
   if (body[key] === undefined) return fallback
-  return Boolean(body[key])
+  const value = body[key]
+  if (typeof value === "string") return !["false", "0", "", "off", "no"].includes(value.trim().toLowerCase())
+  return Boolean(value)
+}
+
+const TAX_SWITCHES = ["charge_tax_on_sales", "fbr_invoice_enabled", "sales_tax_enabled", "payment_tax_enabled"]
+
+/**
+ * The store's tax settings, set at registration (same fields as PUT /tax-rates). Tax on sales is
+ * on by default; rates not sent keep the defaults (cash 16, card 5, jazzcash 5, easypaisa 5).
+ */
+function parseRegisterTax(body) {
+  const fields = { ...body }
+  if (typeof fields.rates === "string") {
+    try {
+      fields.rates = JSON.parse(fields.rates)
+    } catch {
+      throw new AppError("rates must be a JSON array", 400)
+    }
+  }
+  for (const key of TAX_SWITCHES) {
+    if (fields[key] !== undefined) fields[key] = optionalBool(body, key)
+  }
+  const { rates, store } = parsePutTaxRates(fields)
+  return { tax_settings: { charge_tax_on_sales: true, ...store }, tax_rates: rates }
 }
 
 function requirePin(body, key) {
@@ -59,16 +85,10 @@ export function parseRegisterSuperAdmin(body) {
 }
 
 export function parseRegisterStore(body) {
+  // A new store gets its location, store admin and billing only. Managers are added later by the
+  // store admin (POST /staff with role manager and location_id).
   const admin_email = requireString(body, "admin_email").toLowerCase()
-  const manager_email = requireString(body, "manager_email").toLowerCase()
-  if (admin_email === manager_email) {
-    throw new AppError("admin_email and manager_email must be different", 400)
-  }
   const admin_pin = requirePin(body, "admin_pin")
-  const manager_pin = requirePin(body, "manager_pin")
-  if (admin_pin === manager_pin) {
-    throw new AppError("admin_pin and manager_pin must be different", 400)
-  }
 
   const billing_status = body.billing_status
     ? String(body.billing_status)
@@ -93,7 +113,14 @@ export function parseRegisterStore(body) {
     }
   }
 
+  // status: "trial" = 3-day free trial, "active" = purchased plan (default).
+  const status = body.status === undefined || body.status === null || body.status === "" ? "active" : String(body.status)
+  if (!["trial", "active"].includes(status)) {
+    throw new AppError("status must be trial or active", 400)
+  }
+
   return {
+    status,
     plan_id: requireUuid(body, "plan_id"),
     name: requireString(body, "name"),
     legal_name: optionalString(body, "legal_name"),
@@ -115,17 +142,13 @@ export function parseRegisterStore(body) {
     admin_phone: optionalString(body, "admin_phone"),
     admin_password: requireString(body, "admin_password", { min: 6, max: 128 }),
     admin_pin,
-    manager_name: requireString(body, "manager_name"),
-    manager_email,
-    manager_phone: optionalString(body, "manager_phone"),
-    manager_password: requireString(body, "manager_password", { min: 6, max: 128 }),
-    manager_pin,
     pos_enabled: optionalBool(body, "pos_enabled", true),
     web_enabled: optionalBool(body, "web_enabled", true),
     billing_status,
     amount,
     method_note: optionalString(body, "method_note"),
     billing_note: optionalString(body, "billing_note"),
+    ...parseRegisterTax(body),
   }
 }
 
@@ -274,7 +297,15 @@ export function parseRevoke(body) {
 // Renew +1 month: plan_id is the plan the store bought for the next month; a billing
 // transaction is created from it (amount defaults to the plan price).
 export function parseRenewLicense(body) {
-  const out = { plan_id: requireUuid(body, "plan_id") }
+  // plan_id: the plan number (e.g. 1) or UUID; left out = renew on the current plan.
+  const out = {}
+  if (body.plan_id !== undefined && body.plan_id !== null && body.plan_id !== "") {
+    const ref = String(body.plan_id).trim()
+    if (!/^[1-9]\d*$/.test(ref) && !UUID_RE.test(ref)) {
+      throw new AppError("plan_id must be the plan number or its UUID", 400)
+    }
+    out.plan_id = ref
+  }
   if (body.amount !== undefined && body.amount !== null && body.amount !== "") {
     const amount = Number(body.amount)
     if (Number.isNaN(amount) || amount < 0) throw new AppError("amount must be a number >= 0", 400)

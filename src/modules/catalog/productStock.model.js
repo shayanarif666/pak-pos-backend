@@ -13,6 +13,8 @@ export const ProductStock = sequelize.define(
     location_id_int: { type: DataTypes.INTEGER, allowNull: false },
     product_id: uuidCol(false),
     qty: { type: DataTypes.DECIMAL(12, 4), allowNull: false, defaultValue: 0 },
+    // Units sold so far at this location (sales add, refunds take back).
+    unit_sold: { type: DataTypes.DECIMAL(12, 4), allowNull: false, defaultValue: 0 },
     low_stock_threshold: { type: DataTypes.DECIMAL(12, 4), allowNull: true },
     expiry_date: { type: DataTypes.DATEONLY, allowNull: true },
     ...catalogChannelVisibilityFields(),

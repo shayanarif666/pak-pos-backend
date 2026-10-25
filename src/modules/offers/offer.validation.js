@@ -5,6 +5,7 @@ import {
   OFFER_TYPE,
   SUPPLIER_LOCATION_SCOPE,
 } from "../../db/enums.js"
+import { staffRefFrom } from "../../shared/utils/staff.util.js"
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -167,6 +168,8 @@ export function parseCreateOffer(body) {
   }
 
   const fields = {
+    // Who added it (PIN-picked staff); defaults to the signed-in user.
+    staff_ref: staffRefFrom(body),
     targets,
     name: requireString(body, "name"),
     type,

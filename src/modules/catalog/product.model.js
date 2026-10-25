@@ -2,7 +2,7 @@ import { DataTypes } from "sequelize"
 import { sequelize } from "../../db/sequelize.js"
 import { modelOptions, uuidCol, uuidPk } from "../../db/columnTypes.js"
 import { catalogChannelVisibilityFields } from "../../db/channelVisibility.js"
-import { DISCOUNT_TYPE, PRODUCT_UNIT, TAX_AMOUNT_TYPE } from "../../db/enums.js"
+import { DISCOUNT_TYPE, PRODUCT_UNIT } from "../../db/enums.js"
 
 export const Product = sequelize.define(
   "Product",
@@ -36,9 +36,26 @@ export const Product = sequelize.define(
     discount_type: { type: DataTypes.ENUM(...DISCOUNT_TYPE), allowNull: true },
     discount_value: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
     discount_name: { type: DataTypes.STRING(255), allowNull: true },
-    tax_type: { type: DataTypes.ENUM(...TAX_AMOUNT_TYPE), allowNull: true },
-    tax_value: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
-    tax_name: { type: DataTypes.STRING(255), allowNull: true },
+    // Product-level taxes, any number: [{ name, type: percentage | fixed, value }]. A fixed
+    // tax is per unit. Applied with the category tax and the store's sales tax at checkout.
+    taxes: {
+      type: DataTypes.JSON,
+      allowNull: true,
+      defaultValue: [],
+      get() {
+        const value = this.getDataValue("taxes")
+        if (Array.isArray(value)) return value
+        if (typeof value === "string") {
+          try {
+            const parsed = JSON.parse(value)
+            return Array.isArray(parsed) ? parsed : []
+          } catch {
+            return []
+          }
+        }
+        return []
+      },
+    },
     is_pack_product: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     pack_size: { type: DataTypes.INTEGER, allowNull: true },
     // Whole-pack cost/price, independent of cost_price/selling_price × pack_size (bulk purchase/
@@ -53,12 +70,11 @@ export const Product = sequelize.define(
       allowNull: false,
       defaultValue: 10,
     },
-    // MySQL STORED GENERATED COLUMNS: the price after this product's own discount, then its own
-    // tax on the discounted price (e.g. 100 → 5% off → 95 → +5% tax → 99.75). Category tax,
-    // offers and store-level tax are applied at checkout, not here. total_pack_price does the
-    // same on pack_selling_price (fixed amounts count once per unit in the pack) and is NULL for
-    // loose items. Expressions: db/productTotals.sql.js. Never assign these from app code —
-    // leaving them unset on create/update is what lets the DB compute them.
+    // Price after this product's own discount, then its own taxes on the discounted price
+    // (e.g. 100 → 5% off → 95 → +5% tax → 99.75). Category tax, sales tax, offers and payment
+    // GST are applied at checkout, not here. total_pack_price does the same on
+    // pack_selling_price (fixed amounts count once per unit in the pack) and is NULL for loose
+    // items. Kept up to date by product.service (productTotals) on every create / update.
     total_price_each_unit: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
     total_pack_price: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
     is_published: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },

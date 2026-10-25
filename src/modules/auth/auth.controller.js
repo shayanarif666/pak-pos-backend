@@ -27,7 +27,18 @@ function loginDeviceHint(req) {
 
 export const login = asyncHandler(async (req, res) => {
   const data = await authService.login({ ...req.body, ...loginDeviceHint(req) }, requestMeta(req))
-  return apiResponse(res, 200, "Logged in", data)
+  return apiResponse(res, 200, "Successfully Login", data)
+})
+
+// Checks a staff member's PIN on a signed-in till (store admin / manager token). The store and
+// location come from the token (or the store admin's location_id); no token is issued.
+export const verifyPin = asyncHandler(async (req, res) => {
+  const actor = {
+    store_id: req.auth?.store_id || req.user.store_id,
+    location_id: req.auth?.location_id || req.user.location_id,
+  }
+  const data = await authService.verifyPin(actor, req.body?.pin)
+  return apiResponse(res, 200, "PIN Verify Successfully", data)
 })
 
 export const refresh = asyncHandler(async (req, res) => {

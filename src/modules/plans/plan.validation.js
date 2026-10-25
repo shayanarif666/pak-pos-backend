@@ -90,6 +90,42 @@ export function parseFeatures(value, { required = false } = {}) {
   return features
 }
 
+// Plan feature switches (true / false), stored as their own columns.
+export const PLAN_FEATURE_FLAGS = [
+  "import_export",
+  "staff_attendance",
+  "email_integration",
+  "whatsapp_integration",
+  "receipt_customization",
+  "barcode_scanning",
+  "batch_management",
+  "remote_access",
+]
+const REPORTING_LEVELS = ["basic", "standard", "advanced", "custom"]
+
+/** max_users, reporting_level and the feature switches that were sent. */
+function parsePlanFeatureColumns(body) {
+  const out = {}
+  if (body.max_users !== undefined) {
+    out.max_users =
+      body.max_users === null || body.max_users === ""
+        ? null
+        : requireNumber(body, "max_users", { min: 1, integer: true })
+  }
+  if (body.reporting_level !== undefined) {
+    const level = String(body.reporting_level)
+    if (!REPORTING_LEVELS.includes(level)) {
+      throw new AppError("reporting_level must be basic, standard, advanced or custom", 400)
+    }
+    out.reporting_level = level
+  }
+  for (const flag of PLAN_FEATURE_FLAGS) {
+    const value = optionalBool(body, flag)
+    if (value !== undefined) out[flag] = value
+  }
+  return out
+}
+
 export function parseCreatePlan(body) {
   const fields = {
     code: requireCode(body),
@@ -99,6 +135,7 @@ export function parseCreatePlan(body) {
     max_devices: requireNumber(body, "max_devices", { min: 1, integer: true }),
     max_locations: requireNumber(body, "max_locations", { min: 1, integer: true }),
     features: parseFeatures(body.features) ?? [],
+    ...parsePlanFeatureColumns(body),
   }
   const is_active = optionalBool(body, "is_active")
   if (is_active !== undefined) fields.is_active = is_active
@@ -118,6 +155,7 @@ export function parsePatchPlan(body) {
   if (locations !== undefined) fields.max_locations = locations
   const features = parseFeatures(body.features)
   if (features !== undefined) fields.features = features
+  Object.assign(fields, parsePlanFeatureColumns(body))
   const is_active = optionalBool(body, "is_active")
   if (is_active !== undefined) fields.is_active = is_active
   if (!Object.keys(fields).length) throw new AppError("No fields to update", 400)

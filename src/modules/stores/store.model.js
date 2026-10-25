@@ -1,7 +1,7 @@
 import { DataTypes } from "sequelize"
 import { sequelize } from "../../db/sequelize.js"
 import { modelOptions, uuidCol, uuidPk } from "../../db/columnTypes.js"
-import { BUSINESS_TYPE } from "../../db/enums.js"
+import { BUSINESS_TYPE, STORE_STATUS } from "../../db/enums.js"
 
 export const Store = sequelize.define(
   "Store",
@@ -39,7 +39,12 @@ export const Store = sequelize.define(
       allowNull: false,
       defaultValue: false,
     },
-    default_tax_rate: { type: DataTypes.DECIMAL(5, 2), allowNull: true },
+    // Sales tax: one store-wide % on every taxable line, while sales_tax_enabled is on. The owner
+    // switches it off when each product carries its own sales tax instead.
+    sales_tax_rate: { type: DataTypes.DECIMAL(5, 2), allowNull: true, defaultValue: 18 },
+    sales_tax_enabled: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+    // Payment-method GST (payment_method_tax_rates) applies only while this is on.
+    payment_tax_enabled: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
     expiry_warning_days: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 30 },
     expiry_critical_days: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 7 },
     receipt_footer: { type: DataTypes.TEXT, allowNull: true },
@@ -51,6 +56,9 @@ export const Store = sequelize.define(
     account_manager_name: { type: DataTypes.STRING(255), allowNull: true },
     account_manager_phone: { type: DataTypes.STRING(255), allowNull: true },
     is_active: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+    // trial = free trial (ends at trial_ends_at); active = a purchased plan.
+    status: { type: DataTypes.ENUM(...STORE_STATUS), allowNull: false, defaultValue: "active" },
+    trial_ends_at: { type: DataTypes.DATE, allowNull: true },
     is_live: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     suspend_reason: { type: DataTypes.TEXT, allowNull: true },
   },

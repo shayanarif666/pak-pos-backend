@@ -11,6 +11,7 @@ import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { copyVisibility, publicVisibility } from "../../db/channelVisibility.js"
 import { Location } from "../locations/location.model.js"
+import { productTaxList, taxOn } from "../commerce/pricing.service.js"
 import { findLiveStoreBySlug, getStoreForManager } from "../stores/store.service.js"
 
 const categoryInclude = {
@@ -73,6 +74,42 @@ function assertPackRules(fields, current = {}) {
 
 const round2 = (n) => Math.round(Number(n) * 100) / 100
 
+/**
+ * total_price_each_unit / total_pack_price: the price after this product's own discount, then
+ * its own taxes on the discounted price. Fixed amounts are per unit (× pack_size for the pack).
+ */
+function productTotals(p) {
+  const taxes = productTaxList(p)
+  const discountOn = (base, units) => {
+    const value = Number(p.discount_value)
+    if (!p.has_product_discount || !p.discount_type || p.discount_value == null || !(value > 0)) return 0
+    return Math.min(base, p.discount_type === "percentage" ? (base * value) / 100 : value * units)
+  }
+  const total = (base, units) => {
+    const net = base - discountOn(base, units)
+    return round2(net + taxes.reduce((sum, tax) => sum + taxOn(net, tax.type, tax.value, units), 0))
+  }
+  const unit = p.selling_price == null ? null : total(Number(p.selling_price), 1)
+  const packSize = Number(p.pack_size)
+  const pack =
+    p.is_pack_product && p.pack_selling_price != null && packSize >= 2
+      ? total(Number(p.pack_selling_price), packSize)
+      : null
+  return { total_price_each_unit: unit, total_pack_price: pack }
+}
+
+// Fields that change total_price_each_unit / total_pack_price.
+const TOTAL_FIELDS = [
+  "selling_price",
+  "pack_selling_price",
+  "pack_size",
+  "is_pack_product",
+  "has_product_discount",
+  "discount_type",
+  "discount_value",
+  "taxes",
+]
+
 /** Pack product: cost_price / selling_price of one unit = pack price ÷ pack_size. */
 function unitPricesFromPack({ pack_size, pack_cost_price, pack_selling_price }) {
   const size = Number(pack_size)
@@ -127,6 +164,7 @@ function publicStock(row, product) {
     product_id: row.product_id,
     expiry_date: row.expiry_date || null,
     qty,
+    unit_sold: Number(row.unit_sold || 0),
     low_stock_threshold: row.low_stock_threshold,
     effective_threshold: threshold == null ? null : Number(threshold),
     is_low:
@@ -172,9 +210,7 @@ function publicProduct(product, extras = {}) {
     discount_type: json.discount_type,
     discount_value: json.discount_value,
     discount_name: json.discount_name,
-    tax_type: json.tax_type,
-    tax_value: json.tax_value,
-    tax_name: json.tax_name,
+    taxes: productTaxList(json),
     is_pack_product: json.is_pack_product,
     pack_size: json.pack_size,
     pack_cost_price: json.pack_cost_price == null ? null : Number(json.pack_cost_price),
@@ -362,9 +398,7 @@ export async function createProduct(store, fields) {
       discount_type: fields.discount_type,
       discount_value: fields.discount_value,
       discount_name: fields.discount_name,
-      tax_type: fields.tax_type,
-      tax_value: fields.tax_value,
-      tax_name: fields.tax_name,
+      taxes: fields.taxes || [],
       is_pack_product: fields.is_pack_product,
       pack_size: fields.is_pack_product ? fields.pack_size : null,
       pack_cost_price: fields.is_pack_product ? fields.pack_cost_price : null,
@@ -379,6 +413,7 @@ export async function createProduct(store, fields) {
       channel: fields.channel,
       is_active: fields.is_active,
     })
+    await created.update(productTotals(created))
     return publicProduct(await getProduct(store.id, created.id), { stocks: [] })
   } catch (err) {
     if (err instanceof UniqueConstraintError) {
@@ -443,6 +478,9 @@ export async function updateProduct(storeId, id, fields) {
 
   try {
     await product.update(patch)
+    if (TOTAL_FIELDS.some((key) => patch[key] !== undefined)) {
+      await product.update(productTotals(product))
+    }
   } catch (err) {
     if (err instanceof UniqueConstraintError) {
       throw new ConflictError("Product slug, SKU, or barcode already exists")
@@ -474,12 +512,13 @@ export async function patchWeight(storeId, id, fields) {
   return publicProduct(await getProduct(storeId, id))
 }
 
-export async function listExpiryProducts(storeId) {
+export async function listExpiryProducts(storeId, locationId = null) {
   const store = await getStoreForManager(storeId)
   const rows = await ProductStock.findAll({
     where: {
       store_id: storeId,
       expiry_date: { [Op.ne]: null },
+      ...(locationId ? { location_id: locationId } : {}),
     },
     include: [
       { model: Product, include: [categoryInclude] },

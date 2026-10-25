@@ -5,6 +5,7 @@ import { registerModels } from "./db/registerModels.js"
 import { ensureSchema } from "./db/ensureSchema.js"
 import { createApp } from "./app.js"
 import { expireOverdueLicenses } from "./modules/stores/license.service.js"
+import { deleteExpiredTrialStores } from "./modules/admin/adminData.service.js"
 
 // TESTING ONLY: 1 minute instead of 1 hour, to verify the sweep fires on Railway. Revert to
 // 60 * 60 * 1000 before going back to normal.
@@ -20,6 +21,10 @@ function scheduleLicenseExpiry() {
         if (count) logger.info(`Expired ${count} license(s)`)
       })
       .catch((err) => logger.error(`License expiry sweep failed: ${err.message}`))
+      // A trial store that did not buy a plan within the decision days is deleted with its data.
+      .then(() => deleteExpiredTrialStores())
+      .then((count) => count && logger.info(`Deleted ${count} expired trial store(s)`))
+      .catch((err) => logger.error(`Trial store cleanup failed: ${err.message}`))
   run()
   setInterval(run, LICENSE_SWEEP_MS).unref()
 }

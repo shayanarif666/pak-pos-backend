@@ -14,6 +14,8 @@ export const OrderItem = sequelize.define(
     ...saleChannelVisibilityFields(),
     product_id: uuidCol(true),
     title: { type: DataTypes.TEXT, allowNull: false },
+    // Custom sale lines only: the category typed at the till (no catalog product behind it).
+    custom_category: { type: DataTypes.STRING(255), allowNull: true },
     sku: { type: DataTypes.STRING(255), allowNull: true },
     barcode: { type: DataTypes.STRING(255), allowNull: true },
     unit: { type: DataTypes.ENUM(...PRODUCT_UNIT), allowNull: true },
@@ -40,13 +42,13 @@ export const OrderItem = sequelize.define(
       allowNull: false,
       defaultValue: 0,
     },
-    default_tax_amount: {
+    sales_tax_amount: {
       type: DataTypes.DECIMAL(12, 2),
       allowNull: false,
       defaultValue: 0,
     },
-    product_tax_type: { type: DataTypes.STRING(32), allowNull: true },
-    product_tax_value: { type: DataTypes.DECIMAL(5, 2), allowNull: true },
+    // Snapshot of the product taxes charged on this line: [{ name, type, value, amount }].
+    product_taxes: { type: DataTypes.JSON, allowNull: true },
     category_tax_type: { type: DataTypes.STRING(32), allowNull: true },
     category_tax_value: { type: DataTypes.DECIMAL(5, 2), allowNull: true },
     subtotal: { type: DataTypes.DECIMAL(12, 2), allowNull: false },

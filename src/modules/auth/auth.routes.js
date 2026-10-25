@@ -2,6 +2,7 @@ import { Router } from "express"
 import { validate } from "../../shared/middlewares/validate.middleware.js"
 import { rateLimit } from "../../shared/middlewares/rateLimit.middleware.js"
 import { authMiddleware } from "../../shared/middlewares/auth.middleware.js"
+import { authorize } from "../../shared/middlewares/authorize.middleware.js"
 import {
   parseForgotPassword,
   parseLogin,
@@ -21,11 +22,19 @@ import {
   registerCustomer,
   resetPassword,
   verifyEmail,
+  verifyPin,
 } from "./auth.controller.js"
 
 const router = Router()
 
 router.post("/login", rateLimit({ max: 10, failuresOnly: true }), validate(parseLogin), login)
+router.post(
+  "/pin/verify",
+  rateLimit({ max: 20, failuresOnly: true }),
+  authMiddleware,
+  authorize("store_admin", "manager"),
+  verifyPin
+)
 router.post("/refresh", validate(parseRefresh), refresh)
 router.post("/logout", authMiddleware, logout)
 router.get("/me", authMiddleware, me)

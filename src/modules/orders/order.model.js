@@ -48,8 +48,8 @@ export const Order = sequelize.define(
       defaultValue: 0,
     },
     tax_amount: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
-    default_tax_rate: { type: DataTypes.DECIMAL(5, 2), allowNull: true },
-    default_tax_amount: {
+    sales_tax_rate: { type: DataTypes.DECIMAL(5, 2), allowNull: true },
+    sales_tax_amount: {
       type: DataTypes.DECIMAL(12, 2),
       allowNull: false,
       defaultValue: 0,

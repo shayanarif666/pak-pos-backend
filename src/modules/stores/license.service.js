@@ -14,6 +14,7 @@ import { AppError } from "../../shared/errors/AppError.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
 import { createBilling } from "../billings/billing.service.js"
+import { TRIAL_DAYS, USABLE_LICENSE_STATUS } from "../../db/enums.js"
 
 /** Days the Super Admin can give an expired store before payment ("extend" button). */
 export const LICENSE_GRACE_DAYS = 2
@@ -77,17 +78,23 @@ export function publicLicense(license, extras = {}) {
   }
 }
 
-export async function issueLicense(store, plan, startsAt, { transaction }) {
+/**
+ * A paid license runs 1 month (status pending until a till is bound); a trial license runs
+ * TRIAL_DAYS and is usable straight away (status trial).
+ */
+export async function issueLicense(store, plan, startsAt, { transaction, trial = false }) {
   return StoreLicense.create(
     {
       store_id: store.id,
       store_id_int: store.store_id_int,
       plan_id: plan.id,
       license_key: generateLicenseKey(),
-      status: "pending",
+      status: trial ? "trial" : "pending",
       device_uuids: [],
       starts_at: startsAt,
-      expires_at: addOneMonth(startsAt),
+      expires_at: trial
+        ? new Date(startsAt.getTime() + TRIAL_DAYS * DAY_MS)
+        : addOneMonth(startsAt),
     },
     { transaction }
   )
@@ -95,7 +102,7 @@ export async function issueLicense(store, plan, startsAt, { transaction }) {
 
 async function refreshExpired(license) {
   if (
-    (license.status === "active" || license.status === "pending") &&
+    USABLE_LICENSE_STATUS.includes(license.status) &&
     isExpired(license.expires_at)
   ) {
     await license.update({ status: "expired" })
@@ -170,10 +177,12 @@ function licenseExtras(license) {
 // exposes for the dashboard's own license screens. This is also the only POS-facing response that
 // carries the license_key and the plan — POST /auth/login dropped both to keep the login payload
 // small.
+// POS shape of a license check: device_id is the till's short device number (as the POS stores
+// it), planId the plan number.
 function posLicenseView(license, extras = {}) {
   return {
     license_key: license.license_key,
-    device_id: extras.device_uid ?? null,
+    device_id: extras.device_number ?? null,
     status: license.status,
     starts_at: license.starts_at,
     expires_at: license.expires_at,
@@ -181,16 +190,7 @@ function posLicenseView(license, extras = {}) {
     suspended_at: license.suspended_at ?? null,
     suspended_reason: license.suspended_reason ?? null,
     valid: extras.valid !== false,
-    plan: license.Plan
-      ? {
-          id: license.Plan.plan_number,
-          code: license.Plan.code,
-          name: license.Plan.name,
-          max_devices: license.Plan.max_devices,
-          max_locations: license.Plan.max_locations,
-          features: Array.isArray(license.Plan.features) ? license.Plan.features : [],
-        }
-      : null,
+    planId: license.Plan?.plan_number ?? null,
   }
 }
 
@@ -206,7 +206,8 @@ export async function validateLicenseKey(licenseKey) {
   if (license.status === "pending") {
     throw new AppError("License has not been activated", 403)
   }
-  if (license.status !== "active") {
+  // A trial license works like an active one until the trial ends.
+  if (!["active", "trial"].includes(license.status)) {
     throw new AppError("License is not active", 403)
   }
   return publicLicense(license, licenseExtras(license))
@@ -216,7 +217,7 @@ async function findOtherLicenseWithDeviceUid(storeId, deviceUid, excludeLicenseI
   const rows = await StoreLicense.findAll({
     where: {
       store_id: storeId,
-      status: { [Op.in]: ["pending", "active"] },
+      status: { [Op.in]: USABLE_LICENSE_STATUS },
       id: { [Op.ne]: excludeLicenseId },
     },
   })
@@ -265,7 +266,7 @@ export async function activateLicenseKey(input, meta = {}) {
       return posLicenseView(license, {
         already_registered: true,
         valid: true,
-        device_uid: input.device_uid,
+        device_number: existing.device_number,
       })
     }
 
@@ -300,7 +301,8 @@ export async function activateLicenseKey(input, meta = {}) {
     ]
     await license.update(
       {
-        status: "active",
+        // Binding a till activates a pending license; a trial license stays on trial.
+        status: license.status === "trial" ? "trial" : "active",
         device_id: license.device_id || device.id,
         device_uuids: nextDevices,
       },
@@ -326,12 +328,13 @@ export async function activateLicenseKey(input, meta = {}) {
     return posLicenseView(license, {
       already_registered: false,
       valid: true,
-      device_uid: input.device_uid,
+      device_number: device.device_number,
+      new_device: true,
     })
   })
 }
 
-const LICENSE_STATUS_RANK = { active: 0, pending: 1, suspended: 2, expired: 3, revoked: 4 }
+const LICENSE_STATUS_RANK = { active: 0, trial: 0, pending: 1, suspended: 2, expired: 3, revoked: 4 }
 
 /** The license the store is actually running on: active first, then pending, newest expiry. */
 export async function getCurrentLicense(storeId) {
@@ -478,7 +481,7 @@ export async function createLicense(input) {
   if (!plan || !plan.is_active) throw new NotFoundError("Plan not found")
 
   const liveCount = await StoreLicense.count({
-    where: { store_id: store.id, status: ["pending", "active"] },
+    where: { store_id: store.id, status: USABLE_LICENSE_STATUS },
   })
   await assertPlan(store, "max_devices", { count: liveCount, extra: 1 })
 
@@ -599,7 +602,14 @@ export async function renewLicense(id, input = {}, actor = null) {
     }
     await refreshExpired(row)
 
-    const nextPlan = await Plan.findByPk(input.plan_id || row.plan_id, { transaction })
+    // plan_id: the plan's number (e.g. 1) or its UUID; without it the current plan is renewed.
+    const planRef = input.plan_id ? String(input.plan_id) : null
+    const nextPlan = planRef
+      ? await Plan.findOne({
+          where: /^\d+$/.test(planRef) ? { plan_number: Number(planRef) } : { id: planRef },
+          transaction,
+        })
+      : await Plan.findByPk(row.plan_id, { transaction })
     if (!nextPlan || !nextPlan.is_active) throw new NotFoundError("Plan not found")
     const store = await Store.findByPk(row.store_id, { transaction })
     if (!store) throw new NotFoundError("Store not found")
@@ -621,19 +631,33 @@ export async function renewLicense(id, input = {}, actor = null) {
     }
 
     const now = new Date()
+    // Buying the plan after a trial: the paid month starts now (trial days don't carry over), and
+    // the license and the store go from trial to active, keeping all of the trial's data.
+    const fromTrial = row.status === "trial" || store.status === "trial"
     const periodStart =
-      row.expires_at && new Date(row.expires_at) > now ? new Date(row.expires_at) : now
+      !fromTrial && row.expires_at && new Date(row.expires_at) > now ? new Date(row.expires_at) : now
     const graceDays = row.grace_days || 0
     const expiresAt = new Date(addOneMonth(periodStart).getTime() - graceDays * DAY_MS)
 
-    const status = ["expired", "pending"].includes(row.status)
-      ? liveStatus(row)
-      : row.status // active stays active, suspended stays suspended
+    const status =
+      fromTrial || ["expired", "pending"].includes(row.status)
+        ? liveStatus(row)
+        : row.status // active stays active, suspended stays suspended
     await row.update(
-      { plan_id: nextPlan.id, status, expires_at: expiresAt, grace_days: 0 },
+      {
+        plan_id: nextPlan.id,
+        status,
+        expires_at: expiresAt,
+        grace_days: 0,
+        renewed_at: now,
+        ...(fromTrial ? { starts_at: now } : {}),
+      },
       { transaction }
     )
-    if (store.plan_id !== nextPlan.id) await store.update({ plan_id: nextPlan.id }, { transaction })
+    const storePatch = {}
+    if (store.plan_id !== nextPlan.id) storePatch.plan_id = nextPlan.id
+    if (store.status !== "active") Object.assign(storePatch, { status: "active", trial_ends_at: null })
+    if (Object.keys(storePatch).length) await store.update(storePatch, { transaction })
 
     const billingRow = await createBilling(
       {
@@ -658,7 +682,18 @@ export async function renewLicense(id, input = {}, actor = null) {
   })
 
   await auditLicense(license, "renew", actor, `${plan.code}, billing ${billing.id}`)
-  return { ...(await adminLicenseView(license)), billing }
+  const owner = await Store.findByPk(license.store_id, { attributes: ["store_id_int"] })
+  // POS shape of a renewal (short numbers).
+  const summary = {
+    storeId: owner?.store_id_int ?? null,
+    license_key: license.license_key,
+    status: license.status,
+    starts_at: license.starts_at,
+    expires_at: license.expires_at,
+    planId: plan.plan_number,
+    renew_at: license.renewed_at,
+  }
+  return { ...(await adminLicenseView(license)), billing, summary }
 }
 
 /** Suspend: the Super Admin blocks the store. Dashboard and POS stop working for its staff. */
@@ -702,7 +737,7 @@ export async function reactivateLicense(id, actor) {
 export async function expireOverdueLicenses() {
   const [result] = await sequelize.query(
     `UPDATE store_licenses SET status = 'expired', updated_at = NOW()
-     WHERE status IN ('active', 'pending') AND expires_at < NOW()`
+     WHERE status IN ('active', 'pending', 'trial') AND expires_at < NOW()`
   )
   return result?.affectedRows ?? 0
 }
@@ -726,7 +761,7 @@ export async function assertStoreLicenseUsable(storeId) {
   })
   const now = new Date()
   const usable = licenses.some(
-    (row) => ["active", "pending"].includes(row.status) && new Date(row.expires_at) > now
+    (row) => USABLE_LICENSE_STATUS.includes(row.status) && new Date(row.expires_at) > now
   )
   if (usable) return
   if (licenses.some((row) => row.status === "suspended")) {

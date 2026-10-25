@@ -1,11 +1,14 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js"
 import { asyncHandler } from "../../shared/utils/asyncHandler.js"
 import { getStoreForManager } from "../stores/store.service.js"
-import { bulkStatus, extractBulkItems, runBulk } from "../../shared/utils/bulk.util.js"
+import { bulkStatus, posBulkResponse, extractBulkItems, runBulk } from "../../shared/utils/bulk.util.js"
 import { parseCreateProduct } from "./product.validation.js"
+import { posProduct, posProducts } from "../pos/posResponses.js"
 import * as productService from "./product.service.js"
+import * as posHistory from "../pos/posHistory.service.js"
 
 export const list = asyncHandler(async (req, res) => {
+  if (req.auth?.channel === "pos") return posHistory.sendPage(res, await posHistory.products(req))
   const data = await productService.listProducts(req.user, req.query)
   return apiResponse(res, 200, "OK", data)
 })
@@ -19,11 +22,8 @@ export const create = asyncHandler(async (req, res) => {
   const store = await getStoreForManager(req.storeId)
   const product = await productService.createProduct(store, req.body)
   if (req.auth?.channel === "pos") {
-    // id here is the short product_number, not the internal UUID.
-    return apiResponse(res, 201, "Product Successfully Created", {
-      id: product.product_number,
-      title: product.title,
-    })
+    // Every field, with short numbers (id = product_number, category_id = category_number).
+    return apiResponse(res, 201, "Products Created", await posProduct(product))
   }
   return apiResponse(res, 201, "Product created", product)
 })
@@ -34,12 +34,9 @@ export const createBulk = asyncHandler(async (req, res) => {
     return productService.createProduct(store, parseCreateProduct(item))
   })
   if (req.auth?.channel === "pos") {
-    return apiResponse(
-      res,
-      bulkStatus(data),
-      "Products Successfully Created",
-      data.created.map((row) => ({ id: row.product_number, title: row.title }))
-    )
+    const created = []
+    created.push(...(await posProducts(data.created)))
+    return posBulkResponse(res, data, "Products Created", created)
   }
   return apiResponse(res, bulkStatus(data), "Bulk products processed", data)
 })
@@ -59,6 +56,7 @@ export const remove = asyncHandler(async (req, res) => {
 })
 
 export const listWeight = asyncHandler(async (req, res) => {
+  if (req.auth?.channel === "pos") return posHistory.sendPage(res, await posHistory.weightList(req))
   const data = await productService.listWeightProducts(req.storeId)
   return apiResponse(res, 200, "OK", data)
 })
@@ -69,7 +67,11 @@ export const patchWeight = asyncHandler(async (req, res) => {
 })
 
 export const listExpiry = asyncHandler(async (req, res) => {
-  const data = await productService.listExpiryProducts(req.storeId)
+  if (req.auth?.channel === "pos") return posHistory.sendPage(res, await posHistory.expiryList(req))
+  // A manager sees their own location; a store admin every location (or ?location_id=).
+  const locationId =
+    req.user.role === "store_admin" ? req.query.location_id || null : req.auth?.location_id || req.user.location_id
+  const data = await productService.listExpiryProducts(req.storeId, locationId)
   return apiResponse(res, 200, "OK", data)
 })
 

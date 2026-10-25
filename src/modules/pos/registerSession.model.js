@@ -14,11 +14,14 @@ export const RegisterSession = sequelize.define(
     location_id_int: { type: DataTypes.INTEGER, allowNull: false },
     cashier_id: uuidCol(false),
     device_id: uuidCol(true),
+    // A batch (cash drawer): open from batch opening until batch closing.
     status: {
       type: DataTypes.ENUM(...REGISTER_SESSION_STATUS),
       allowNull: false,
-      defaultValue: "clock_in",
+      defaultValue: "open",
     },
+    // The staff session (clock in) this batch was opened during, if any.
+    staff_session_id: uuidCol(true),
     opening_cash: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
     cash_in: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
     cash_out: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },

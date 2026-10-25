@@ -1,11 +1,27 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js"
 import { asyncHandler } from "../../shared/utils/asyncHandler.js"
 import { getStoreForManager } from "../stores/store.service.js"
-import { bulkStatus, extractBulkItems, runBulk } from "../../shared/utils/bulk.util.js"
+import { bulkStatus, posBulkResponse, extractBulkItems, runBulk } from "../../shared/utils/bulk.util.js"
 import { parseCreateOffer } from "./offer.validation.js"
 import * as offerService from "./offer.service.js"
+import { actingAs, resolveStaff } from "../../shared/utils/staff.util.js"
+import { posOffer, posOffers } from "../pos/posResponses.js"
+import * as posHistory from "../pos/posHistory.service.js"
+
+// The offer is added by the PIN-picked staff member (created_by); the location context stays
+// the request's (token, or the store admin's location_id).
+async function offerActor(req, staffRef) {
+  const base = { ...req.user.get({ plain: true }), location_id: req.auth?.location_id || req.user.location_id }
+  return actingAs(base, await resolveStaff(base.store_id, staffRef, req.user))
+}
+
+function offerSummary(result) {
+  const { summary: _summary, ...view } = result
+  return posOffer(view)
+}
 
 export const list = asyncHandler(async (req, res) => {
+  if (req.auth?.channel === "pos") return posHistory.sendPage(res, await posHistory.offers(req))
   const data = await offerService.listOffers(req.user, req.query)
   return apiResponse(res, 200, "OK", data)
 })
@@ -17,25 +33,27 @@ export const getOne = asyncHandler(async (req, res) => {
 
 export const create = asyncHandler(async (req, res) => {
   const store = await getStoreForManager(req.storeId)
-  const { summary, ...data } = await offerService.createOffer(store, req.body, req.user)
+  const { staff_ref, ...input } = req.body
+  const result = await offerService.createOffer(store, input, await offerActor(req, staff_ref))
+  const { summary: _summary, ...data } = result
   if (req.auth?.channel === "pos") {
-    return apiResponse(res, 201, "Offer Successfully Created", summary)
+    return apiResponse(res, 201, "Offer Created", await offerSummary(result))
   }
   return apiResponse(res, 201, "Offer created", data)
 })
 
 export const createBulk = asyncHandler(async (req, res) => {
   const store = await getStoreForManager(req.storeId)
+  const fallbackStaff = req.body?.staff_id ?? req.body?.staffId ?? null
   const data = await runBulk(extractBulkItems(req.body), async (item) => {
-    return offerService.createOffer(store, parseCreateOffer(item), req.user)
+    const { staff_ref, ...input } = parseCreateOffer(item)
+    const ref = staff_ref || (fallbackStaff == null ? null : String(fallbackStaff))
+    return offerService.createOffer(store, input, await offerActor(req, ref))
   })
   if (req.auth?.channel === "pos") {
-    return apiResponse(
-      res,
-      bulkStatus(data),
-      "Offers Successfully Created",
-      data.created.map((row) => row.summary)
-    )
+    const created = []
+    created.push(...(await posOffers(data.created.map(({ summary: _summary, ...view }) => view))))
+    return posBulkResponse(res, data, "Offer Created", created)
   }
   const created = data.created.map(({ summary, ...row }) => row)
   return apiResponse(res, bulkStatus(data), "Bulk offers processed", { ...data, created })

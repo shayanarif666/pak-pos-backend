@@ -230,7 +230,7 @@ export function orderTaxCollection(order, refund = { amount: 0, tax: 0 }) {
     if (share <= 0) continue
     addMoney(collected, "product_tax", Number(item.product_tax_amount || 0) * share)
     addMoney(collected, "category_tax", Number(item.category_tax_amount || 0) * share)
-    addMoney(collected, "default_store_tax", Number(item.default_tax_amount || 0) * share)
+    addMoney(collected, "default_store_tax", Number(item.sales_tax_amount || 0) * share)
   }
 
   const orderShare = orderRemainingPreGstShare(order)

@@ -19,6 +19,8 @@ export const StockMovement = sequelize.define(
     reason_note: { type: DataTypes.TEXT, allowNull: true },
     qty: { type: DataTypes.DECIMAL(12, 4), allowNull: false },
     qty_after: { type: DataTypes.DECIMAL(12, 4), allowNull: true },
+    // product_stocks.unit_sold right after this movement (running total of units sold).
+    unit_sold: { type: DataTypes.DECIMAL(12, 4), allowNull: true },
     supplier_id: uuidCol(true),
     staff_id: uuidCol(true),
     order_id: uuidCol(true),

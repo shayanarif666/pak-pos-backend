@@ -19,8 +19,8 @@ export const validate = asyncHandler(async (req, res) => {
   let message = "License is active"
   if (data.already_registered) {
     message = "Device already registered"
-  } else if (data.device) {
-    message = "License activated and device registered"
+  } else if (data.device_id) {
+    message = "New Device registered"
   } else if (data.status === "pending") {
     message = "License is pending activation"
   }

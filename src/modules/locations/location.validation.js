@@ -37,14 +37,23 @@ export function parseCreateLocation(body) {
     phone: optionalString(body, "phone"),
     is_active: body.is_active === undefined ? true : Boolean(body.is_active),
     is_default: body.is_default === undefined ? false : Boolean(body.is_default),
-    manager: {
-      name: requireString(body, "manager_name"),
-      email: requireString(body, "manager_email").toLowerCase(),
-      password: requireString(body, "manager_password", { min: 6, max: 128 }),
-      pin: requirePin(body, "manager_pin"),
-      phone: optionalString(body, "manager_phone"),
-    },
+    // Optional: a manager can also be added later with POST /staff (role manager, location_id).
+    manager: hasManagerFields(body)
+      ? {
+          name: requireString(body, "manager_name"),
+          email: requireString(body, "manager_email").toLowerCase(),
+          password: requireString(body, "manager_password", { min: 6, max: 128 }),
+          pin: requirePin(body, "manager_pin"),
+          phone: optionalString(body, "manager_phone"),
+        }
+      : null,
   }
+}
+
+function hasManagerFields(body) {
+  return ["manager_name", "manager_email", "manager_password", "manager_pin"].some(
+    (key) => body[key] !== undefined && body[key] !== null && body[key] !== ""
+  )
 }
 
 export function parsePatchLocation(body) {

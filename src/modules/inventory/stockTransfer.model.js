@@ -16,7 +16,7 @@ export const StockTransfer = sequelize.define(
     status: {
       type: DataTypes.ENUM(...TRANSFER_STATUS),
       allowNull: false,
-      defaultValue: "pending",
+      defaultValue: "on_the_way",
     },
     note: { type: DataTypes.TEXT, allowNull: true },
     created_by: uuidCol(true),

@@ -97,8 +97,9 @@ export const revokeLicense = asyncHandler(async (req, res) => {
 })
 
 export const renewLicense = asyncHandler(async (req, res) => {
-  const data = await licenseService.renewLicense(req.params.id, req.body, req.user)
-  return apiResponse(res, 200, "License renewed for 1 month", data)
+  // Same short shape for every caller (Super Admin portal or POS).
+  const { summary } = await licenseService.renewLicense(req.params.id, req.body, req.user)
+  return apiResponse(res, 200, "Renew License Successfully", summary)
 })
 
 export const extendLicense = asyncHandler(async (req, res) => {

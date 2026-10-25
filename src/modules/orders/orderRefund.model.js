@@ -15,6 +15,8 @@ export const OrderRefund = sequelize.define(
     order_id: uuidCol(false),
     cashier_id: uuidCol(true),
     receipt_id: uuidCol(true),
+    // complete = the whole order (refund/complete), partial = some of its items.
+    refund_type: { type: DataTypes.ENUM("complete", "partial"), allowNull: false, defaultValue: "partial" },
     reason: { type: DataTypes.TEXT, allowNull: false },
     amount: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
     tax_amount: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },

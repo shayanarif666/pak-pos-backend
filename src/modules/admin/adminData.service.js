@@ -188,3 +188,62 @@ export async function bulkDeleteModule(moduleName, ids) {
   const deleted = await withFkOff(() => deleteCascadeRows(config, unique))
   return { module: config.key, ids: unique, deleted }
 }
+
+// Tables without a store_id, cleaned through their parent row.
+const STORE_CHILD_TABLES = [
+  ["order_items", "order_id", "orders"],
+  ["order_refund_items", "refund_id", "order_refunds"],
+  ["offer_targets", "offer_id", "offers"],
+  ["cart_items", "cart_id", "carts"],
+  ["auth_tokens", "user_id", "users"],
+  ["user_sessions", "user_id", "users"],
+]
+
+/**
+ * Deletes one store and every row that belongs to it (all tables with its store_id, their child
+ * rows and its counters). Runs on one connection so the foreign-key switch covers every delete.
+ */
+export async function deleteStoreData(storeId) {
+  return sequelize.transaction(async (transaction) => {
+    const run = (sql, replacements = []) =>
+      sequelize.query(sql, { replacements, transaction })
+    await run("SET FOREIGN_KEY_CHECKS = 0")
+    try {
+      for (const [table, fk, parent] of STORE_CHILD_TABLES) {
+        await run(
+          `DELETE c FROM \`${table}\` c JOIN \`${parent}\` p ON p.id = c.\`${fk}\` WHERE p.store_id = ?`,
+          [storeId]
+        )
+      }
+      const [tables] = await run(
+        `SELECT TABLE_NAME AS name FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND COLUMN_NAME = 'store_id' AND TABLE_NAME <> 'stores'`
+      )
+      for (const { name } of tables) {
+        await run(`DELETE FROM \`${name}\` WHERE store_id = ?`, [storeId])
+      }
+      await run("DELETE FROM counters WHERE name LIKE ?", [`%:${storeId}`])
+      await run("DELETE FROM stores WHERE id = ?", [storeId])
+    } finally {
+      await run("SET FOREIGN_KEY_CHECKS = 1")
+    }
+    return { store_id: storeId }
+  })
+}
+
+/**
+ * Trial stores whose trial ended more than TRIAL_DECISION_DAYS ago and that never bought a plan
+ * are deleted with all their data (runs on the license sweep timer).
+ */
+export async function deleteExpiredTrialStores() {
+  const { Store } = await import("../stores/store.model.js")
+  const { Op } = await import("sequelize")
+  const { TRIAL_DECISION_DAYS } = await import("../../db/enums.js")
+  const cutoff = new Date(Date.now() - TRIAL_DECISION_DAYS * 24 * 60 * 60 * 1000)
+  const stores = await Store.findAll({
+    where: { status: "trial", trial_ends_at: { [Op.lt]: cutoff } },
+    attributes: ["id"],
+  })
+  for (const store of stores) await deleteStoreData(store.id)
+  return stores.length
+}

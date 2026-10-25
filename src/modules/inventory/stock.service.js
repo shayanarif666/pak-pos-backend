@@ -69,20 +69,20 @@ export async function listMovements(actor, query = {}) {
 }
 
 export async function createMovement(actor, fields) {
-  if (
-    actor.role !== "store_admin" &&
-    fields.location_id &&
-    fields.location_id !== actor.location_id
-  ) {
-    throw new ForbiddenError("You can only adjust stock at your location")
-  }
-
   const product = fields.product.product_id
     ? await getProduct(actor.store_id, fields.product.product_id)
     : await getProductByNumber(actor.store_id, fields.product.product_number)
   const locationId = resolveLocationId(actor, fields.location_id)
   if (!locationId) throw new ForbiddenError("No location on this account")
   const location = await loadLocation(actor.store_id, locationId)
+  // A manager / cashier may name their own location (number or UUID), never another one.
+  if (
+    actor.role !== "store_admin" &&
+    fields.location_id &&
+    (await loadLocation(actor.store_id, fields.location_id)).id !== location.id
+  ) {
+    throw new ForbiddenError("You can only adjust stock at your location")
+  }
   const store = await Store.findByPk(actor.store_id)
 
   return sequelize.transaction(async (transaction) => {
@@ -99,6 +99,7 @@ export async function createMovement(actor, fields) {
         staff_id: actor.id,
         expiry_date: fields.expiry_date,
         visibility: fields.visibility,
+        supplier_id: fields.supplier_id || null,
       },
       { transaction }
     )

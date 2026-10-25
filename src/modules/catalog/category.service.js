@@ -1,7 +1,7 @@
-import { ForeignKeyConstraintError, UniqueConstraintError } from "sequelize"
+import { ForeignKeyConstraintError, Op, UniqueConstraintError } from "sequelize"
 import { Category } from "./category.model.js"
 import { Product } from "./product.model.js"
-import { ensureUniqueSlug, slugify } from "../../shared/utils/slugify.js"
+import { ensureUniqueSlug } from "../../shared/utils/slugify.js"
 import { nextCategoryNumber } from "../../shared/utils/counter.util.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
@@ -31,13 +31,6 @@ function publicCategory(row) {
     ...publicVisibility(json),
     created_at: json.created_at,
     updated_at: json.updated_at,
-  }
-}
-
-async function assertUniqueSlug(storeId, slug, excludeId) {
-  const existing = await Category.findOne({ where: { store_id: storeId, slug } })
-  if (existing && existing.id !== excludeId) {
-    throw new ConflictError("Category slug already exists")
   }
 }
 
@@ -120,9 +113,13 @@ export async function updateCategory(storeId, id, fields) {
   const patch = { ...fields }
 
   if (fields.slug !== undefined || fields.name !== undefined) {
-    const slug = slugify(fields.slug || fields.name || category.name)
+    // A name already used by another category is fine: the slug just gets a -2, -3... suffix.
+    const slug = await ensureUniqueSlug(fields.slug || fields.name || category.name, async (candidate) =>
+      Boolean(
+        await Category.findOne({ where: { store_id: storeId, slug: candidate, id: { [Op.ne]: category.id } } })
+      )
+    )
     if (!slug) throw new AppError("slug is required", 400)
-    await assertUniqueSlug(storeId, slug, category.id)
     patch.slug = slug
   }
 

@@ -46,6 +46,8 @@ export const StoreLicense = sequelize.define(
     suspended_reason: { type: DataTypes.TEXT, allowNull: true },
     revoked_at: { type: DataTypes.DATE, allowNull: true },
     revoked_reason: { type: DataTypes.TEXT, allowNull: true },
+    // Last time the license was renewed (or converted from trial to a paid plan).
+    renewed_at: { type: DataTypes.DATE, allowNull: true },
   },
   {
     ...modelOptions,

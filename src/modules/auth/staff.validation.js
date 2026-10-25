@@ -35,6 +35,17 @@ function optionalUuid(body, key) {
   return value
 }
 
+// A location reference: its number (e.g. 1) or UUID; location_id or locationId.
+function optionalLocationRef(body) {
+  const key = body.location_id != null && body.location_id !== "" ? "location_id" : "locationId"
+  const value = optionalString(body, key)
+  if (!value) return null
+  if (!(/^[1-9][0-9]*$/.test(value) || UUID_RE.test(value))) {
+    throw new AppError(key + " must be a location number or UUID", 400)
+  }
+  return value
+}
+
 export function parseCreateStaff(body) {
   const role = requireString(body, "role")
   if (!STAFF_ROLES.includes(role)) {
@@ -48,7 +59,7 @@ export function parseCreateStaff(body) {
     pin: requirePin(body, "pin"),
     role,
     phone: optionalString(body, "phone"),
-    location_id: optionalUuid(body, "location_id"),
+    location_id: optionalLocationRef(body),
   }
 }
 

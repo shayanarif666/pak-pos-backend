@@ -39,15 +39,10 @@ export function parseLogin(body) {
     throw new AppError("channel must be web or pos", 400)
   }
 
-  if (pin) {
-    if (email || password) {
-      throw new AppError("Use email and password, or pin only", 400)
-    }
-    // PIN sign-in exists only on the POS.
-    if (channel && channel !== "pos") {
-      throw new AppError("PIN login is only available on POS", 400)
-    }
-    return { email: null, password: null, pin, channel: "pos" }
+  // There is no PIN sign-in: a store admin / manager signs in with email, and a cashier is
+  // checked with POST /auth/pin/verify on that signed-in till.
+  if (pin && !email && !password) {
+    throw new AppError("Sign in with email and password. A PIN is checked with POST /auth/pin/verify", 400)
   }
 
   if (!email) throw new AppError("email is required", 400)

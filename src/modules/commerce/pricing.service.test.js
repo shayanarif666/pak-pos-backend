@@ -83,29 +83,33 @@ describe("pricing.service", () => {
     assert.equal(line.subtotal, 149.4)
   })
 
-  it("stacks product tax then store default tax", () => {
-    const store = { charge_tax_on_sales: true, default_tax_rate: 10 }
-    const product = { tax_type: "percentage", tax_value: 10 }
-    const row = lineTaxBreakdown(store, product, null, 100)
-    assert.equal(row.product_tax_amount, 10)
-    assert.equal(row.default_tax_amount, 11)
-    assert.equal(row.tax_amount, 21)
-  })
-
-  it("records product and category tax then stacks store default", () => {
-    const store = { charge_tax_on_sales: true, default_tax_rate: 17 }
-    const product = { tax_type: "percentage", tax_value: 5 }
+  it("applies product, category and sales tax each on the line amount (no stacking)", () => {
+    const store = { charge_tax_on_sales: true, sales_tax_rate: 17 }
+    const product = { taxes: [{ name: "Import duty", type: "percentage", value: 5 }] }
     const category = { tax_type: "percentage", tax_value: 5 }
     const row = lineTaxBreakdown(store, product, category, 100)
     assert.equal(row.product_tax_amount, 5)
     assert.equal(row.category_tax_amount, 5)
-    assert.equal(row.default_tax_amount, 18.7)
-    assert.equal(row.tax_amount, 28.7)
+    assert.equal(row.sales_tax_amount, 17)
+    assert.equal(row.tax_amount, 27)
   })
 
-  it("quotes 100 + 10% product + 10% store default + 12% cash GST = 135.52", () => {
-    const store = { charge_tax_on_sales: true, default_tax_rate: 10 }
-    const product = { tax_type: "percentage", tax_value: 10 }
+  it("adds every tax in a product's list; a fixed tax is per unit", () => {
+    const store = { charge_tax_on_sales: true }
+    const product = {
+      taxes: [
+        { name: "GST", type: "percentage", value: 10 },
+        { name: "Excise", type: "fixed", value: 2 },
+      ],
+    }
+    const row = lineTaxBreakdown(store, product, null, 300, 3)
+    assert.equal(row.product_tax_amount, 36) // 30 + 2 × 3
+    assert.deepEqual(row.product_taxes.map((tax) => tax.amount), [30, 6])
+  })
+
+  it("quotes 100 + 10% product + 10% sales tax + 12% cash GST = 134.4", () => {
+    const store = { charge_tax_on_sales: true, sales_tax_rate: 10 }
+    const product = { taxes: [{ name: "GST", type: "percentage", value: 10 }] }
     const tax = lineTaxBreakdown(store, product, null, 100)
     const quoted = quoteOrderTotals({
       lines: [
@@ -117,7 +121,7 @@ describe("pricing.service", () => {
           tax_amount: tax.tax_amount,
           product_tax_amount: tax.product_tax_amount,
           category_tax_amount: 0,
-          default_tax_amount: tax.default_tax_amount,
+          sales_tax_amount: tax.sales_tax_amount,
           cost_price: 50,
         },
       ],
@@ -128,11 +132,30 @@ describe("pricing.service", () => {
     })
     assert.equal(quoted.subtotal, 100)
     assert.equal(quoted.product_tax_amount, 10)
-    assert.equal(quoted.default_tax_amount, 11)
-    assert.equal(quoted.line_tax, 21)
-    assert.equal(quoted.payment_gst_amount, 14.52)
-    assert.equal(quoted.tax_amount, 35.52)
-    assert.equal(quoted.total_amount, 135.52)
+    assert.equal(quoted.sales_tax_amount, 10)
+    assert.equal(quoted.line_tax, 20)
+    assert.equal(quoted.payment_gst_amount, 14.4)
+    assert.equal(quoted.total_amount, 134.4)
+  })
+
+  it("skips sales tax while the store has it switched off", () => {
+    const store = { charge_tax_on_sales: true, sales_tax_rate: 18, sales_tax_enabled: false }
+    const product = { taxes: [{ name: "GST", type: "percentage", value: 17 }] }
+    const row = lineTaxBreakdown(store, product, null, 100)
+    assert.equal(row.sales_tax_amount, 0)
+    assert.equal(row.tax_amount, 17)
+  })
+
+  it("skips payment GST while the store has it switched off", () => {
+    const quoted = quoteOrderTotals({
+      lines: [{ unit_price: 100, quantity: 1, discount_amount: 0, subtotal: 100, tax_amount: 0, cost_price: 50 }],
+      store: { charge_tax_on_sales: true, payment_tax_enabled: false },
+      channel: "pos",
+      paymentMethod: "cash",
+      taxRates: [{ payment_method: "cash", gst_percent: 16 }],
+    })
+    assert.equal(quoted.payment_gst_amount, 0)
+    assert.equal(quoted.total_amount, 100)
   })
 
   it("adds payment GST on mixed POS tenders", () => {
@@ -146,7 +169,7 @@ describe("pricing.service", () => {
           tax_amount: 12.5,
           product_tax_amount: 5,
           category_tax_amount: 7.5,
-          default_tax_amount: 0,
+          sales_tax_amount: 0,
           cost_price: 125,
         },
       ],
@@ -172,10 +195,7 @@ describe("pricing.service", () => {
 
   it("adds 17% tax after 17% product discount", () => {
     const store = { charge_tax_on_sales: true }
-    const product = {
-      tax_type: "percentage",
-      tax_value: 17,
-    }
+    const product = { taxes: [{ name: "GST", type: "percentage", value: 17 }] }
     assert.equal(lineTaxAmount(store, product, null, 149.4), 25.4)
   })
 

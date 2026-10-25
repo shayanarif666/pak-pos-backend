@@ -234,51 +234,74 @@ export function priceCustomLine(item) {
   }
 }
 
-export function lineTaxBreakdown(store, product, category, taxable) {
+/** A product's taxes as a clean list: [{ name, type: percentage | fixed, value }]. */
+export function productTaxList(product) {
+  const raw = product?.taxes
+  const list = Array.isArray(raw) ? raw : typeof raw === "string" ? safeParse(raw) : []
+  return list
+    .filter((tax) => tax && (tax.type === "percentage" || tax.type === "fixed") && tax.value != null)
+    .map((tax) => ({ name: tax.name || "Tax", type: tax.type, value: Number(tax.value) }))
+}
+
+function safeParse(text) {
+  try {
+    const parsed = JSON.parse(text)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+/** One tax on a base: a percentage of it, or a fixed amount per unit. */
+export function taxOn(base, type, value, units = 1) {
+  const amount = Number(value || 0)
+  if (!type || amount <= 0) return 0
+  return type === "percentage" ? money((Number(base) * amount) / 100) : money(amount * Number(units || 1))
+}
+
+/**
+ * Taxes of one sale line, each on the line's taxable amount (after discounts) — they do not
+ * stack on each other:
+ * - product taxes: every tax in the product's list
+ * - category tax: the category's single tax
+ * - sales tax: the store's sales_tax_rate, while sales_tax_enabled is on
+ * A fixed tax is per unit (× qty). Nothing applies while the store's charge_tax_on_sales is off.
+ */
+export function lineTaxBreakdown(store, product, category, taxable, qty = 1) {
+  const taxes = productTaxList(product)
   const breakdown = {
-    product_tax_type: product?.tax_type || null,
-    product_tax_value: product?.tax_value == null ? null : Number(product.tax_value),
+    product_taxes: taxes.map((tax) => ({ ...tax, amount: 0 })),
     category_tax_type: category?.tax_type || null,
     category_tax_value: category?.tax_value == null ? null : Number(category.tax_value),
-    default_tax_rate:
-      store?.default_tax_rate == null ? null : Number(store.default_tax_rate),
+    sales_tax_rate: store?.sales_tax_rate == null ? null : Number(store.sales_tax_rate),
     product_tax_amount: 0,
     category_tax_amount: 0,
-    default_tax_amount: 0,
+    sales_tax_amount: 0,
     tax_amount: 0,
   }
   if (!store?.charge_tax_on_sales) return breakdown
 
   const base = money(taxable)
-  if (product?.tax_type && product.tax_value != null) {
-    breakdown.product_tax_amount = applyDiscount(base, product.tax_type, product.tax_value)
-  }
+  breakdown.product_taxes = taxes.map((tax) => ({ ...tax, amount: taxOn(base, tax.type, tax.value, qty) }))
+  breakdown.product_tax_amount = money(
+    breakdown.product_taxes.reduce((sum, tax) => sum + tax.amount, 0)
+  )
   if (category?.tax_type && category.tax_value != null) {
-    breakdown.category_tax_amount = applyDiscount(base, category.tax_type, category.tax_value)
+    breakdown.category_tax_amount = taxOn(base, category.tax_type, category.tax_value, qty)
   }
-
-  // Store default stacks on (subtotal + product tax + category tax), e.g. 100 → 110 → 121.
-  if (store.default_tax_rate != null && Number(store.default_tax_rate) > 0) {
-    const afterLineTaxes = money(
-      base + breakdown.product_tax_amount + breakdown.category_tax_amount
-    )
-    breakdown.default_tax_amount = applyDiscount(
-      afterLineTaxes,
-      "percentage",
-      store.default_tax_rate
-    )
+  // Sales tax: only while the store has it switched on.
+  if (store.sales_tax_enabled !== false && store.sales_tax_rate != null && Number(store.sales_tax_rate) > 0) {
+    breakdown.sales_tax_amount = taxOn(base, "percentage", store.sales_tax_rate)
   }
 
   breakdown.tax_amount = money(
-    breakdown.product_tax_amount +
-      breakdown.category_tax_amount +
-      breakdown.default_tax_amount
+    breakdown.product_tax_amount + breakdown.category_tax_amount + breakdown.sales_tax_amount
   )
   return breakdown
 }
 
-export function lineTaxAmount(store, product, category, taxable) {
-  return lineTaxBreakdown(store, product, category, taxable).tax_amount
+export function lineTaxAmount(store, product, category, taxable, qty = 1) {
+  return lineTaxBreakdown(store, product, category, taxable, qty).tax_amount
 }
 
 export function quoteShipping(channel, rule, afterDiscounts) {
@@ -290,8 +313,10 @@ export function quoteShipping(channel, rule, afterDiscounts) {
   return flat
 }
 
+// Payment-method GST: only while the store has charge_tax_on_sales and payment_tax_enabled on.
 export function paymentGst(store, rates, method, taxableShare) {
-  if (!store.charge_tax_on_sales || !method || method === "mixed") return 0
+  if (!store.charge_tax_on_sales || store.payment_tax_enabled === false) return 0
+  if (!method || method === "mixed") return 0
   const row = (rates || []).find((rate) => rate.payment_method === method)
   if (!row) return 0
   return applyDiscount(taxableShare, "percentage", row.gst_percent)
@@ -329,9 +354,9 @@ export function quoteOrderTotals({
   const category_tax_amount = taxExempt
     ? 0
     : money(lines.reduce((sum, line) => sum + Number(line.category_tax_amount || 0), 0))
-  const default_tax_amount = taxExempt
+  const sales_tax_amount = taxExempt
     ? 0
-    : money(lines.reduce((sum, line) => sum + Number(line.default_tax_amount || 0), 0))
+    : money(lines.reduce((sum, line) => sum + Number(line.sales_tax_amount || 0), 0))
 
   let gst = 0
   const payment_gst_splits = []
@@ -377,13 +402,13 @@ export function quoteOrderTotals({
     line_tax,
     product_tax_amount,
     category_tax_amount,
-    default_tax_amount,
+    sales_tax_amount,
     payment_gst_amount: gst,
     payment_gst_splits,
     fbr_invoice_enabled: Boolean(store.fbr_invoice_enabled),
     fbr_tax_amount,
-    default_tax_rate:
-      store.default_tax_rate == null ? null : Number(store.default_tax_rate),
+    sales_tax_rate:
+      store.sales_tax_rate == null ? null : Number(store.sales_tax_rate),
     total_amount,
     cost_total,
   }

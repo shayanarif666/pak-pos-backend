@@ -7,7 +7,7 @@ import {
 } from "../../shared/middlewares/tenant.middleware.js"
 import { validate } from "../../shared/middlewares/validate.middleware.js"
 import { parseCreateTransfer } from "./transfer.validation.js"
-import { cancel, complete, create, list } from "./transfer.controller.js"
+import { cancel, complete, create, createBulk, list } from "./transfer.controller.js"
 
 const router = Router()
 const tenant = [authMiddleware, tenantMiddleware, requireTenantStore]
@@ -25,6 +25,7 @@ router.post(
   validate(parseCreateTransfer),
   create
 )
+router.post("/bulk", ...tenant, authorize("store_admin"), createBulk)
 router.post(
   "/:id/complete",
   ...tenant,

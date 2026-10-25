@@ -1,11 +1,14 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js"
 import { asyncHandler } from "../../shared/utils/asyncHandler.js"
 import { getStoreForManager } from "../stores/store.service.js"
-import { bulkStatus, extractBulkItems, runBulk } from "../../shared/utils/bulk.util.js"
+import { bulkStatus, extractBulkItems, posBulkResponse, runBulk } from "../../shared/utils/bulk.util.js"
 import { parseCreateSupplier } from "./supplier.validation.js"
 import * as supplierService from "./supplier.service.js"
+import { posSupplier } from "../pos/posResponses.js"
+import * as posHistory from "../pos/posHistory.service.js"
 
 export const list = asyncHandler(async (req, res) => {
+  if (req.auth?.channel === "pos") return posHistory.sendPage(res, await posHistory.suppliers(req))
   const data = await supplierService.listSuppliers(req.storeId, req.user, req.query)
   return apiResponse(res, 200, "OK", data)
 })
@@ -19,7 +22,7 @@ export const create = asyncHandler(async (req, res) => {
   const store = await getStoreForManager(req.storeId)
   const data = await supplierService.createSupplier(store, req.body, req.user)
   if (req.auth?.channel === "pos") {
-    return apiResponse(res, 201, "Supplier Successfully Created", { id: data.supplier_number })
+    return apiResponse(res, 201, "Supplier Created", posSupplier(data))
   }
   return apiResponse(res, 201, "Supplier created", data)
 })
@@ -30,12 +33,7 @@ export const createBulk = asyncHandler(async (req, res) => {
     return supplierService.createSupplier(store, parseCreateSupplier(item), req.user)
   })
   if (req.auth?.channel === "pos") {
-    return apiResponse(
-      res,
-      bulkStatus(data),
-      "Suppliers Successfully Created",
-      data.created.map((row) => ({ id: row.supplier_number }))
-    )
+    return posBulkResponse(res, data, "Supplier Created", data.created.map(posSupplier))
   }
   return apiResponse(res, bulkStatus(data), "Bulk suppliers processed", data)
 })

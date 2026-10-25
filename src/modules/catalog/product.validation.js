@@ -2,6 +2,51 @@ import { AppError } from "../../shared/errors/AppError.js"
 import { parseCatalogVisibility } from "../../db/channelVisibility.js"
 import { DISCOUNT_TYPE, PRODUCT_UNIT, TAX_AMOUNT_TYPE } from "../../db/enums.js"
 
+/**
+ * Product taxes, any number of them: taxes: [{ name, type: percentage | fixed, value }].
+ * The single tax_name / tax_type / tax_value of older clients becomes a one-item list.
+ * Returns undefined when nothing tax-related was sent (PATCH keeps the current taxes).
+ */
+function parseTaxes(body) {
+  let list
+  if (body.taxes !== undefined) {
+    if (body.taxes === null || body.taxes === "") return []
+    let raw = body.taxes
+    if (typeof raw === "string") {
+      try {
+        raw = JSON.parse(raw)
+      } catch {
+        throw new AppError("taxes must be an array", 400)
+      }
+    }
+    if (!Array.isArray(raw)) throw new AppError("taxes must be an array", 400)
+    list = raw
+  } else if (body.tax_type !== undefined || body.tax_value !== undefined) {
+    list =
+      body.tax_type && body.tax_value !== null && body.tax_value !== ""
+        ? [{ name: body.tax_name, type: body.tax_type, value: body.tax_value }]
+        : []
+  } else {
+    return undefined
+  }
+  return list.map((tax, index) => {
+    if (!tax || typeof tax !== "object") throw new AppError(`taxes[${index}] is invalid`, 400)
+    const type = String(tax.type || "")
+    if (!TAX_AMOUNT_TYPE.includes(type)) {
+      throw new AppError(`taxes[${index}].type must be percentage or fixed`, 400)
+    }
+    const value = Number(tax.value)
+    if (tax.value === undefined || tax.value === null || tax.value === "" || Number.isNaN(value) || value < 0) {
+      throw new AppError(`taxes[${index}].value must be a number >= 0`, 400)
+    }
+    if (type === "percentage" && value > 100) {
+      throw new AppError(`taxes[${index}].value cannot exceed 100`, 400)
+    }
+    const name = tax.name === undefined || tax.name === null ? "" : String(tax.name).trim()
+    return { name: name || "Tax", type, value }
+  })
+}
+
 function requireString(body, key) {
   const value = body[key]
   if (typeof value !== "string" || !value.trim()) {
@@ -189,9 +234,7 @@ export function parseCreateProduct(rawBody) {
     discount_type: body.discount_type || null,
     discount_value: optionalNumber(body, "discount_value") ?? null,
     discount_name: optionalString(body, "discount_name") ?? null,
-    tax_type: body.tax_type || null,
-    tax_value: optionalNumber(body, "tax_value") ?? null,
-    tax_name: optionalString(body, "tax_name") ?? null,
+    taxes: parseTaxes(body) ?? [],
     is_pack_product: isPack,
     pack_size: optionalInt(body, "pack_size", { min: 2 }) ?? null,
     // Whole-pack cost/price — independent of cost_price/selling_price × pack_size, since bulk
@@ -210,9 +253,6 @@ export function parseCreateProduct(rawBody) {
 
   if (fields.discount_type && !DISCOUNT_TYPE.includes(fields.discount_type)) {
     throw new AppError("discount_type must be percentage or fixed", 400)
-  }
-  if (fields.tax_type && !TAX_AMOUNT_TYPE.includes(fields.tax_type)) {
-    throw new AppError("tax_type must be percentage or fixed", 400)
   }
   return fields
 }
@@ -262,17 +302,8 @@ export function parsePatchProduct(rawBody) {
   if (body.discount_name !== undefined) {
     fields.discount_name = optionalString(body, "discount_name")
   }
-  if (body.tax_type !== undefined) {
-    if (body.tax_type === null || body.tax_type === "") {
-      fields.tax_type = null
-    } else if (!TAX_AMOUNT_TYPE.includes(body.tax_type)) {
-      throw new AppError("tax_type must be percentage or fixed", 400)
-    } else {
-      fields.tax_type = body.tax_type
-    }
-  }
-  if (body.tax_value !== undefined) fields.tax_value = optionalNumber(body, "tax_value")
-  if (body.tax_name !== undefined) fields.tax_name = optionalString(body, "tax_name")
+  const taxes = parseTaxes(body)
+  if (taxes !== undefined) fields.taxes = taxes
   if (body.is_pack_product !== undefined) {
     fields.is_pack_product = optionalBool(body, "is_pack_product")
   }

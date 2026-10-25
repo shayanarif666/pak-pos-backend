@@ -9,12 +9,13 @@ function optionalString(body, key) {
 }
 
 export function parsePutTaxRates(body) {
-  if (!Array.isArray(body.rates) || !body.rates.length) {
-    throw new AppError("rates must be a non-empty array", 400)
+  // rates is optional: a body may only switch payment_tax_enabled or set the sales tax.
+  if (body.rates !== undefined && !Array.isArray(body.rates)) {
+    throw new AppError("rates must be an array", 400)
   }
 
   const seen = new Set()
-  const rates = body.rates.map((row, index) => {
+  const rates = (body.rates || []).map((row, index) => {
     const payment_method = String(row?.payment_method || "").trim()
     if (!TAX_METHODS.includes(payment_method)) {
       throw new AppError(
@@ -42,15 +43,21 @@ export function parsePutTaxRates(body) {
   if (body.fbr_invoice_enabled !== undefined) {
     store.fbr_invoice_enabled = Boolean(body.fbr_invoice_enabled)
   }
-  if (body.default_tax_rate !== undefined) {
-    if (body.default_tax_rate === null || body.default_tax_rate === "") {
-      store.default_tax_rate = null
+  if (body.sales_tax_enabled !== undefined) {
+    store.sales_tax_enabled = Boolean(body.sales_tax_enabled)
+  }
+  if (body.payment_tax_enabled !== undefined) {
+    store.payment_tax_enabled = Boolean(body.payment_tax_enabled)
+  }
+  if (body.sales_tax_rate !== undefined) {
+    if (body.sales_tax_rate === null || body.sales_tax_rate === "") {
+      store.sales_tax_rate = null
     } else {
-      const n = Number(body.default_tax_rate)
+      const n = Number(body.sales_tax_rate)
       if (Number.isNaN(n) || n < 0 || n > 100) {
-        throw new AppError("default_tax_rate must be 0–100", 400)
+        throw new AppError("sales_tax_rate must be 0–100", 400)
       }
-      store.default_tax_rate = n
+      store.sales_tax_rate = n
     }
   }
 

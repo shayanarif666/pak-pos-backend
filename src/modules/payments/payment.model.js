@@ -3,6 +3,7 @@ import { sequelize } from "../../db/sequelize.js"
 import { modelOptions, uuidCol, uuidPk } from "../../db/columnTypes.js"
 import { saleChannelVisibilityFields } from "../../db/channelVisibility.js"
 import { PAYMENT_METHOD, PAYMENT_ROW_STATUS } from "../../db/enums.js"
+import { nextTransactionNumber } from "../../shared/utils/counter.util.js"
 
 export const Payment = sequelize.define(
   "Payment",
@@ -13,6 +14,8 @@ export const Payment = sequelize.define(
     location_id: uuidCol(true),
     location_id_int: { type: DataTypes.INTEGER, allowNull: true },
     order_id: uuidCol(false),
+    // Per-store sequence (1, 2, 3...) — the transaction id the POS sees. Set on create.
+    transaction_number: { type: DataTypes.INTEGER, allowNull: true },
     ...saleChannelVisibilityFields(),
     method: { type: DataTypes.ENUM(...PAYMENT_METHOD), allowNull: false },
     amount: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
@@ -32,6 +35,16 @@ export const Payment = sequelize.define(
   {
     ...modelOptions,
     tableName: "payments",
-    indexes: [{ unique: true, fields: ["store_id", "gateway_transaction_id"] }],
+    indexes: [
+      { unique: true, fields: ["store_id", "gateway_transaction_id"] },
+      { unique: true, fields: ["store_id", "transaction_number"] },
+    ],
   }
 )
+
+// Every payment (POS sale, web order, added payment) gets the store's next transaction number.
+Payment.addHook("beforeCreate", async (payment, options) => {
+  if (payment.transaction_number == null) {
+    payment.transaction_number = await nextTransactionNumber(payment.store_id, options.transaction)
+  }
+})

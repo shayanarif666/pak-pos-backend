@@ -5,12 +5,13 @@ import { getLocation } from "../locations/location.service.js"
 import { getStoreForManager } from "../stores/store.service.js"
 import { money } from "../commerce/pricing.service.js"
 import { writeAudit } from "../../shared/utils/audit.util.js"
-import { setStaffClockStatus } from "../auth/auth.service.js"
+import { StaffSession } from "./staffSession.model.js"
 import { nextSessionNumber } from "../../shared/utils/counter.util.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
+import { Location } from "../locations/location.model.js"
 
 const NOTE_VALUES = [
   ["note_5000_count", 5000],
@@ -36,6 +37,14 @@ function countedFromNotes(fields) {
     total += Number(fields[key] || 0) * face
   }
   return money(total)
+}
+
+const staffSummary = (staff) => ({ id: staff.user_number, name: staff.name, role: staff.role })
+
+/** location { id, name } of a batch (POS replies). */
+async function batchLocation(row) {
+  const location = row.location_id ? await Location.findByPk(row.location_id, { attributes: ["location_id_int", "name"] }) : null
+  return { location: location ? { id: location.location_id_int, name: location.name } : null }
 }
 
 function publicSession(row) {
@@ -136,7 +145,7 @@ export async function getCurrentSession(actor, query = {}) {
   const where = {
     store_id: actor.store_id,
     location_id: locationId,
-    status: "clock_in",
+    status: "open",
   }
   // "Current" is the caller's own drawer (or the given counter's), never another cashier's.
   if (query.device_id) where.device_id = query.device_id
@@ -156,7 +165,12 @@ export async function getSessionView(actor, id) {
   return publicSession(row)
 }
 
-export async function clockIn(actor, fields) {
+/**
+ * Batch opening (cash drawer) for a staff member. `actor` is the signed-in admin / manager whose
+ * token gives the store and location; `staff` is who the batch belongs to (the cashier picked by
+ * PIN, or the actor themself).
+ */
+export async function openBatch(actor, staff, fields) {
   const store = await getStoreForManager(actor.store_id)
   const locationId = resolveActorLocation(actor, fields.location_id)
   if (!locationId) throw new AppError("location_id is required", 400)
@@ -166,22 +180,27 @@ export async function clockIn(actor, fields) {
     deviceUid: fields.device_uid || null,
   })
 
-  // Each counter (device) and each cashier can have one open drawer. Several counters of the
-  // same branch (Package 2: up to 3 PCs) therefore run their own shifts side by side.
-  const openForCashier = await RegisterSession.findOne({
-    where: { store_id: store.id, cashier_id: actor.id, status: "clock_in" },
+  // One open batch per staff member, and per counter (device) when the till is known.
+  const openForStaff = await RegisterSession.findOne({
+    where: { store_id: store.id, cashier_id: staff.id, status: "open" },
   })
-  if (openForCashier) {
-    throw new ConflictError("You already have an open register session")
+  if (openForStaff) {
+    throw new ConflictError("This staff member already has an open batch")
   }
   if (device) {
     const openOnDevice = await RegisterSession.findOne({
-      where: { store_id: store.id, device_id: device.id, status: "clock_in" },
+      where: { store_id: store.id, device_id: device.id, status: "open" },
     })
     if (openOnDevice) {
-      throw new ConflictError("This counter already has an open register session")
+      throw new ConflictError("This counter already has an open batch")
     }
   }
+
+  // The staff member's current attendance session, if they clocked in.
+  const staffSession = await StaffSession.findOne({
+    where: { store_id: store.id, user_id: staff.id, status: "clock_in" },
+    order: [["clock_in_at", "DESC"]],
+  })
 
   const row = await RegisterSession.create({
     store_id: store.id,
@@ -189,78 +208,93 @@ export async function clockIn(actor, fields) {
     session_number: await nextSessionNumber(store.id),
     location_id: location.id,
     location_id_int: location.location_id_int,
-    cashier_id: actor.id,
+    cashier_id: staff.id,
     device_id: device?.id || null,
-    status: "clock_in",
+    staff_session_id: staffSession?.id || null,
+    status: "open",
     opening_cash: fields.opening_cash,
     expected_cash: money(fields.opening_cash),
     note: fields.note,
     opened_at: fields.opened_at || new Date(),
   })
-  await setStaffClockStatus(actor.id, "clock_in")
 
   await writeAudit({
-    action: "clock_in",
+    action: "create",
     entity_type: "register_sessions",
     entity_id: row.id,
     store_id: store.id,
     store_id_int: store.store_id_int,
     location_id: location.id,
     location_id_int: location.location_id_int,
-    user_id: actor.id,
+    user_id: staff.id,
     channel: "pos",
+    note: "batch opened",
   })
 
-  return { id: row.session_number, opened_at: row.opened_at }
+  return {
+    id: row.session_number,
+    staff: staffSummary(staff),
+    ...(await batchLocation(row)),
+    opening_amount: Number(row.opening_cash),
+    opening_at: row.opened_at,
+  }
 }
 
-export async function clockOut(actor, id, fields) {
-  const row = await getSessionByIdOrNumber(actor.store_id, id)
-  if (row.status !== "clock_in") {
-    throw new ConflictError("Session is already closed")
+/**
+ * Batch closing: closes the staff member's open batch (or the one given by batch_id). total_cash
+ * is the cash counted in the drawer; note counts may be sent instead.
+ */
+export async function closeBatch(actor, staff, fields) {
+  let row
+  if (fields.batch_id) {
+    row = await getSessionByIdOrNumber(actor.store_id, fields.batch_id)
+  } else {
+    row = await RegisterSession.findOne({
+      where: { store_id: actor.store_id, cashier_id: staff.id, status: "open" },
+      order: [["opened_at", "DESC"]],
+    })
+    if (!row) throw new NotFoundError("This staff member has no open batch")
   }
-  if (actor.role === "cashier" && row.cashier_id !== actor.id) {
-    throw new ForbiddenError("You can only close your own session")
-  }
-  if (actor.role === "manager" && row.location_id !== actor.location_id) {
-    throw new ForbiddenError("You can only close a session at your location")
+  if (row.status !== "open") {
+    throw new ConflictError("This batch is already closed")
   }
 
   const counted =
-    fields.counted_cash != null ? money(fields.counted_cash) : countedFromNotes(fields)
+    fields.total_cash != null ? money(fields.total_cash) : countedFromNotes(fields)
   const closing = fields.closing_cash != null ? money(fields.closing_cash) : counted
   const expected = expectedCash(row)
   const variance = money(closing - expected)
 
+  const { batch_id: _batch, total_cash: _total, ...rest } = fields
   await row.update({
-    ...fields,
+    ...rest,
     counted_cash: counted,
     closing_cash: closing,
     expected_cash: expected,
     cash_variance: variance,
-    status: "clock_out",
+    status: "closed",
     closed_at: fields.closed_at || new Date(),
   })
-  // The session owner goes off duty, even when a manager closes their drawer.
-  await setStaffClockStatus(row.cashier_id, "clock_out")
 
   await writeAudit({
-    action: "clock_out",
+    action: "update",
     entity_type: "register_sessions",
     entity_id: row.id,
     store_id: row.store_id,
     store_id_int: row.store_id_int,
     location_id: row.location_id,
     location_id_int: row.location_id_int,
-    user_id: actor.id,
+    user_id: staff.id,
     channel: "pos",
-    note: `variance ${variance}`,
+    note: `batch closed, variance ${variance}`,
   })
 
   return {
     id: row.session_number,
-    closed_at: row.closed_at,
-    counted_cash: Number(row.counted_cash),
+    staff: staffSummary(staff),
+    ...(await batchLocation(row)),
+    total_cash: Number(row.counted_cash),
+    closing_at: row.closed_at,
   }
 }
 
@@ -295,8 +329,8 @@ export async function requireOpenSession(
     if (actorRole === "cashier" && cashierId && row.cashier_id !== cashierId) {
       throw new ForbiddenError("This register session belongs to another cashier")
     }
-    if (row.status !== "clock_in" && !(offline && coversTime(row, placedAt))) {
-      throw new ConflictError("Register session is closed")
+    if (row.status !== "open" && !(offline && coversTime(row, placedAt))) {
+      throw new ConflictError("This batch is closed")
     }
     if (locationId && row.location_id !== locationId) {
       throw new AppError("Session is not at this location", 400)
@@ -308,13 +342,13 @@ export async function requireOpenSession(
   const owner = deviceId ? { device_id: deviceId } : { cashier_id: cashierId }
 
   let row = await RegisterSession.findOne({
-    where: { ...base, ...owner, status: "clock_in" },
+    where: { ...base, ...owner, status: "open" },
     order: [["opened_at", "DESC"]],
     transaction,
   })
   if (!row && deviceId && cashierId) {
     row = await RegisterSession.findOne({
-      where: { ...base, cashier_id: cashierId, status: "clock_in" },
+      where: { ...base, cashier_id: cashierId, status: "open" },
       order: [["opened_at", "DESC"]],
       transaction,
     })
@@ -329,7 +363,7 @@ export async function requireOpenSession(
     row = candidates.find((candidate) => coversTime(candidate, placedAt)) || null
   }
   if (!row) {
-    throw new ConflictError("Clock in before selling")
+    throw new ConflictError("Open a batch before selling")
   }
   return row
 }
@@ -360,7 +394,7 @@ export async function applySessionSale(session, { payments, total, reverse = fal
       Number(session.cash_out)
   )
   // An offline sale synced after clock-out changes what the drawer should have held.
-  if (session.status === "clock_out" && session.closing_cash != null) {
+  if (session.status === "closed" && session.closing_cash != null) {
     patch.cash_variance = money(Number(session.closing_cash) - patch.expected_cash)
   }
   await session.update(patch, { transaction })

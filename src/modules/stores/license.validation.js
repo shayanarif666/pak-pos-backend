@@ -19,7 +19,8 @@ export function parseValidateLicense(body) {
   const license_key = optionalString(body, "license_key")
   if (!license_key) throw new AppError("license_key is required", 400)
 
-  const device_uid = optionalString(body, "device_uid")
+  // The till's own stable id; device_id is accepted as the same thing.
+  const device_uid = optionalString(body, "device_uid") || optionalString(body, "device_id")
   if (!device_uid) {
     return { license_key }
   }

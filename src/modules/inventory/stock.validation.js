@@ -1,6 +1,7 @@
 import { AppError } from "../../shared/errors/AppError.js"
 import { STOCK_MOVEMENT_REASON } from "../../db/enums.js"
 import { parseCatalogVisibility } from "../../db/channelVisibility.js"
+import { staffRefFrom } from "../../shared/utils/staff.util.js"
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -21,15 +22,16 @@ function requireProductRef(body) {
   throw new AppError("product_id must be the product number or its UUID", 400)
 }
 
-function requireUuid(body, key) {
-  const value = String(body[key] || "")
-  if (!UUID_RE.test(value)) throw new AppError(`${key} must be a UUID`, 400)
-  return value
-}
 
-function optionalUuid(body, key) {
+// A location reference: its number (e.g. 1) or UUID; location_id or locationId.
+function optionalLocationRef(body) {
+  const key = body.location_id != null && body.location_id !== "" ? "location_id" : "locationId"
   if (body[key] === undefined || body[key] === null || body[key] === "") return null
-  return requireUuid(body, key)
+  const value = String(body[key]).trim()
+  if (!(/^[1-9][0-9]*$/.test(value) || UUID_RE.test(value))) {
+    throw new AppError(key + " must be a location number or UUID", 400)
+  }
+  return value
 }
 
 export function parseCreateMovement(body) {
@@ -55,18 +57,19 @@ export function parseCreateMovement(body) {
     throw new AppError("stock_out qty must be negative", 400)
   }
 
-  if (body.expiry_date === undefined || body.expiry_date === null || body.expiry_date === "") {
-    throw new AppError("expiry_date is required", 400)
-  }
-  const expiry_date = new Date(body.expiry_date)
-  if (Number.isNaN(expiry_date.getTime())) {
-    throw new AppError("expiry_date is invalid", 400)
+  // Optional: left out, the location's current expiry date stays as it is.
+  let expiry_date
+  if (body.expiry_date !== undefined && body.expiry_date !== null && body.expiry_date !== "") {
+    expiry_date = new Date(body.expiry_date)
+    if (Number.isNaN(expiry_date.getTime())) {
+      throw new AppError("expiry_date is invalid", 400)
+    }
   }
 
   return {
     product: requireProductRef(body),
-    // Normally taken from the token; a store admin may still name another location.
-    location_id: optionalUuid(body, "location_id"),
+    // The location (number or UUID); without it the token's location is used.
+    location_id: optionalLocationRef(body),
     movement_type,
     reason,
     qty,
@@ -76,5 +79,8 @@ export function parseCreateMovement(body) {
         : String(body.reason_note).trim(),
     expiry_date,
     visibility: parseCatalogVisibility(body),
+    // Who did it (PIN-picked staff) and, for a purchase, which supplier: numbers or UUIDs.
+    staff_ref: staffRefFrom(body),
+    supplier_ref: staffRefFrom(body, ["supplier_id", "supplierId"]),
   }
 }

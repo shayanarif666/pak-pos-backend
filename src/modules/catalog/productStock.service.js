@@ -20,9 +20,11 @@ function resolveLocationId(actor, requested) {
 
 async function loadLocation(storeId, locationId) {
   if (!locationId) throw new AppError("location_id is required", 400)
-  const location = await Location.findOne({
-    where: { id: locationId, store_id: storeId },
-  })
+  // The location's UUID, or its number (1, 2, 3...) as the POS sends it.
+  const where = /^\d+$/.test(String(locationId))
+    ? { location_id_int: Number(locationId), store_id: storeId }
+    : { id: locationId, store_id: storeId }
+  const location = await Location.findOne({ where })
   if (!location) throw new NotFoundError("Location not found")
   return location
 }
@@ -105,7 +107,13 @@ export async function applyStockDelta(
   const newQty = oldQty + Number(delta)
   if (newQty < 0) throw new AppError("qty cannot be negative", 400)
 
-  const patch = { qty: newQty }
+  // unit_sold = units sold so far here: a sale (including a manual sale adjustment) adds the
+  // units that left, a refund takes back the units that came back.
+  const oldSold = row ? Number(row.unit_sold || 0) : 0
+  const soldDelta = ["sale", "refund"].includes(reason) ? -Number(delta) : 0
+  const newSold = Math.max(0, oldSold + soldDelta)
+
+  const patch = { qty: newQty, unit_sold: newSold }
   if (low_stock_threshold !== undefined) patch.low_stock_threshold = low_stock_threshold
   if (expiry_date !== undefined) patch.expiry_date = expiry_date
 
@@ -143,6 +151,7 @@ export async function applyStockDelta(
         reason_note: reason_note || null,
         qty: signed,
         qty_after: newQty,
+        unit_sold: newSold,
         staff_id: staff_id || null,
         supplier_id: supplier_id || null,
         order_id: order_id || null,

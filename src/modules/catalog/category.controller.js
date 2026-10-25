@@ -1,11 +1,14 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js"
 import { asyncHandler } from "../../shared/utils/asyncHandler.js"
 import { getStoreForManager } from "../stores/store.service.js"
-import { bulkStatus, extractBulkItems, runBulk } from "../../shared/utils/bulk.util.js"
+import { bulkStatus, posBulkResponse, extractBulkItems, runBulk } from "../../shared/utils/bulk.util.js"
 import { parseCreateCategory } from "./category.validation.js"
+import { posCategories, posCategory } from "../pos/posResponses.js"
 import * as categoryService from "./category.service.js"
+import * as posHistory from "../pos/posHistory.service.js"
 
 export const list = asyncHandler(async (req, res) => {
+  if (req.auth?.channel === "pos") return posHistory.sendPage(res, await posHistory.categories(req))
   const rows = await categoryService.listCategories(req.storeId)
   return apiResponse(res, 200, "OK", rows)
 })
@@ -19,12 +22,8 @@ export const create = asyncHandler(async (req, res) => {
   const store = await getStoreForManager(req.storeId)
   const category = await categoryService.createCategory(store, req.body)
   if (req.auth?.channel === "pos") {
-    // id here is the short category_number, not the internal UUID — this response is for POS
-    // sync bookkeeping, not for building a subsequent PATCH/DELETE /categories/:id call.
-    return apiResponse(res, 201, "Category Successfully Created", {
-      id: category.category_number,
-      name: category.name,
-    })
+    // Every field, with short numbers (id = category_number) — the POS stores the row as is.
+    return apiResponse(res, 201, "Categories Created", await posCategory(category))
   }
   return apiResponse(res, 201, "Category created", category)
 })
@@ -35,12 +34,9 @@ export const createBulk = asyncHandler(async (req, res) => {
     return categoryService.createCategory(store, parseCreateCategory(item))
   })
   if (req.auth?.channel === "pos") {
-    return apiResponse(
-      res,
-      bulkStatus(data),
-      "Categories Successfully Created",
-      data.created.map((row) => ({ id: row.category_number, name: row.name }))
-    )
+    const created = []
+    created.push(...(await posCategories(data.created)))
+    return posBulkResponse(res, data, "Categories Created", created)
   }
   return apiResponse(res, bulkStatus(data), "Bulk categories processed", data)
 })

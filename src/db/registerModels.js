@@ -6,6 +6,7 @@ import { ShippingRule } from "../modules/stores/shippingRule.model.js"
 import { StoreLicense } from "../modules/stores/storeLicense.model.js"
 import { StoreBanner } from "../modules/stores/storeBanner.model.js"
 import { PaymentMethodTaxRate } from "../modules/stores/paymentMethodTaxRate.model.js"
+import { Currency } from "../modules/stores/currency.model.js"
 import { StoreBackup } from "../modules/stores/storeBackup.model.js"
 import { Location } from "../modules/locations/location.model.js"
 import { User } from "../modules/auth/user.model.js"
@@ -13,6 +14,7 @@ import { AuthToken } from "../modules/auth/authToken.model.js"
 import { Billing } from "../modules/billings/billing.model.js"
 import { PosDevice } from "../modules/pos/posDevice.model.js"
 import { RegisterSession } from "../modules/pos/registerSession.model.js"
+import { StaffSession } from "../modules/pos/staffSession.model.js"
 import { ApprovalRequest } from "../modules/pos/approvalRequest.model.js"
 import { Category } from "../modules/catalog/category.model.js"
 import { Product } from "../modules/catalog/product.model.js"
@@ -73,6 +75,8 @@ export function registerModels() {
 
   Store.hasMany(PaymentMethodTaxRate, { foreignKey: "store_id" })
   PaymentMethodTaxRate.belongsTo(Store, { foreignKey: "store_id" })
+  Store.hasOne(Currency, { foreignKey: "store_id" })
+  Currency.belongsTo(Store, { foreignKey: "store_id" })
 
   Store.hasMany(StoreLicense, { foreignKey: "store_id" })
   StoreLicense.belongsTo(Store, { foreignKey: "store_id" })
@@ -103,6 +107,10 @@ export function registerModels() {
   RegisterSession.belongsTo(Location, { foreignKey: "location_id" })
   RegisterSession.belongsTo(User, { foreignKey: "cashier_id", as: "cashier" })
   RegisterSession.belongsTo(PosDevice, { foreignKey: "device_id", as: "device" })
+  RegisterSession.belongsTo(StaffSession, { foreignKey: "staff_session_id" })
+  StaffSession.belongsTo(Store, { foreignKey: "store_id" })
+  StaffSession.belongsTo(Location, { foreignKey: "location_id" })
+  StaffSession.belongsTo(User, { foreignKey: "user_id", as: "staff" })
 
   ApprovalRequest.belongsTo(Store, { foreignKey: "store_id" })
   ApprovalRequest.belongsTo(Location, { foreignKey: "location_id" })
@@ -239,6 +247,7 @@ export {
   StoreLicense,
   StoreBanner,
   PaymentMethodTaxRate,
+  Currency,
   StoreBackup,
   Location,
   User,
@@ -246,6 +255,7 @@ export {
   Billing,
   PosDevice,
   RegisterSession,
+  StaffSession,
   ApprovalRequest,
   Category,
   Product,

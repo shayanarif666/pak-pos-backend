@@ -7,6 +7,7 @@ import { StoreTheme } from "../stores/storeTheme.model.js"
 import { WebsiteContent } from "../stores/websiteContent.model.js"
 import { ShippingRule } from "../stores/shippingRule.model.js"
 import { PaymentMethodTaxRate } from "../stores/paymentMethodTaxRate.model.js"
+import { createDefaultCurrency } from "../stores/currency.service.js"
 import { StoreLicense } from "../stores/storeLicense.model.js"
 import { Plan } from "../plans/plan.model.js"
 import { Billing } from "../billings/billing.model.js"
@@ -29,6 +30,9 @@ import { assertUserPinAvailable } from "../auth/pin.util.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
+import { TRIAL_DAYS } from "../../db/enums.js"
+
+const DAY_MS = 24 * 60 * 60 * 1000
 import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
 
 const DEFAULT_THEME = {
@@ -152,6 +156,7 @@ async function assertDomainFree(domain, exceptStoreId, transaction) {
 }
 
 export async function registerStore(input, superadmin) {
+  const trial = input.status === "trial"
   const slug = await ensureUniqueSlug(input.name, async (candidate) => {
     const taken = await Store.findOne({ where: { slug: candidate } })
     return Boolean(taken)
@@ -159,8 +164,7 @@ export async function registerStore(input, superadmin) {
   if (!slug) throw new AppError("Store name must contain letters or numbers for a slug", 400)
 
   return sequelize.transaction(async (transaction) => {
-    // PINs are unique per location; a new store has no staff yet, and admin_pin !== manager_pin
-    // is checked in validation.
+    // A new store has no other staff yet, so the admin's PIN is free.
     const plan = await Plan.findByPk(input.plan_id, { transaction })
     if (!plan || !plan.is_active) throw new NotFoundError("Plan not found")
     if (plan.max_locations < 1) {
@@ -190,6 +194,10 @@ export async function registerStore(input, superadmin) {
         web_enabled: input.web_enabled,
         is_active: true,
         is_live: false,
+        status: trial ? "trial" : "active",
+        trial_ends_at: trial ? new Date(Date.now() + TRIAL_DAYS * DAY_MS) : null,
+        // Tax settings from the register body (tax on sales is on unless switched off).
+        ...(input.tax_settings || { charge_tax_on_sales: true }),
       },
       { transaction }
     )
@@ -231,27 +239,8 @@ export async function registerStore(input, superadmin) {
     )
     await setStoreOwner(store.id, admin.id, { transaction })
 
-    const manager = await User.create(
-      {
-        store_id: store.id,
-        store_id_int: store.store_id_int,
-        user_number: await nextUserNumber(store.id, transaction),
-        location_id: location.id,
-        location_id_int: location.location_id_int,
-        name: input.manager_name,
-        email: input.manager_email,
-        password: await hashPassword(input.manager_password),
-        pin: input.manager_pin,
-        phone: input.manager_phone,
-        role: "manager",
-        is_verified: true,
-        is_active: true,
-      },
-      { transaction }
-    )
-
     const startsAt = store.created_at || new Date()
-    const license = await issueLicense(store, plan, startsAt, { transaction })
+    const license = await issueLicense(store, plan, trial ? new Date() : startsAt, { transaction, trial })
 
     await StoreTheme.create(
       {
@@ -274,11 +263,17 @@ export async function registerStore(input, superadmin) {
         store_id: store.id,
         store_id_int: store.store_id_int,
         ...row,
+        // A rate sent in the register body replaces that method's default.
+        ...(input.tax_rates || []).find((rate) => rate.payment_method === row.payment_method),
       })),
       { transaction }
     )
+    await createDefaultCurrency(store, { transaction })
 
-    const billing = await createBilling(
+    // A trial is free: no billing until the plan is bought (renew).
+    const billing = trial
+      ? null
+      : await createBilling(
       {
         store_id: store.id,
         plan_id: plan.id,
@@ -303,7 +298,6 @@ export async function registerStore(input, superadmin) {
         phone: location.phone,
       },
       admin: publicUser(admin),
-      manager: publicUser(manager),
       license: {
         id: license.id,
         license_key: license.license_key,
@@ -411,7 +405,7 @@ export async function getStore(id) {
 
   const licenses = licenseRows.map((row) => publicLicense(row))
   const usedLicenses = licenses.filter(
-    (row) => row.status === "active" || row.status === "pending"
+    (row) => ["active", "pending", "trial"].includes(row.status)
   )
   const latestLicense = licenses[0] || null
   const kpis = {

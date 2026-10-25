@@ -66,6 +66,11 @@ export const nextLocationID = (storeId, transaction) =>
 export const nextOrderNumber = (storeId, transaction) =>
   getNextSequence(`order:${storeId}`, transaction)
 
+export const nextTransactionNumber = (storeId, transaction) =>
+  getNextSequence(`transaction:${storeId}`, transaction, {
+    restartWhenEmpty: { table: "payments", storeId },
+  })
+
 export const nextReceiptNumber = (storeId, transaction) =>
   getNextSequence(`receipt:${storeId}`, transaction)
 
@@ -74,6 +79,11 @@ export const nextUserNumber = (storeId, transaction) =>
 
 export const nextDeviceNumber = (storeId, transaction) =>
   getNextSequence(`device:${storeId}`, transaction)
+
+export const nextStaffSessionNumber = (storeId, transaction) =>
+  getNextSequence(`staff_session:${storeId}`, transaction, {
+    restartWhenEmpty: { table: "staff_sessions", storeId },
+  })
 
 export const nextSessionNumber = (storeId, transaction) =>
   getNextSequence(`register_session:${storeId}`, transaction, {

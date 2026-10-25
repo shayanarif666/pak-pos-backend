@@ -1,9 +1,11 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js"
 import { asyncHandler } from "../../shared/utils/asyncHandler.js"
 import * as storeService from "./store.service.js"
+import { posView } from "../pos/posHistory.service.js"
 
 export const getMyStore = asyncHandler(async (req, res) => {
   const store = await storeService.getMyStoreView(req.storeId)
+  if (req.auth?.channel === "pos") return apiResponse(res, 200, "OK", posView(store, "store_number"))
   return apiResponse(res, 200, "OK", store)
 })
 

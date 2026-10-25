@@ -34,10 +34,16 @@ async function findVisibleStaff(actor, id) {
   return user
 }
 
+// locationId: the location number (e.g. 1) or its UUID.
 async function resolveLocation(storeId, locationId) {
   if (!locationId) throw new AppError("location_id is required", 400)
+  const ref = String(locationId)
   const location = await Location.findOne({
-    where: { id: locationId, store_id: storeId, is_active: true },
+    where: {
+      ...(/^[0-9]+$/.test(ref) ? { location_id_int: Number(ref) } : { id: ref }),
+      store_id: storeId,
+      is_active: true,
+    },
   })
   if (!location) throw new NotFoundError("Location not found")
   return location
@@ -76,10 +82,11 @@ export async function createStaff(actor, input) {
 
   let location
   if (actor.role === "manager") {
-    if (input.location_id && input.location_id !== actor.location_id) {
+    location = await resolveLocation(actor.store_id, actor.location_id)
+    // A manager may name their own location (number or UUID), never another one.
+    if (input.location_id && (await resolveLocation(actor.store_id, input.location_id)).id !== location.id) {
       throw new ForbiddenError("Managers can only add staff at their location")
     }
-    location = await resolveLocation(actor.store_id, actor.location_id)
   } else {
     location = await resolveLocation(actor.store_id, input.location_id || actor.location_id)
   }

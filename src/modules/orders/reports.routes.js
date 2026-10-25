@@ -5,7 +5,16 @@ import {
   requireTenantStore,
   tenantMiddleware,
 } from "../../shared/middlewares/tenant.middleware.js"
-import { breakdown, dashboard, exportOne, payments, profit, sales } from "./reports.controller.js"
+import {
+  allLocations,
+  breakdown,
+  dashboard,
+  exportOne,
+  location,
+  payments,
+  profit,
+  sales,
+} from "./reports.controller.js"
 
 const router = Router()
 const staff = [
@@ -16,6 +25,16 @@ const staff = [
 ]
 
 router.get("/breakdown", ...staff, breakdown)
+// Every location together (store admin only) / one location by locationId.
+router.get(
+  "/all-locations",
+  authMiddleware,
+  tenantMiddleware,
+  requireTenantStore,
+  authorize("store_admin"),
+  allLocations
+)
+router.get("/location", ...staff, location)
 router.get("/dashboard", ...staff, dashboard)
 router.get("/sales", ...staff, sales)
 router.get("/payments", ...staff, payments)

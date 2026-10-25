@@ -1,6 +1,8 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js"
 import { asyncHandler } from "../../shared/utils/asyncHandler.js"
 import * as sessionService from "./registerSession.service.js"
+import { resolveStaff } from "../../shared/utils/staff.util.js"
+import * as posHistory from "./posHistory.service.js"
 
 function actorFromReq(req) {
   const user = req.user
@@ -19,11 +21,13 @@ function actorFromReq(req) {
 }
 
 export const list = asyncHandler(async (req, res) => {
+  if (req.auth?.channel === "pos") return posHistory.sendPage(res, await posHistory.batches(req))
   const data = await sessionService.listSessions(actorFromReq(req), req.query)
   return apiResponse(res, 200, "OK", data)
 })
 
 export const current = asyncHandler(async (req, res) => {
+  if (req.auth?.channel === "pos") return apiResponse(res, 200, "OK", await posHistory.currentBatch(req))
   const data = await sessionService.getCurrentSession(actorFromReq(req), req.query)
   return apiResponse(res, 200, "OK", data)
 })
@@ -33,12 +37,20 @@ export const getOne = asyncHandler(async (req, res) => {
   return apiResponse(res, 200, "OK", data)
 })
 
-export const clockIn = asyncHandler(async (req, res) => {
-  const data = await sessionService.clockIn(actorFromReq(req), req.body)
-  return apiResponse(res, 201, "Clocked in", data)
+async function batchStaff(req, actor) {
+  return resolveStaff(actor.store_id, req.body.staff_ref, req.user)
+}
+
+export const openBatch = asyncHandler(async (req, res) => {
+  const actor = actorFromReq(req)
+  const { staff_ref: _ref, ...fields } = req.body
+  const data = await sessionService.openBatch(actor, await batchStaff(req, actor), fields)
+  return apiResponse(res, 201, "Batch Open", data)
 })
 
-export const clockOut = asyncHandler(async (req, res) => {
-  const data = await sessionService.clockOut(actorFromReq(req), req.params.id, req.body)
-  return apiResponse(res, 200, "Clocked out", data)
+export const closeBatch = asyncHandler(async (req, res) => {
+  const actor = actorFromReq(req)
+  const { staff_ref: _ref, ...fields } = req.body
+  const data = await sessionService.closeBatch(actor, await batchStaff(req, actor), fields)
+  return apiResponse(res, 200, "Batch Closed", data)
 })

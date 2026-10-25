@@ -14,6 +14,8 @@ import licenseRoutes from "../modules/stores/license.routes.js"
 import storeBillingRoutes from "../modules/billings/billing.routes.js"
 import bannerRoutes from "../modules/stores/banner.routes.js"
 import taxRateRoutes from "../modules/stores/taxRate.routes.js"
+import currencyRoutes from "../modules/stores/currency.routes.js"
+import transactionRoutes from "../modules/payments/transaction.routes.js"
 import backupRoutes from "../modules/stores/backup.routes.js"
 import posDeviceRoutes from "../modules/pos/posDevice.routes.js"
 import customerRoutes from "../modules/customers/customer.routes.js"
@@ -23,6 +25,7 @@ import stockTransferRoutes from "../modules/inventory/transfer.routes.js"
 import offerRoutes from "../modules/offers/offer.routes.js"
 import couponRoutes from "../modules/coupons/coupon.routes.js"
 import registerSessionRoutes from "../modules/pos/registerSession.routes.js"
+import staffSessionRoutes from "../modules/pos/staffSession.routes.js"
 import {
   approvalOverrideRoutes,
   approvalRequestRoutes,
@@ -49,6 +52,7 @@ router.use("/billings", storeBillingRoutes)
 router.use("/stores", storeRoutes)
 router.use("/store-banners", bannerRoutes)
 router.use("/tax-rates", taxRateRoutes)
+router.use("/currency", currencyRoutes)
 router.use("/store-backups", backupRoutes)
 router.use("/pos-devices", posDeviceRoutes)
 router.use("/locations", locationRoutes)
@@ -63,10 +67,13 @@ router.use("/stock-transfers", stockTransferRoutes)
 router.use("/offers", offerRoutes)
 router.use("/coupons", couponRoutes)
 router.use("/register-sessions", registerSessionRoutes)
+router.use("/batches", registerSessionRoutes)
+router.use("/staff-sessions", staffSessionRoutes)
 router.use("/approval-requests", approvalRequestRoutes)
 router.use("/approvals", approvalOverrideRoutes)
 router.use("/orders", orderRoutes)
 router.use("/payments", paymentRoutes)
+router.use("/transactions", transactionRoutes)
 router.use("/receipts", receiptRoutes)
 router.use("/cart", cartRoutes)
 router.use("/addresses", addressRoutes)

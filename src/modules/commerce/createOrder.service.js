@@ -73,9 +73,9 @@ export function publicOrder(order, extras = {}) {
     coupon_code: json.coupon_code,
     coupon_discount_amount: coupon_discount,
     tax_amount,
-    default_tax_rate:
-      json.default_tax_rate == null ? null : Number(json.default_tax_rate),
-    default_tax_amount: Number(json.default_tax_amount || 0),
+    sales_tax_rate:
+      json.sales_tax_rate == null ? null : Number(json.sales_tax_rate),
+    sales_tax_amount: Number(json.sales_tax_amount || 0),
     product_tax_amount: Number(json.product_tax_amount || 0),
     category_tax_amount: Number(json.category_tax_amount || 0),
     payment_gst_amount: Number(json.payment_gst_amount || 0),
@@ -127,10 +127,8 @@ export function publicOrderItem(item) {
     tax_amount,
     product_tax_amount: Number(json.product_tax_amount || 0),
     category_tax_amount: Number(json.category_tax_amount || 0),
-    default_tax_amount: Number(json.default_tax_amount || 0),
-    product_tax_type: json.product_tax_type || null,
-    product_tax_value:
-      json.product_tax_value == null ? null : Number(json.product_tax_value),
+    sales_tax_amount: Number(json.sales_tax_amount || 0),
+    product_taxes: Array.isArray(json.product_taxes) ? json.product_taxes : [],
     category_tax_type: json.category_tax_type || null,
     category_tax_value:
       json.category_tax_value == null ? null : Number(json.category_tax_value),
@@ -252,8 +250,9 @@ export async function createOrder(actor, input) {
   const offline =
     channel === "pos" &&
     (Boolean(input.offline) || syncedAt.getTime() - placedAt.getTime() > OFFLINE_AFTER_MS)
-  // Syncing sales made without internet is a Package 2 / 3 feature.
-  if (offline) await assertPlan(store, "offline_enabled")
+  // Offline sync used to be a Package 2 / 3 feature; /orders/bulk is now the POS's only way to
+  // send sales, so it is open on every plan (offline only marks synced_at).
+  // if (offline) await assertPlan(store, "offline_enabled")
 
   return sequelize.transaction(async (transaction) => {
     const existing = await loadExisting(store.id, client_local_id, transaction)
@@ -319,11 +318,12 @@ export async function createOrder(actor, input) {
           throw new AppError("Custom lines require unit_price", 400)
         }
         const line = priceCustomLine(item)
+        line.custom_category = item.custom_category || null
         Object.assign(
           line,
           input.tax_exempt
             ? lineTaxBreakdown({ ...store, charge_tax_on_sales: false }, null, null, 0)
-            : lineTaxBreakdown(store, null, null, line.subtotal)
+            : lineTaxBreakdown(store, null, null, line.subtotal, line.quantity)
         )
         return line
       }
@@ -343,7 +343,7 @@ export async function createOrder(actor, input) {
         line,
         input.tax_exempt
           ? lineTaxBreakdown({ ...store, charge_tax_on_sales: false }, null, null, 0)
-          : lineTaxBreakdown(store, product, product.Category, line.subtotal)
+          : lineTaxBreakdown(store, product, product.Category, line.subtotal, line.quantity)
       )
       return line
     })
@@ -371,7 +371,8 @@ export async function createOrder(actor, input) {
               store,
               null,
               null,
-              money(Number(line.subtotal) * taxableShare)
+              money(Number(line.subtotal) * taxableShare),
+              line.quantity
             )
           )
           continue
@@ -383,7 +384,8 @@ export async function createOrder(actor, input) {
             store,
             product,
             product?.Category,
-            money(Number(line.subtotal) * taxableShare)
+            money(Number(line.subtotal) * taxableShare),
+            line.quantity
           )
         )
       }
@@ -489,16 +491,16 @@ export async function createOrder(actor, input) {
           coupon_code: coupon?.code || null,
           coupon_discount_amount: totals.coupon_discount_amount,
           tax_amount: totals.tax_amount,
-          default_tax_rate: totals.default_tax_rate,
-          default_tax_amount: totals.default_tax_amount,
+          sales_tax_rate: totals.sales_tax_rate,
+          sales_tax_amount: totals.sales_tax_amount,
           product_tax_amount: totals.product_tax_amount,
           category_tax_amount: totals.category_tax_amount,
           payment_gst_amount: totals.payment_gst_amount,
           fbr_invoice_enabled: totals.fbr_invoice_enabled,
           fbr_tax_amount: totals.fbr_tax_amount,
           tax_breakdown: {
-            default_tax_rate: totals.default_tax_rate,
-            default_tax_amount: totals.default_tax_amount,
+            sales_tax_rate: totals.sales_tax_rate,
+            sales_tax_amount: totals.sales_tax_amount,
             product_tax_amount: totals.product_tax_amount,
             category_tax_amount: totals.category_tax_amount,
             payment_gst_amount: totals.payment_gst_amount,
@@ -538,6 +540,7 @@ export async function createOrder(actor, input) {
         ...visibilityFromOrderChannel(channel),
         product_id: line.product_id,
         title: line.title,
+        custom_category: line.custom_category || null,
         sku: line.sku,
         barcode: line.barcode,
         unit: line.unit,
@@ -551,9 +554,8 @@ export async function createOrder(actor, input) {
         tax_amount: line.tax_amount,
         product_tax_amount: line.product_tax_amount || 0,
         category_tax_amount: line.category_tax_amount || 0,
-        default_tax_amount: line.default_tax_amount || 0,
-        product_tax_type: line.product_tax_type || null,
-        product_tax_value: line.product_tax_value ?? null,
+        sales_tax_amount: line.sales_tax_amount || 0,
+        product_taxes: line.product_taxes || [],
         category_tax_type: line.category_tax_type || null,
         category_tax_value: line.category_tax_value ?? null,
         subtotal: line.subtotal,
@@ -621,6 +623,8 @@ export async function createOrder(actor, input) {
           currency: store.currency || "PKR",
           status: isWeb ? "initiated" : "success",
           paid_at: isWeb ? null : syncedAt,
+          // The till's card / wallet reference, if sent; transaction_number is set by the model.
+          gateway_transaction_id: row.transaction_id || null,
         },
         { transaction }
       )

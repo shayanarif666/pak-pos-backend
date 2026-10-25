@@ -47,38 +47,23 @@ export function publicUser(user, { includePin = false } = {}) {
     location_number: user.location_id_int,
     is_verified: user.is_verified,
     is_active: user.is_active,
-    status: user.status,
     last_login_at: user.last_login_at,
+    created_at: user.created_at,
   }
 }
 
-/**
- * On-duty flag for store staff: "clock_in" after login / register clock-in, "clock_out" after
- * logout / register clock-out. Super Admins and customers are not tracked.
- */
-export async function setStaffClockStatus(userOrId, status, { transaction } = {}) {
-  const user =
-    typeof userOrId === "string"
-      ? await User.findByPk(userOrId, { attributes: ["id", "role", "status"], transaction })
-      : userOrId
-  if (!user || !STAFF_ROLES.has(user.role) || user.status === status) return
-  await User.update({ status }, { where: { id: user.id }, transaction })
-  user.status = status
-}
-
-// POS login's user block: store_id/store_number/location_id/location_number dropped here since
-// the same info (as short numbers) already lives at the top level via buildPosLicenseSummary().
-function publicPosUser(user) {
+// POS shape of a staff member (login user, users[] and PIN verify): short user number as id,
+// the plain PIN (the till checks cashiers offline) and the store's trial / active status.
+export function publicPosStaff(user, store, { withLocation = false, locationNumber = null } = {}) {
   return {
     id: user.user_number,
+    ...(withLocation ? { locationId: locationNumber } : {}),
     name: user.name,
     email: user.email,
-    phone: user.phone,
+    pin: user.pin || null,
     role: user.role,
-    is_verified: user.is_verified,
+    phone: user.phone,
     is_active: user.is_active,
-    status: user.status,
-    last_login_at: user.last_login_at,
   }
 }
 
@@ -138,95 +123,100 @@ async function devicesForLocation(storeId, locationId) {
   return rows.map(publicDevice)
 }
 
-// Compact store/location summary for a POS-channel login — no license detail at all (that's
-// POST /licenses/validate's job now), no top-level store_id/location_id scalars, no plan. Kept
-// separate from publicLicense()/licenseExtras() (dashboard's own, fuller license views) so this
-// stays a small, stable shape for the POS client specifically.
-async function buildPosLicenseSummary(pos, user) {
-  if (!pos?.license_id) return null
-  const [license, store] = await Promise.all([
-    StoreLicense.findByPk(pos.license_id, { attributes: ["id"] }),
-    Store.findByPk(user.store_id, {
-      attributes: ["store_id_int", "name", "slug", "default_location_id"],
-    }),
-  ])
-  if (!license || !store) return null
+const posLocation = (row) => ({ id: row.location_id_int, name: row.name, address: row.address_line || "" })
 
-  const storeSummary = { id: store.store_id_int, name: store.name, slug: store.slug }
-  // The store admin works across every location (they pick one per request with the
-  // X-Location-Id header), so their login carries no single location, but it lists them all
-  // together with every manager and cashier so the till can switch staff by PIN.
+/**
+ * POS login (store admin / manager): the store with its trial / active status, the location(s)
+ * and the staff the till may switch to by PIN, all with the short numbers the POS works with.
+ * - Store admin: locations[] (every active location) and users[] (every manager and cashier,
+ *   each with locationId).
+ * - Manager: location{} (their own) and users[] (the cashiers of that location).
+ */
+async function posLoginBody(pos, user) {
+  const body = await buildPosLogin(pos, user)
+  if (!body) return { user: publicPosStaff(user, null) }
+  const store = await Store.findByPk(user.store_id, { attributes: ["id", "status"] })
+  return { user: publicPosStaff(user, store), ...body }
+}
+
+async function buildPosLogin(pos, user) {
+  if (!pos?.license_id) return null
+  const store = await Store.findByPk(user.store_id, {
+    attributes: ["id", "store_id_int", "name", "status", "trial_ends_at", "default_location_id"],
+  })
+  if (!store) return null
+  const storeSummary = {
+    id: store.store_id_int,
+    name: store.name,
+    status: store.status,
+    trial_ended_at: store.trial_ends_at,
+  }
+
   if (user.role === "store_admin") {
-    return { store: storeSummary, ...(await posStaffDirectory(user.store_id, null)) }
+    const locations = await Location.findAll({
+      where: { store_id: store.id, is_active: true },
+      attributes: ["id", "location_id_int", "name", "address_line"],
+      order: [["location_id_int", "ASC"]],
+    })
+    const numberOf = new Map(locations.map((row) => [row.id, row.location_id_int]))
+    const users = numberOf.size
+      ? await User.findAll({
+          where: {
+            store_id: store.id,
+            is_active: true,
+            role: { [Op.in]: ["manager", "cashier"] },
+            location_id: { [Op.in]: [...numberOf.keys()] },
+          },
+          order: [["user_number", "ASC"]],
+        })
+      : []
+    return {
+      store: storeSummary,
+      locations: locations.map(posLocation),
+      users: users.map((row) =>
+        publicPosStaff(row, store, { withLocation: true, locationNumber: numberOf.get(row.location_id) })
+      ),
+    }
   }
 
   const locationId = user.location_id || store.default_location_id
   const location = locationId
-    ? await Location.findByPk(locationId, { attributes: ["location_id_int", "name"] })
+    ? await Location.findByPk(locationId, { attributes: ["id", "location_id_int", "name", "address_line"] })
     : null
-
-  // A manager sees the other managers and the cashiers of their own location (not themself);
-  // a cashier only themself (a manager's PIN unlocks approvals, so it is not handed to cashiers).
-  // The directory's locations[] would only repeat this one location, so it is left out:
-  // managers and cashiers get location{}, the store admin gets locations[].
-  const { users } = locationId
-    ? await posStaffDirectory(
-        user.store_id,
-        locationId,
-        user.role === "cashier" ? { onlyUserId: user.id } : { excludeUserId: user.id }
-      )
-    : { users: [] }
-
+  const cashiers = location
+    ? await User.findAll({
+        where: { store_id: store.id, is_active: true, role: "cashier", location_id: location.id },
+        order: [["user_number", "ASC"]],
+      })
+    : []
   return {
     store: storeSummary,
-    location: location ? { id: location.location_id_int, name: location.name } : null,
-    users,
+    location: location ? posLocation(location) : null,
+    users: cashiers.map((row) => publicPosStaff(row, store)),
   }
 }
 
 /**
- * POS login lists: locations [{ id, name }] and users [{ id, name, role, pin, location_id }],
- * all ids being the store-level numbers (location_number / user_number) the POS works with.
- * locationId null = every active location of the store; onlyUserId limits users to that one,
- * excludeUserId leaves that one out (the signed-in manager).
+ * PIN verification on a signed-in till: finds the active staff member (cashier, manager or the
+ * store admin) with this PIN at the request's location. PINs are unique per location; the store
+ * admin's PIN works at any of the store's locations.
  */
-async function posStaffDirectory(storeId, locationId, { onlyUserId = null, excludeUserId = null } = {}) {
-  const locationWhere = { store_id: storeId, is_active: true }
-  if (locationId) locationWhere.id = locationId
-  const locations = await Location.findAll({
-    where: locationWhere,
-    attributes: ["id", "location_id_int", "name"],
-    order: [["location_id_int", "ASC"]],
+export async function verifyPin(actor, pin) {
+  const value = String(pin ?? "").trim()
+  if (!value) throw new AppError("pin is required", 400)
+  const matches = await User.findAll({
+    where: {
+      store_id: actor.store_id,
+      pin: value,
+      is_active: true,
+      role: { [Op.in]: [...STAFF_ROLES] },
+    },
   })
-  const numberOf = new Map(locations.map((row) => [row.id, row.location_id_int]))
-
-  const userWhere = {
-    store_id: storeId,
-    is_active: true,
-    role: { [Op.in]: ["manager", "cashier"] },
-    location_id: { [Op.in]: [...numberOf.keys()] },
-  }
-  if (onlyUserId) userWhere.id = onlyUserId
-  else if (excludeUserId) userWhere.id = { [Op.ne]: excludeUserId }
-  const users = numberOf.size
-    ? await User.findAll({
-        where: userWhere,
-        attributes: ["id", "user_number", "name", "role", "pin", "location_id", "status"],
-        order: [["user_number", "ASC"]],
-      })
-    : []
-
-  return {
-    locations: locations.map((row) => ({ id: row.location_id_int, name: row.name })),
-    users: users.map((row) => ({
-      id: row.user_number,
-      name: row.name,
-      role: row.role,
-      pin: row.pin || null,
-      status: row.status,
-      location_id: numberOf.get(row.location_id) ?? null,
-    })),
-  }
+  const here = matches.filter((row) => row.location_id && row.location_id === actor.location_id)
+  const staff = here[0] || matches.find((row) => row.role === "store_admin")
+  if (!staff) throw new UnauthorizedError("Invalid PIN")
+  const store = await Store.findByPk(actor.store_id, { attributes: ["id", "status"] })
+  return publicPosStaff(staff, store)
 }
 
 async function buildStaffSession(user) {
@@ -454,41 +444,6 @@ async function findUserByEmailPassword(email, password) {
   return matches[0] || null
 }
 
-// PINs are unique per location (see pin.util.js), so the same PIN can belong to staff at other
-// locations or stores. When it does, the till the login comes from (device_id / device_uid,
-// bound on license activation) picks its store and location.
-async function findUserByPin(pin, { deviceId, deviceUid } = {}) {
-  const matches = await User.findAll({
-    where: { pin, is_active: true, role: { [Op.in]: [...STAFF_ROLES] } },
-  })
-  if (matches.length <= 1) return matches[0] || null
-
-  let candidates = []
-  if (deviceId || deviceUid) {
-    const where = {
-      store_id: { [Op.in]: [...new Set(matches.map((user) => user.store_id))] },
-      is_active: true,
-    }
-    if (deviceId) where.id = deviceId
-    else where.device_uid = deviceUid
-    const devices = await PosDevice.findAll({ where })
-    for (const device of devices) {
-      const inStore = matches.filter((user) => user.store_id === device.store_id)
-      if (!device.location_id) {
-        candidates.push(...inStore)
-        continue
-      }
-      // Staff of the till's own location first; the store admin may sign in at any till.
-      const here = inStore.filter((user) => user.location_id === device.location_id)
-      candidates.push(...(here.length ? here : inStore.filter((u) => u.role === "store_admin")))
-    }
-  }
-  if (candidates.length === 1) return candidates[0]
-  throw new ConflictError(
-    "This PIN is used at more than one location. Sign in from this location's till (send the X-Device-Uid header)"
-  )
-}
-
 /**
  * POS sign-in only needs credentials. The store must be active, have POS enabled and hold an
  * activated license (devices are bound to the license on POST /licenses/validate).
@@ -500,11 +455,11 @@ async function resolveStorePosLicense(user) {
   if (!store.pos_enabled) throw new AppError("POS is disabled for this store", 403)
 
   const licenses = await StoreLicense.findAll({
-    where: { store_id: store.id, status: { [Op.in]: ["active", "pending"] } },
+    where: { store_id: store.id, status: { [Op.in]: ["active", "trial", "pending"] } },
     order: [["expires_at", "DESC"]],
   })
   for (const license of licenses) {
-    if (license.status !== "active") continue
+    if (!["active", "trial"].includes(license.status)) continue
     if (isExpired(license.expires_at)) {
       await license.update({ status: "expired" })
       continue
@@ -529,10 +484,13 @@ async function resolveLoginDevice(storeId, { deviceId, deviceUid }) {
 }
 
 async function resolveLoginUser(input) {
-  const user = input.pin
-    ? await findUserByPin(input.pin, { deviceId: input.device_id, deviceUid: input.device_uid })
-    : await findUserByEmailPassword(input.email, input.password)
+  const user = await findUserByEmailPassword(input.email, input.password)
   if (!user) throw new UnauthorizedError("Invalid credentials")
+  // Only a store admin or manager signs in (and so holds a token); a cashier is checked by PIN
+  // on a signed-in till.
+  if (user.role === "cashier") {
+    throw new AppError("Cashiers do not sign in with email. Verify the cashier by PIN on the till", 403)
+  }
 
   if (input.channel !== "pos") return { user, channel: input.channel }
 
@@ -550,20 +508,12 @@ async function resolveLoginUser(input) {
   return { user, channel: "pos", pos }
 }
 
-async function verifyCredentials(user, { password, pin }) {
+async function verifyCredentials(user, { password }) {
   if (!user || !user.is_active) {
     throw new UnauthorizedError("Invalid credentials")
   }
-
-  if (password) {
-    const ok = await comparePassword(password, user.password)
-    if (!ok) throw new UnauthorizedError("Invalid credentials")
-    return
-  }
-
-  if (!user.pin || user.pin !== pin) {
-    throw new UnauthorizedError("Invalid credentials")
-  }
+  const ok = await comparePassword(password, user.password)
+  if (!ok) throw new UnauthorizedError("Invalid credentials")
 }
 
 /**
@@ -579,10 +529,10 @@ export async function assertPosSessionUsable(storeId, { license_id, device_id })
   if (!store || !store.is_active) throw new UnauthorizedError("Store is suspended")
   if (!store.pos_enabled) throw new UnauthorizedError("POS is disabled for this store")
   if (!license) throw new UnauthorizedError("POS license not found")
-  if (license.status === "active" && isExpired(license.expires_at)) {
+  if (["active", "trial"].includes(license.status) && isExpired(license.expires_at)) {
     await license.update({ status: "expired" })
   }
-  if (license.status !== "active") {
+  if (!["active", "trial"].includes(license.status)) {
     throw new UnauthorizedError(`POS license is ${license.status}`)
   }
   if (device_id && (!device || !device.is_active)) {
@@ -604,11 +554,7 @@ export async function login(input, meta = {}) {
 
   const last_login_at = new Date()
   const tokens = await startSession(user, { pos, channel, meta })
-  await user.update({
-    last_login_at,
-    // Store staff are on duty from the moment they sign in (email or PIN, POS or dashboard).
-    ...(STAFF_ROLES.has(user.role) ? { status: "clock_in" } : {}),
-  })
+  await user.update({ last_login_at })
   user.last_login_at = last_login_at
 
   await writeAudit({
@@ -630,11 +576,9 @@ export async function login(input, meta = {}) {
     // the response, since a 10-year access token never needs renewing. Still generated and
     // tracked server-side via UserSession for revocation; it's just not surfaced here.
     ...(pos ? { token: tokens.access_token } : tokens),
-    user: pos ? publicPosUser(user) : publicUser(user),
-    // POS gets a store{}/location{} summary onto data (no license detail — that's
-    // POST /licenses/validate's job) instead of the dashboard's heavier store-settings +
-    // locations-array shape from buildStaffSession().
-    ...(pos ? await buildPosLicenseSummary(pos, user) : await buildStaffSession(user)),
+    // POS: the store (with trial / active), location(s) and PIN-switchable staff; the dashboard
+    // keeps its fuller store-settings + locations shape from buildStaffSession().
+    ...(pos ? await posLoginBody(pos, user) : { user: publicUser(user), ...(await buildStaffSession(user)) }),
   }
 }
 
@@ -693,7 +637,6 @@ export async function logout(user, meta = {}) {
       { where: { id: meta.sid, user_id: user.id } }
     )
   }
-  await setStaffClockStatus(user, "clock_out")
   await writeAudit({
     action: "logout",
     entity_type: "users",
@@ -708,7 +651,7 @@ export async function logout(user, meta = {}) {
   })
 
   // Same short id as the login response (the store-level user number).
-  return { id: user.user_number ?? null, status: user.status }
+  return { id: user.user_number ?? null }
 }
 
 export async function getMe(user) {
