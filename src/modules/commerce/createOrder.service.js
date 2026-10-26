@@ -199,7 +199,7 @@ const MAX_OFFLINE_AGE_MS = 30 * 24 * 60 * 60 * 1000
 
 /** Offline POS sales keep the time they were rung up, not the time they reached the server. */
 function resolvePlacedAt(input, now) {
-  if (!input.client_local_id || !input.placed_at) return now
+  if (!input.placed_at) return now
   const at = new Date(input.placed_at)
   if (Number.isNaN(at.getTime())) throw new AppError("placed_at is not a valid date", 400)
   if (at.getTime() > now.getTime() + 5 * 60 * 1000) {
@@ -211,23 +211,8 @@ function resolvePlacedAt(input, now) {
   return at
 }
 
-const SUMMARY_TOLERANCE = 0.01
-
-/**
- * The till works out the bill itself (it prints the receipt, even offline) and may send its totals
- * in summary. The server prices the order again; when a sent figure differs by more than a paisa
- * the order is refused with both figures, so a wrong receipt never reaches the books.
- */
-function assertSummaryMatches(summary, server) {
-  if (!summary) return
-  const wrong = Object.entries(summary)
-    .filter(([key, value]) => Math.abs(Number(value) - Number(server[key] ?? 0)) > SUMMARY_TOLERANCE)
-    .map(([key, value]) => `${key} sent ${value}, expected ${money(server[key] ?? 0)}`)
-  if (wrong.length) throw new AppError(`Order totals do not match: ${wrong.join("; ")}`, 400)
-}
-
 export async function createOrder(actor, input) {
-  const channel = String(input.channel || "")
+  const channel = String(input.channel || "pos")
   if (!ORDER_CHANNEL.includes(channel)) {
     throw new AppError("channel must be web or pos", 400)
   }
@@ -453,11 +438,6 @@ export async function createOrder(actor, input) {
       fbr_tax_amount: preGst.fbr_invoice_enabled && !input.tax_exempt ? money(preGst.line_tax + split.gst) : 0,
       total_amount: money(preGst.total_amount + split.gst),
     }
-    assertSummaryMatches(input.summary, {
-      ...totals,
-      bill_before_payment_tax: preGst.total_amount,
-      payment_tax_amount: split.gst,
-    })
     const isWeb = channel === "web"
 
     let customer = null

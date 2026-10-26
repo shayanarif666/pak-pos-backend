@@ -79,32 +79,6 @@ function optionalMoney(body, key) {
   return value
 }
 
-// The till's own totals, checked against the server's (all optional).
-const SUMMARY_KEYS = [
-  "subtotal",
-  "product_tax_amount",
-  "category_tax_amount",
-  "sales_tax_amount",
-  "bill_before_payment_tax",
-  "payment_tax_amount",
-  "tax_amount",
-  "total_amount",
-]
-
-function parseSummary(body) {
-  const source = body.summary && typeof body.summary === "object" ? body.summary : {}
-  const summary = {}
-  for (const key of SUMMARY_KEYS) {
-    const value = source[key]
-    if (value === undefined || value === null || value === "") continue
-    if (Number.isNaN(Number(value))) throw new AppError(`summary.${key} must be a number`, 400)
-    summary[key] = Number(value)
-  }
-  const total = body.total_amount ?? body.totalAmount
-  if (summary.total_amount === undefined && total != null && total !== "") summary.total_amount = Number(total)
-  return Object.keys(summary).length ? summary : null
-}
-
 // amount_paid per method ([{ method, paid }]) becomes each payment's paid.
 function withPaid(payments, amountPaid) {
   if (!Array.isArray(amountPaid)) return payments
@@ -118,7 +92,7 @@ function withPaid(payments, amountPaid) {
 }
 
 export function parseCreateOrder(body) {
-  const channel = String(body.channel || "")
+  const channel = String(body.channel || "pos")
   if (!ORDER_CHANNEL.includes(channel)) {
     throw new AppError("channel must be web or pos", 400)
   }
@@ -161,7 +135,6 @@ export function parseCreateOrder(body) {
       body.order_discount_value == null ? undefined : Number(body.order_discount_value),
     tax_exempt: Boolean(body.tax_exempt),
     amount_paid: Array.isArray(body.amount_paid) || body.amount_paid == null || body.amount_paid === "" ? undefined : Number(body.amount_paid),
-    summary: parseSummary(body),
     approval_request_id: optionalUuid(body, "approval_request_id"),
     // Offline POS: when the sale was rung up on the device (ISO date-time).
     placed_at: optionalString(body, "placed_at"),
