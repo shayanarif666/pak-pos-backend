@@ -5,6 +5,7 @@ import { OfferLocation } from "../offers/offerLocation.model.js"
 import { ProductBulkTier } from "../catalog/productBulkTier.model.js"
 import { PaymentMethodTaxRate } from "../stores/paymentMethodTaxRate.model.js"
 import { getShipping } from "../stores/store.service.js"
+import { AppError } from "../../shared/errors/AppError.js"
 
 export function money(value) {
   return Number(Number(value || 0).toFixed(2))
@@ -320,6 +321,93 @@ export function paymentGst(store, rates, method, taxableShare) {
   const row = (rates || []).find((rate) => rate.payment_method === method)
   if (!row) return 0
   return applyDiscount(taxableShare, "percentage", row.gst_percent)
+}
+
+/**
+ * Payment-method GST on a split bill. The bill before payment tax (pre_gst) is shared between
+ * the payments; each method's tax is on its own share only:
+ *   amount (what the method pays toward the bill) = bill_share + bill_share × gst_percent%
+ * A row's share is its bill_share; without one, a card / wallet row's amount is taken as already
+ * including its tax (share = amount ÷ (1 + rate)), and the first cash row (or a lone row) covers
+ * what is left. Only cash can be overpaid: paid − amount is its change. A share not covered by
+ * any payment is left as credit (no payment tax on it).
+ */
+export function splitPaymentTax({ store, taxRates, preGst, payments, paymentMethod, taxExempt = false }) {
+  const enabled = !taxExempt && Boolean(store.charge_tax_on_sales) && store.payment_tax_enabled !== false
+  const percentOf = (method) =>
+    enabled ? Number((taxRates || []).find((rate) => rate.payment_method === method)?.gst_percent || 0) : 0
+  const rows = payments?.length
+    ? payments
+    : paymentMethod && paymentMethod !== "mixed"
+      ? [{ method: paymentMethod }]
+      : []
+
+  // The row that covers the rest of the bill: the first cash row without a bill_share, else a lone row.
+  let rest = rows.findIndex((row) => row.method === "cash" && row.bill_share == null)
+  if (rest < 0 && rows.length === 1 && rows[0].bill_share == null) rest = 0
+
+  const splits = rows.map((row, index) => {
+    const gst_percent = percentOf(row.method)
+    if (index === rest) return { row, gst_percent, bill_share: null, gst_amount: null }
+    if (row.bill_share != null) {
+      const bill_share = money(row.bill_share)
+      return { row, gst_percent, bill_share, gst_amount: money((bill_share * gst_percent) / 100) }
+    }
+    const amount = money(row.amount)
+    const bill_share = money(amount / (1 + gst_percent / 100))
+    return { row, gst_percent, bill_share, gst_amount: money(amount - bill_share) }
+  })
+  const fixed = money(splits.reduce((sum, split) => sum + (split.bill_share ?? 0), 0))
+  if (fixed > money(preGst) + 0.01) {
+    throw new AppError("Payments are more than the bill; only cash can be overpaid", 400)
+  }
+  if (rest >= 0) {
+    const bill_share = money(Math.max(0, preGst - fixed))
+    splits[rest].bill_share = bill_share
+    splits[rest].gst_amount = money((bill_share * splits[rest].gst_percent) / 100)
+  }
+
+  const result = splits.map((split, index) => {
+    const { row, gst_percent } = split
+    let { bill_share, gst_amount } = split
+    let amount = money(bill_share + gst_amount)
+    // The rest row handed over less than the rest of the bill: it pays only that, the remainder is credit.
+    const handed = row.paid ?? row.amount
+    if (index === rest && handed != null && Number(handed) + 0.01 < amount) {
+      amount = money(handed)
+      bill_share = money(amount / (1 + gst_percent / 100))
+      gst_amount = money(amount - bill_share)
+    }
+    // A cash row without paid: its amount is what was handed over (older tills send it that way).
+    const paid = money(
+      row.paid ?? (row.amount == null ? amount : row.method === "cash" ? Math.max(row.amount, amount) : row.amount)
+    )
+    // A till that sends both amount and paid has worked out amount itself: it must match.
+    if (row.paid != null && row.amount != null && Math.abs(Number(row.amount) - amount) > 0.01) {
+      throw new AppError(`${row.method} amount sent ${row.amount}, expected ${amount}`, 400)
+    }
+    if (row.method !== "cash" && paid > amount + 0.01) {
+      throw new AppError("Payments are more than the bill; only cash can be overpaid", 400)
+    }
+    if (paid + 0.01 < amount) {
+      throw new AppError(`${row.method} paid is less than its amount ${amount}`, 400)
+    }
+    return {
+      method: row.method,
+      bill_share,
+      gst_percent,
+      gst_amount,
+      amount,
+      paid,
+      change: row.method === "cash" ? money(Math.max(0, paid - amount)) : 0,
+      transaction_id: row.transaction_id || null,
+    }
+  })
+  return {
+    splits: result,
+    gst: money(result.reduce((sum, split) => sum + split.gst_amount, 0)),
+    covered: money(result.reduce((sum, split) => sum + split.bill_share, 0)),
+  }
 }
 
 export function quoteOrderTotals({

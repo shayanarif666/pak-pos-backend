@@ -10,6 +10,7 @@ import {
   priceCatalogLine,
   quoteOrderTotals,
   quoteShipping,
+  splitPaymentTax,
 } from "./pricing.service.js"
 
 describe("pricing.service", () => {
@@ -286,5 +287,50 @@ describe("pricing.service", () => {
     assert.equal(pos.shipping_fee, 0)
     assert.equal(web.shipping_fee, 40)
     assert.equal(web.total_amount, money(pos.total_amount + 40))
+  })
+})
+
+describe("splitPaymentTax", () => {
+  const store = { charge_tax_on_sales: true, payment_tax_enabled: true }
+  const taxRates = [
+    { payment_method: "cash", gst_percent: 16 },
+    { payment_method: "easypaisa", gst_percent: 5 },
+  ]
+
+  it("taxes each method on its own share; cash covers the rest and gives change", () => {
+    const split = splitPaymentTax({
+      store,
+      taxRates,
+      preGst: 606.55,
+      payments: [
+        { method: "easypaisa", amount: 111.88 },
+        { method: "cash", paid: 1000 },
+      ],
+    })
+    assert.deepEqual(
+      split.splits.map(({ method, bill_share, gst_amount, amount, paid, change }) => ({ method, bill_share, gst_amount, amount, paid, change })),
+      [
+        { method: "easypaisa", bill_share: 106.55, gst_amount: 5.33, amount: 111.88, paid: 111.88, change: 0 },
+        { method: "cash", bill_share: 500, gst_amount: 80, amount: 580, paid: 1000, change: 420 },
+      ]
+    )
+    assert.equal(split.gst, 85.33)
+  })
+
+  it("no payment tax while payment_tax_enabled is off", () => {
+    const split = splitPaymentTax({
+      store: { ...store, payment_tax_enabled: false },
+      taxRates,
+      preGst: 606.55,
+      payments: [{ method: "cash", paid: 700 }],
+    })
+    assert.equal(split.gst, 0)
+    assert.equal(split.splits[0].change, 93.45)
+  })
+
+  it("refuses a card / wallet paying more than the bill", () => {
+    assert.throws(() =>
+      splitPaymentTax({ store, taxRates, preGst: 100, payments: [{ method: "easypaisa", amount: 500 }] })
+    )
   })
 })

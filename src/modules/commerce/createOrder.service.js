@@ -39,6 +39,7 @@ import {
   priceCustomLine,
   applyDiscount,
   quoteOrderTotals,
+  splitPaymentTax,
 } from "./pricing.service.js"
 
 export function publicOrder(order, extras = {}) {
@@ -210,27 +211,19 @@ function resolvePlacedAt(input, now) {
   return at
 }
 
+const SUMMARY_TOLERANCE = 0.01
+
 /**
- * Overpayment is only possible in cash (customer hands a bigger note). The payment rows record
- * what the store keeps; the extra is change. Card / wallet rows can never exceed the bill.
+ * The till works out the bill itself (it prints the receipt, even offline) and may send its totals
+ * in summary. The server prices the order again; when a sent figure differs by more than a paisa
+ * the order is refused with both figures, so a wrong receipt never reaches the books.
  */
-function settleCashChange(splits, total) {
-  const paid = money(splits.reduce((sum, row) => sum + Number(row.amount || 0), 0))
-  let change = money(paid - total)
-  if (change <= 0) return { splits, change: 0 }
-  const cashPaid = money(
-    splits.filter((row) => row.method === "cash").reduce((sum, row) => sum + Number(row.amount), 0)
-  )
-  if (cashPaid < change) {
-    throw new AppError("Payments exceed the bill; only cash can be overpaid", 400)
-  }
-  const settled = splits.map((row) => {
-    if (row.method !== "cash" || change <= 0) return { ...row }
-    const keep = money(Math.max(0, Number(row.amount) - change))
-    change = money(change - (Number(row.amount) - keep))
-    return { ...row, amount: keep }
-  })
-  return { splits: settled.filter((row) => Number(row.amount) > 0), change: money(paid - total) }
+function assertSummaryMatches(summary, server) {
+  if (!summary) return
+  const wrong = Object.entries(summary)
+    .filter(([key, value]) => Math.abs(Number(value) - Number(server[key] ?? 0)) > SUMMARY_TOLERANCE)
+    .map(([key, value]) => `${key} sent ${value}, expected ${money(server[key] ?? 0)}`)
+  if (wrong.length) throw new AppError(`Order totals do not match: ${wrong.join("; ")}`, 400)
 }
 
 export async function createOrder(actor, input) {
@@ -409,9 +402,13 @@ export async function createOrder(actor, input) {
       )
     }
 
-    const paymentSplits = Array.isArray(input.payments)
+    let paymentSplits = Array.isArray(input.payments)
       ? input.payments.filter((row) => row && row.method)
       : []
+    // One method without payments[]: amount_paid is what was handed over.
+    if (!paymentSplits.length && channel === "pos" && input.amount_paid != null && input.payment_method) {
+      paymentSplits = [{ method: input.payment_method, paid: input.amount_paid }]
+    }
     for (const row of paymentSplits) {
       if (!PAYMENT_METHOD.includes(row.method) || row.method === "mixed") {
         throw new AppError("Invalid payment method", 400)
@@ -426,28 +423,41 @@ export async function createOrder(actor, input) {
       throw new AppError("payment_method is required", 400)
     }
 
-    const quote = (splits) =>
-      quoteOrderTotals({
-        lines: priced,
-        store,
-        channel,
-        shippingRule,
-        couponDiscount,
-        orderDiscount,
-        paymentMethod: payment_method,
-        paymentSplits: splits.length ? splits : null,
-        taxRates,
-        taxExempt: Boolean(input.tax_exempt),
-      })
-    let totals = quote(paymentSplits)
-    const tenderedSum = money(paymentSplits.reduce((sum, row) => sum + Number(row.amount || 0), 0))
-    let settledSplits = paymentSplits
-    if (paymentSplits.length && tenderedSum > totals.total_amount) {
-      settledSplits = settleCashChange(paymentSplits, totals.total_amount).splits
-      // GST per payment method depends on the split, so price again with what is kept.
-      totals = quote(settledSplits)
-      settledSplits = settleCashChange(settledSplits, totals.total_amount).splits
+    // The bill before payment tax, then each payment's tax on its own share of it.
+    const preGst = quoteOrderTotals({
+      lines: priced,
+      store,
+      channel,
+      shippingRule,
+      couponDiscount,
+      orderDiscount,
+      paymentMethod: null,
+      paymentSplits: null,
+      taxRates,
+      taxExempt: Boolean(input.tax_exempt),
+    })
+    const split = splitPaymentTax({
+      store,
+      taxRates,
+      preGst: preGst.total_amount,
+      payments: paymentSplits,
+      paymentMethod: payment_method,
+      taxExempt: Boolean(input.tax_exempt),
+    })
+    const totals = {
+      ...preGst,
+      gst: split.gst,
+      payment_gst_amount: split.gst,
+      payment_gst_splits: split.splits,
+      tax_amount: money(preGst.line_tax + split.gst),
+      fbr_tax_amount: preGst.fbr_invoice_enabled && !input.tax_exempt ? money(preGst.line_tax + split.gst) : 0,
+      total_amount: money(preGst.total_amount + split.gst),
     }
+    assertSummaryMatches(input.summary, {
+      ...totals,
+      bill_before_payment_tax: preGst.total_amount,
+      payment_tax_amount: split.gst,
+    })
     const isWeb = channel === "web"
 
     let customer = null
@@ -579,19 +589,11 @@ export async function createOrder(actor, input) {
       )
     }
 
-    const plannedPayments = (
-      settledSplits.length
-        ? settledSplits
-        : [{ method: payment_method, amount: totals.total_amount }]
-    ).filter((row) => Number(row.amount) > 0)
-
-    const paidSum = money(
-      plannedPayments.reduce((sum, row) => sum + Number(row.amount || 0), 0)
-    )
-    const tendered = money(
-      input.amount_paid != null ? input.amount_paid : Math.max(paidSum, tenderedSum)
-    )
-    const collected = money(Math.min(totals.total_amount, Math.max(paidSum, tendered)))
+    // Each payment row: amount = its share of the bill + its payment tax; paid = handed over.
+    const plannedPayments = split.splits.filter((row) => Number(row.amount) > 0)
+    const collected = money(plannedPayments.reduce((sum, row) => sum + Number(row.amount), 0))
+    const handedOver = money(plannedPayments.reduce((sum, row) => sum + Number(row.paid), 0))
+    const tendered = money(Math.max(handedOver, input.amount_paid ?? 0))
     let creditAmount = money(totals.total_amount - collected)
     if (creditAmount < 0) creditAmount = 0
     if (creditAmount > 0 && !customer) {
@@ -601,14 +603,7 @@ export async function createOrder(actor, input) {
     const payments = []
     for (const row of plannedPayments) {
       const amount = money(row.amount)
-      if (amount <= 0) throw new AppError("payment amount must be > 0", 400)
-      const matched = (totals.payment_gst_splits || []).find(
-        (entry) => entry.method === row.method
-      )
-      const tax_amount = money(
-        matched?.gst_amount ??
-          (totals.gst * (paidSum > 0 ? amount / paidSum : 1))
-      )
+      const tax_amount = money(row.gst_amount)
       const payment = await Payment.create(
         {
           store_id: store.id,

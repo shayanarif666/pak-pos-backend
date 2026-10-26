@@ -188,6 +188,18 @@ function orderItemView(item, refs) {
   }
 }
 
+function paymentSplitsOf(order) {
+  let breakdown = order.tax_breakdown
+  if (typeof breakdown === "string") {
+    try {
+      breakdown = JSON.parse(breakdown)
+    } catch {
+      breakdown = null
+    }
+  }
+  return Array.isArray(breakdown?.payment_gst) ? breakdown.payment_gst : []
+}
+
 function orderView(order, refs, currency) {
   const items = [...(order.OrderItems || [])].sort((a, b) => a.item_number - b.item_number)
   // subtotal here includes the product and category tax of the lines.
@@ -209,6 +221,17 @@ function orderView(order, refs, currency) {
     payment_method: order.payment_method,
     payment_status: order.payment_status,
     payment_gst_amount: num(order.payment_gst_amount),
+    tax_amount: num(order.tax_amount),
+    // Per method: its share of the bill, its payment tax, what it paid toward the bill and what was handed over.
+    payments: paymentSplitsOf(order).map((row) => ({
+      method: row.method,
+      bill_share: num(row.bill_share),
+      payment_tax_percent: num(row.gst_percent),
+      payment_tax_amount: num(row.gst_amount) ?? 0,
+      amount: num(row.amount),
+      paid: num(row.paid ?? row.amount),
+      change: num(row.change) ?? 0,
+    })),
     fbr_invoice_enabled: Boolean(order.fbr_invoice_enabled),
     fbr_tax_amount: num(order.fbr_tax_amount),
     order_status: order.order_status,

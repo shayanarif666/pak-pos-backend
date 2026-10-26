@@ -58,14 +58,63 @@ function parsePayment(row) {
   if (!PAYMENT_METHOD.includes(method) || method === "mixed") {
     throw new AppError("Invalid payment method", 400)
   }
-  const amount = Number(row.amount)
-  if (Number.isNaN(amount) || amount <= 0) {
+  // amount: what this method pays toward the bill (its share + its payment tax);
+  // bill_share: its share of the bill before payment tax; paid: what the customer handed over.
+  const amount = optionalMoney(row, "amount")
+  const bill_share = optionalMoney(row, "bill_share")
+  const paid = optionalMoney(row, "paid")
+  if (amount == null && bill_share == null && paid == null) {
     throw new AppError("payment amount must be > 0", 400)
   }
   // The card / wallet reference of this payment, if the till has one.
   const raw = row.transaction_id ?? row.transactionId
   const transaction_id = raw == null || raw === "" ? null : String(raw).trim().slice(0, 255)
-  return { method, amount, transaction_id }
+  return { method, amount, bill_share, paid, transaction_id }
+}
+
+function optionalMoney(body, key) {
+  if (body[key] === undefined || body[key] === null || body[key] === "") return null
+  const value = Number(body[key])
+  if (Number.isNaN(value) || value <= 0) throw new AppError(`payment ${key} must be > 0`, 400)
+  return value
+}
+
+// The till's own totals, checked against the server's (all optional).
+const SUMMARY_KEYS = [
+  "subtotal",
+  "product_tax_amount",
+  "category_tax_amount",
+  "sales_tax_amount",
+  "bill_before_payment_tax",
+  "payment_tax_amount",
+  "tax_amount",
+  "total_amount",
+]
+
+function parseSummary(body) {
+  const source = body.summary && typeof body.summary === "object" ? body.summary : {}
+  const summary = {}
+  for (const key of SUMMARY_KEYS) {
+    const value = source[key]
+    if (value === undefined || value === null || value === "") continue
+    if (Number.isNaN(Number(value))) throw new AppError(`summary.${key} must be a number`, 400)
+    summary[key] = Number(value)
+  }
+  const total = body.total_amount ?? body.totalAmount
+  if (summary.total_amount === undefined && total != null && total !== "") summary.total_amount = Number(total)
+  return Object.keys(summary).length ? summary : null
+}
+
+// amount_paid per method ([{ method, paid }]) becomes each payment's paid.
+function withPaid(payments, amountPaid) {
+  if (!Array.isArray(amountPaid)) return payments
+  const rows = payments.map((row) => (row && typeof row === "object" ? { ...row } : row))
+  for (const entry of amountPaid) {
+    const target = rows.find((row) => row?.method === entry?.method && row.paid == null)
+    if (!target) throw new AppError("amount_paid method must match a payment", 400)
+    target.paid = entry.paid ?? entry.amount
+  }
+  return rows
 }
 
 export function parseCreateOrder(body) {
@@ -79,7 +128,7 @@ export function parseCreateOrder(body) {
   }
 
   const payments = Array.isArray(body.payments)
-    ? body.payments.map(parsePayment)
+    ? withPaid(body.payments, body.amount_paid).map(parsePayment)
     : undefined
 
   let payment_method = body.payment_method ? String(body.payment_method) : null
@@ -111,8 +160,8 @@ export function parseCreateOrder(body) {
     order_discount_value:
       body.order_discount_value == null ? undefined : Number(body.order_discount_value),
     tax_exempt: Boolean(body.tax_exempt),
-    amount_paid: body.amount_paid == null ? undefined : Number(body.amount_paid),
-    total_amount: body.total_amount == null ? undefined : Number(body.total_amount),
+    amount_paid: Array.isArray(body.amount_paid) || body.amount_paid == null || body.amount_paid === "" ? undefined : Number(body.amount_paid),
+    summary: parseSummary(body),
     approval_request_id: optionalUuid(body, "approval_request_id"),
     // Offline POS: when the sale was rung up on the device (ISO date-time).
     placed_at: optionalString(body, "placed_at"),
@@ -128,7 +177,9 @@ export function parseVoidCancel(body) {
 }
 
 export function parseAddPayment(body) {
-  return parsePayment(body)
+  const payment = parsePayment(body)
+  if (payment.amount == null) throw new AppError("payment amount must be > 0", 400)
+  return payment
 }
 
 // order_item_id: the line's UUID, or its item number inside the order (1, 2, 3...).
