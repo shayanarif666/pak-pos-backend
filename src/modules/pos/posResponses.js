@@ -23,6 +23,7 @@ import { Product } from "../catalog/product.model.js"
 import { Category } from "../catalog/category.model.js"
 import { Supplier } from "../inventory/supplier.model.js"
 import { RegisterSession } from "./registerSession.model.js"
+import { buildReceiptView } from "./receiptView.js"
 
 export const num = (value) => (value == null ? null : Number(value))
 
@@ -46,8 +47,8 @@ export async function currencyOf(storeId) {
 const KINDS = {
   user: { model: User, attributes: ["id", "user_number", "name", "role"] },
   location: { model: Location, attributes: ["id", "location_id_int", "name"] },
-  product: { model: Product, attributes: ["id", "product_number", "title", "sku", "unit"] },
-  category: { model: Category, attributes: ["id", "category_number", "name"] },
+  product: { model: Product, attributes: ["id", "product_number", "title", "sku", "unit", "category_id"] },
+  category: { model: Category, attributes: ["id", "category_number", "name", "tax_name"] },
   supplier: { model: Supplier, attributes: ["id", "supplier_number", "name", "phone"] },
   customer: { model: Customer, attributes: ["id", "customer_number", "name", "phone"] },
   batch: { model: RegisterSession, attributes: ["id", "session_number", "status"] },
@@ -308,31 +309,45 @@ export async function posRefund(refundId) {
 
 // ---- Receipts ----
 
+/**
+ * A sale receipt (invoice) with the order's full detail: the lines as sold with each tax by
+ * source, every payment with its payment GST, and a summary of discounts and taxes.
+ * See receiptView.js for the shape.
+ */
 export async function posReceipt(receipt) {
-  const [order, payment, refs] = await Promise.all([
-    Order.findByPk(receipt.order_id, { attributes: ["id", "order_number", "order_status", "tax_breakdown", "fbr_tax_amount"] }),
-    receipt.payment_id ? Payment.findByPk(receipt.payment_id, { attributes: ["transaction_number", "method"] }) : null,
-    new Refs().loadAll({ user: [receipt.cashier_id], location: [receipt.location_id] }),
+  const [order, paymentRows] = await Promise.all([
+    Order.findByPk(receipt.order_id, { include: [{ model: OrderItem }] }),
+    Payment.findAll({
+      where: { order_id: receipt.order_id },
+      attributes: ["id", "transaction_number", "method", "amount", "tax_amount", "status"],
+    }),
   ])
-  const breakdown = order?.tax_breakdown || {}
-  // Only GST that was actually charged (a method's rate shows only when tax applied).
-  const gst = (breakdown.payment_gst || []).find((row) => Number(row.gst_amount) > 0)
-  return {
-    id: receipt.receipt_number,
-    location: refs.location(receipt.location_id),
-    staff: refs.staff(receipt.cashier_id),
-    order: order ? { id: order.order_number, status: order.order_status } : null,
-    transaction: payment ? { id: payment.transaction_number, method: payment.method } : null,
-    subTotal: num(receipt.subtotal),
-    discount_amount: num(receipt.discount_amount),
-    tax_breakdown: {
-      payment_gst: gst ? `${Number(gst.gst_percent)}%` : "0%",
-      fbr_fee: num(order?.fbr_tax_amount) ?? 0,
+  const items = order?.OrderItems || []
+  const refs = await new Refs().loadAll({
+    user: [receipt.cashier_id],
+    location: [receipt.location_id],
+    customer: [order?.customer_id],
+    batch: [order?.register_session_id],
+    product: items.map((item) => item.product_id),
+  })
+  // The category of each sold product (for its name and its tax name).
+  await refs.load(
+    "category",
+    items.map((item) => refs.get("product", item.product_id)?.category_id)
+  )
+  const lookups = {
+    staff: (id) => refs.staff(id),
+    location: (id) => refs.location(id),
+    customer: (id) => refs.customer(id),
+    batch: (id) => refs.batch(id),
+    product: (id) => refs.product(id),
+    productCategory: (id) => {
+      const category = refs.get("category", refs.get("product", id)?.category_id)
+      return category ? { id: category.category_number, name: category.name, tax_name: category.tax_name || null } : null
     },
-    tax_amount: num(receipt.tax_amount),
-    total: num(receipt.total_amount),
-    issued_at: receipt.issued_at,
   }
+  const currency = await currencyOf(receipt.store_id)
+  return buildReceiptView({ receipt, order, paymentRows, lookups, currency })
 }
 
 // ---- Stock ----

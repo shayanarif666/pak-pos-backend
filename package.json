@@ -11,7 +11,7 @@
     "db:seed:superadmin": "node src/db/seeders/superadmin.seeder.js",
     "db:seed:plans": "node src/db/seeders/runPlans.seeder.js",
     "db:clear": "node src/db/seeders/clear.seeder.js",
-    "test": "node --test src/modules/commerce/pricing.service.test.js src/modules/audit/audit.util.test.js"
+    "test": "node --test src/modules/commerce/pricing.service.test.js src/modules/audit/audit.util.test.js src/modules/pos/receiptView.test.js"
   },
   "author": "",
   "license": "ISC",

@@ -570,7 +570,8 @@ export async function orderReceipt(req, ref) {
     order: [["issued_at", "ASC"]],
   })
   if (!receipt) throw new NotFoundError("Receipt not found")
-  return { ...(await posReceipt(receipt)), currency: await currencyOf(scope.store_id) }
+  // posReceipt carries the store currency.
+  return posReceipt(receipt)
 }
 
 // ---- 18. Receipt by refund id ----
