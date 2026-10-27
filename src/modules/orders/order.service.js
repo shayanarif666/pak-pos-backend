@@ -27,7 +27,7 @@ import {
 } from "../carts/cart.service.js"
 import { resolveCheckoutAddress } from "../addresses/address.service.js"
 import { restockSaleStock } from "../commerce/stock.service.js"
-import { money } from "../commerce/pricing.service.js"
+import { money, splitRefund } from "../commerce/pricing.service.js"
 import {
   applySessionSale,
 } from "../pos/registerSession.service.js"
@@ -347,6 +347,7 @@ export async function listOrderRefunds(actor, query = {}) {
       reason: json.reason,
       amount: Number(json.amount),
       tax_amount: Number(json.tax_amount),
+      payments: refundPaymentsOf(json),
       created_at: json.created_at,
       cashier: staffLite(row.cashier),
       items,
@@ -603,6 +604,12 @@ export async function getOrderReceipt(actor, id) {
   return { receipt: receipt || null, ...view }
 }
 
+// How a refund was paid back; older refunds (no breakdown) were all cash.
+function refundPaymentsOf(json) {
+  if (Array.isArray(json.payments)) return json.payments
+  return [{ method: "cash", amount: Number(json.amount) }]
+}
+
 function publicRefund(refund, extras = {}) {
   const json = refund.toJSON ? refund.toJSON() : refund
   return {
@@ -612,6 +619,7 @@ function publicRefund(refund, extras = {}) {
     reason: json.reason,
     amount: Number(json.amount),
     tax_amount: Number(json.tax_amount),
+    payments: refundPaymentsOf(json),
     created_at: json.created_at,
     ...publicVisibility(json),
     cashier: extras.cashier || staffLite(refund.cashier),
@@ -627,6 +635,53 @@ function publicRefund(refund, extras = {}) {
     }),
     receipt: extras.receipt || refund.Receipt || null,
   }
+}
+
+// What each method paid toward the order (payment tax included), plus the udhaar left as
+// "credit". An order with no payment rows, or credit without a customer, counts as cash.
+function refundBuckets(order) {
+  const byMethod = new Map()
+  for (const payment of order.Payments || []) {
+    if (["failed", "cancelled", "refunded"].includes(payment.status)) continue
+    const entry = byMethod.get(payment.method) || { method: payment.method, amount: 0, tax: 0 }
+    entry.amount += Number(payment.amount || 0)
+    entry.tax += Number(payment.tax_amount || 0)
+    byMethod.set(payment.method, entry)
+  }
+  const paidTotal = [...byMethod.values()].reduce((sum, entry) => sum + entry.amount, 0)
+  const unpaid = money(Number(order.total_amount || 0) - paidTotal)
+  if (unpaid > 0) {
+    const method = order.customer_id ? "credit" : "cash"
+    const entry = byMethod.get(method) || { method, amount: 0, tax: 0 }
+    entry.amount += unpaid
+    byMethod.set(method, entry)
+  }
+  const rates = order.tax_breakdown?.payment_gst || []
+  return [...byMethod.values()].map((entry) => {
+    const rate = rates.find((row) => row.method === entry.method)
+    const share = entry.amount - entry.tax
+    return {
+      method: entry.method,
+      amount: money(entry.amount),
+      gst_percent: Number(rate?.gst_percent ?? (share > 0 ? money((entry.tax / share) * 100) : 0)),
+    }
+  })
+}
+
+// What earlier refunds of the order paid back per method (older ones were all cash).
+async function refundedByMethod(orderId) {
+  const rows = await OrderRefund.findAll({
+    where: { order_id: orderId },
+    attributes: ["amount", "payments"],
+  })
+  const refunded = {}
+  for (const row of rows) {
+    const parts = Array.isArray(row.payments) ? row.payments : [{ method: "cash", amount: row.amount }]
+    for (const part of parts) {
+      refunded[part.method] = money((refunded[part.method] || 0) + Number(part.amount || 0))
+    }
+  }
+  return refunded
 }
 
 export async function refundOrderItem(actor, id, fields) {
@@ -662,23 +717,29 @@ export async function refundOrderItem(actor, id, fields) {
     orderGoods > 0 ? Math.max(0, (orderGoods - orderLevelDiscount) / orderGoods) : 1
   const lineSubtotal = money(Number(item.subtotal) * keptFactor * share)
   const lineTax = money(Number(item.tax_amount || 0) * share)
-  const paymentGst = Number(order.payment_gst_amount || 0)
-  const orderPreGst = money(
-    Number(order.total_amount || 0) - paymentGst - Number(order.shipping_fee || 0)
-  )
-  const linePreGst = money(Number(item.subtotal || 0) * keptFactor + Number(item.tax_amount || 0))
-  const refundGst =
-    paymentGst > 0 && orderPreGst > 0
-      ? money(paymentGst * ((linePreGst * share) / orderPreGst))
-      : 0
-  const refundTax = money(lineTax + refundGst)
-  const alreadyRefunded = Number(
-    (await OrderRefund.sum("amount", { where: { order_id: order.id } })) || 0
-  )
-  const refundable = money(
-    Number(order.total_amount || 0) - Number(order.shipping_fee || 0) - alreadyRefunded
-  )
-  const refundTotal = money(Math.min(lineSubtotal + refundTax, Math.max(0, refundable)))
+
+  // Paid back the way the sale was paid: each method gets its own part back, with the payment
+  // tax it was charged (card 5% stays 5%). The fraction refunded counts every line's refunded
+  // qty, this one included, so the last refund closes each method out to the paisa.
+  const preGstOf = (row) => Number(row.subtotal || 0) * keptFactor + Number(row.tax_amount || 0)
+  const lines = order.OrderItems || []
+  const linesPreGst = lines.reduce((sum, row) => sum + preGstOf(row), 0)
+  const refundedPreGst = lines.reduce((sum, row) => {
+    const done = Number(row.refunded_qty || 0) + (row.id === item.id ? qty : 0)
+    return sum + (Number(row.quantity) > 0 ? (preGstOf(row) * done) / Number(row.quantity) : 0)
+  }, 0)
+  const buckets = refundBuckets(order)
+  const orderPreGst = Number(order.total_amount || 0) - Number(order.payment_gst_amount || 0)
+  const refundPayments = splitRefund({
+    buckets,
+    refunded: await refundedByMethod(order.id),
+    fraction: linesPreGst > 0 ? refundedPreGst / linesPreGst : 0,
+    goodsShare:
+      orderPreGst > 0 ? Math.max(0, (orderPreGst - Number(order.shipping_fee || 0)) / orderPreGst) : 1,
+  })
+  const refundTotal = money(refundPayments.reduce((sum, row) => sum + row.amount, 0))
+  // Line tax + payment tax (any paisa from rounding lands here, so subtotal + tax = total).
+  const refundTax = money(Math.max(0, refundTotal - lineSubtotal))
   const now = new Date()
 
   return sequelize.transaction(async (transaction) => {
@@ -735,6 +796,7 @@ export async function refundOrderItem(actor, id, fields) {
         refund_type: fields.refund_type === "complete" ? "complete" : "partial",
         amount: refundTotal,
         tax_amount: refundTax,
+        payments: refundPayments,
       },
       { transaction }
     )
@@ -769,6 +831,23 @@ export async function refundOrderItem(actor, id, fields) {
       { transaction }
     )
 
+    // The udhaar part is taken off what the customer owes, not paid out.
+    const creditBack = refundPayments.find((row) => row.method === "credit")
+    if (creditBack && order.customer_id) {
+      const customer = await getCustomer(order.store_id, order.customer_id)
+      await recordLedgerEntry(
+        customer,
+        {
+          entry_type: "credit",
+          amount: creditBack.amount,
+          order_id: order.id,
+          created_by: actor.id,
+          note: `Refund #${refund.refund_number} of order #${order.order_number}`,
+        },
+        { transaction }
+      )
+    }
+
     if (order.register_session_id) {
       const session = await RegisterSession.findByPk(order.register_session_id, {
         transaction,
@@ -777,7 +856,7 @@ export async function refundOrderItem(actor, id, fields) {
         await applySessionSale(
           session,
           {
-            payments: [{ method: "cash", amount: refundTotal }],
+            payments: refundPayments.filter((row) => row.method !== "credit"),
             total: refundTotal,
             reverse: true,
           },

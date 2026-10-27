@@ -20,6 +20,9 @@ export const OrderRefund = sequelize.define(
     reason: { type: DataTypes.TEXT, allowNull: false },
     amount: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
     tax_amount: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
+    // How it was paid back, per method of the sale: [{ method, bill_share, payment_tax_percent,
+    // payment_tax_amount, amount }]; method credit = off the udhaar. Null on older (all-cash) refunds.
+    payments: { type: DataTypes.JSON, allowNull: true },
     ...saleChannelVisibilityFields(),
   },
   {

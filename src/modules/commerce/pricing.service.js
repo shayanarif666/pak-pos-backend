@@ -410,6 +410,33 @@ export function splitPaymentTax({ store, taxRates, preGst, payments, paymentMeth
   }
 }
 
+/**
+ * A refund paid back the way the sale was paid. Each method (and the udhaar left as credit) gets
+ * back its own part of what it paid, with its own payment tax:
+ *   method refund = method amount × goods share × refunded fraction − already refunded to it
+ * fraction is cumulative (everything refunded so far, this refund included), so the paisa lost
+ * to rounding on one unit comes back on a later one and a fully refunded order returns exactly
+ * what each method paid. goodsShare leaves shipping out (it is not refunded with items).
+ */
+export function splitRefund({ buckets, refunded = {}, fraction, goodsShare = 1 }) {
+  const cumulative = Math.min(1, Math.max(0, Number(fraction) || 0))
+  return (buckets || [])
+    .map((bucket) => {
+      const target = money(Number(bucket.amount) * goodsShare * cumulative)
+      const amount = money(Math.max(0, target - Number(refunded[bucket.method] || 0)))
+      const percent = Number(bucket.gst_percent || 0)
+      const payment_tax_amount = money((amount * percent) / (100 + percent))
+      return {
+        method: bucket.method,
+        bill_share: money(amount - payment_tax_amount),
+        payment_tax_percent: percent,
+        payment_tax_amount,
+        amount,
+      }
+    })
+    .filter((row) => row.amount > 0)
+}
+
 export function quoteOrderTotals({
   lines,
   store,

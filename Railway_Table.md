@@ -278,6 +278,14 @@ ALTER TABLE payments
 
 ---
 
+## 7. Refund payments — `20261029120000-refund-payments`
+
+How each refund was paid back, per method of the sale (card / cash / credit = udhaar).
+
+```sql
+ALTER TABLE order_refunds ADD COLUMN payments JSON NULL AFTER tax_amount;
+```
+
 ## After a manual run: mark the migrations as done
 
 So the server does not try them again on start:
@@ -288,7 +296,8 @@ INSERT IGNORE INTO SequelizeMeta (name) VALUES
   ('20261025130000-sales-tax-toggle'),
   ('20261026120000-currencies'),
   ('20261027120000-refund-type'),
-  ('20261028120000-transaction-number');
+  ('20261028120000-transaction-number'),
+  ('20261029120000-refund-payments');
 ```
 
 ## Check
@@ -298,6 +307,7 @@ SELECT name FROM SequelizeMeta WHERE name >= '20261024' ORDER BY name;
 SHOW COLUMNS FROM stores LIKE '%tax%';
 SHOW COLUMNS FROM payments LIKE 'transaction_number';
 SHOW COLUMNS FROM order_refunds LIKE 'refund_type';
+SHOW COLUMNS FROM order_refunds LIKE 'payments';
 SHOW TABLES LIKE 'currencies';
 SHOW TABLES LIKE 'staff_sessions';
 ```

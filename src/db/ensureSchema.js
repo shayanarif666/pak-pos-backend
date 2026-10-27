@@ -18,6 +18,7 @@ import * as salesTaxToggle from "./migrations/20261025130000-sales-tax-toggle.js
 import * as currencies from "./migrations/20261026120000-currencies.js"
 import * as refundType from "./migrations/20261027120000-refund-type.js"
 import * as transactionNumber from "./migrations/20261028120000-transaction-number.js"
+import * as refundPayments from "./migrations/20261029120000-refund-payments.js"
 
 // Migrations the running code cannot work without (e.g. users.token_version is read on every
 // authenticated request). Each one checks before it changes anything, so running it on a
@@ -55,6 +56,8 @@ const REQUIRED = [
   refundType,
   // payments.transaction_number (the transaction id the POS sees).
   transactionNumber,
+  // order_refunds.payments (how each refund was paid back, per method).
+  refundPayments,
 ]
 
 export async function ensureSchema() {

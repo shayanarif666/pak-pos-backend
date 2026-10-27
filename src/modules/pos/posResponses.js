@@ -298,6 +298,8 @@ export async function posRefunds(refundIds) {
       amount: Number((total - tax).toFixed(2)),
       tax,
       total,
+      // How it was paid back, per method (credit = off the udhaar); older refunds were cash.
+      payments: Array.isArray(refund.payments) ? refund.payments : [{ method: "cash", amount: total }],
       refunded_at: refund.created_at,
     }
   })

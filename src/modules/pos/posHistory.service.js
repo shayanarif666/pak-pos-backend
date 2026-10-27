@@ -266,6 +266,22 @@ export async function orders(req) {
 }
 
 // ---- 5 / 6. Refunds: ?type=complete (whole orders) | partial (some items) ----
+// One order's refund rows paid back per method, added up method by method.
+function mergeRefundPayments(parts) {
+  const byMethod = new Map()
+  for (const row of parts.flatMap((part) => part.payments || [])) {
+    const entry = byMethod.get(row.method)
+    if (!entry) {
+      byMethod.set(row.method, { ...row })
+      continue
+    }
+    for (const key of ["bill_share", "payment_tax_amount", "amount"]) {
+      if (row[key] != null) entry[key] = Number(((entry[key] || 0) + row[key]).toFixed(2))
+    }
+  }
+  return [...byMethod.values()]
+}
+
 export async function refunds(req) {
   const scope = await scopeOf(req)
   const pageInfo = pageOf(req.query)
@@ -301,6 +317,7 @@ export async function refunds(req) {
     for (const part of parts.slice(1)) {
       for (const key of ["amount", "tax", "total"]) entry[key] = Number((entry[key] + part[key]).toFixed(2))
     }
+    entry.payments = mergeRefundPayments(parts)
     return entry
   })
   return paged(rows, total, pageInfo)

@@ -11,6 +11,7 @@ import {
   quoteOrderTotals,
   quoteShipping,
   splitPaymentTax,
+  splitRefund,
 } from "./pricing.service.js"
 
 describe("pricing.service", () => {
@@ -332,5 +333,38 @@ describe("splitPaymentTax", () => {
     assert.throws(() =>
       splitPaymentTax({ store, taxRates, preGst: 100, payments: [{ method: "easypaisa", amount: 500 }] })
     )
+  })
+})
+
+describe("splitRefund", () => {
+  const split = [
+    { method: "card", amount: 600, gst_percent: 5 },
+    { method: "cash", amount: 937.25, gst_percent: 16 },
+  ]
+
+  it("pays one unit of 12 back per method at each method's own payment tax", () => {
+    const rows = splitRefund({ buckets: split, fraction: 1 / 12 })
+    assert.deepEqual(rows, [
+      { method: "card", bill_share: 47.62, payment_tax_percent: 5, payment_tax_amount: 2.38, amount: 50 },
+      { method: "cash", bill_share: 67.33, payment_tax_percent: 16, payment_tax_amount: 10.77, amount: 78.1 },
+    ])
+  })
+
+  it("returns exactly what each method paid once everything is refunded unit by unit", () => {
+    const refunded = {}
+    for (let unit = 1; unit <= 12; unit += 1) {
+      for (const row of splitRefund({ buckets: split, refunded, fraction: unit / 12 })) {
+        refunded[row.method] = Number(((refunded[row.method] || 0) + row.amount).toFixed(2))
+      }
+    }
+    assert.deepEqual(refunded, { card: 600, cash: 937.25 })
+  })
+
+  it("closes a single cash payment out to the paisa", () => {
+    const buckets = [{ method: "cash", amount: 1600.1, gst_percent: 16 }]
+    const first = splitRefund({ buckets, fraction: 1 / 12 })
+    assert.equal(first[0].amount, 133.34)
+    const rest = splitRefund({ buckets, refunded: { cash: 133.34 * 11 }, fraction: 1 })
+    assert.equal(rest[0].amount, 133.36)
   })
 })
