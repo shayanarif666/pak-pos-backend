@@ -35,6 +35,7 @@ import {
   posOrders,
   posProducts,
   posReceipt,
+  posRefundReceipt,
   posRefunds,
   Refs,
   posStockMovements,
@@ -600,24 +601,7 @@ export async function refundReceipt(req, ref) {
   assertAtScope(scope, refund, "Refund")
   const receipt = refund.receipt_id ? await Receipt.findByPk(refund.receipt_id) : null
   if (!receipt) throw new NotFoundError("Refund receipt not found")
-  const [refs, currency] = await Promise.all([
-    new Refs().loadAll({ user: [refund.cashier_id], order: [refund.order_id], location: [receipt.location_id] }),
-    currencyOf(scope.store_id),
-  ])
-  return {
-    id: receipt.receipt_number,
-    location: refs.location(receipt.location_id),
-    staff: refs.staff(refund.cashier_id),
-    order: refs.order(refund.order_id),
-    refundId: refund.refund_number,
-    refund_type: refund.refund_type,
-    currency,
-    reason: refund.reason || null,
-    subTotal: Number((Number(refund.amount) - Number(refund.tax_amount || 0)).toFixed(2)),
-    tax_amount: num(refund.tax_amount),
-    total: num(refund.amount),
-    issued_at: receipt.issued_at,
-  }
+  return posRefundReceipt(refund, receipt)
 }
 
 // ---- 11. Detailed reporting: the report rows' UUIDs as the POS's short numbers ----

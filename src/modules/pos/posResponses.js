@@ -23,7 +23,7 @@ import { Product } from "../catalog/product.model.js"
 import { Category } from "../catalog/category.model.js"
 import { Supplier } from "../inventory/supplier.model.js"
 import { RegisterSession } from "./registerSession.model.js"
-import { buildReceiptView } from "./receiptView.js"
+import { buildReceiptView, buildRefundReceiptView } from "./receiptView.js"
 
 export const num = (value) => (value == null ? null : Number(value))
 
@@ -316,40 +316,51 @@ export async function posRefund(refundId) {
  * source, every payment with its payment GST, and a summary of discounts and taxes.
  * See receiptView.js for the shape.
  */
+async function receiptStore(storeId) {
+  return Store.findByPk(storeId, { attributes: ["name", "ntn", "strn", "currency"] })
+}
+
 export async function posReceipt(receipt) {
-  const [order, paymentRows] = await Promise.all([
+  const [order, paymentRows, store] = await Promise.all([
     Order.findByPk(receipt.order_id, { include: [{ model: OrderItem }] }),
     Payment.findAll({
       where: { order_id: receipt.order_id },
-      attributes: ["id", "transaction_number", "method", "amount", "tax_amount", "status"],
+      attributes: ["transaction_number", "method", "amount", "status"],
     }),
+    receiptStore(receipt.store_id),
   ])
-  const items = order?.OrderItems || []
   const refs = await new Refs().loadAll({
     user: [receipt.cashier_id],
     location: [receipt.location_id],
     customer: [order?.customer_id],
-    batch: [order?.register_session_id],
-    product: items.map((item) => item.product_id),
   })
-  // The category of each sold product (for its name and its tax name).
-  await refs.load(
-    "category",
-    items.map((item) => refs.get("product", item.product_id)?.category_id)
-  )
   const lookups = {
     staff: (id) => refs.staff(id),
     location: (id) => refs.location(id),
     customer: (id) => refs.customer(id),
-    batch: (id) => refs.batch(id),
-    product: (id) => refs.product(id),
-    productCategory: (id) => {
-      const category = refs.get("category", refs.get("product", id)?.category_id)
-      return category ? { id: category.category_number, name: category.name, tax_name: category.tax_name || null } : null
-    },
   }
-  const currency = await currencyOf(receipt.store_id)
-  return buildReceiptView({ receipt, order, paymentRows, lookups, currency })
+  return buildReceiptView({ receipt, order, paymentRows, lookups, store })
+}
+
+export async function posRefundReceipt(refund, receipt) {
+  const [lines, order, store, refs] = await Promise.all([
+    OrderRefundItem.findAll({ where: { refund_id: refund.id } }),
+    Order.findByPk(refund.order_id, { attributes: ["order_number"] }),
+    receiptStore(refund.store_id),
+    new Refs().loadAll({ user: [refund.cashier_id], location: [receipt.location_id] }),
+  ])
+  const soldItems = await OrderItem.findAll({
+    where: { id: { [Op.in]: lines.map((line) => line.order_item_id).filter(Boolean) } },
+    attributes: ["id", "item_number", "sku"],
+  })
+  return buildRefundReceiptView({
+    receipt,
+    refund: { ...refund.toJSON(), OrderRefundItems: lines },
+    orderNumber: order?.order_number,
+    soldItems,
+    lookups: { staff: (id) => refs.staff(id), location: (id) => refs.location(id) },
+    store,
+  })
 }
 
 // ---- Stock ----
