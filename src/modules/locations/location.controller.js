@@ -63,5 +63,13 @@ export const patchBulk = asyncHandler(async (req, res) => {
     storeId: req.storeId,
     handler: (uuid, fields) => locationService.updateLocation(req.storeId, uuid, parsePatchLocation(fields), req.user),
   })
-  return bulkUpdateResponse(res, data, "Locations Updated", data.created)
+  const rows = req.auth?.channel === "pos" ? data.created.map(posLocation) : data.created
+  return bulkUpdateResponse(res, data, "Locations Updated", rows)
 })
+
+/** POS shape of a location: its number as id, no UUIDs (the manager by name / email). */
+function posLocation(view) {
+  const { id: _uuid, store_id: _store, store_number: _storeNumber, location_number, created_at: _created, updated_at: _updated, manager, ...rest } = view
+  const { id: _managerUuid, ...managerView } = manager || {}
+  return { id: location_number, ...rest, manager: manager ? managerView : null }
+}

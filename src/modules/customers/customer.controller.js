@@ -78,5 +78,21 @@ export const patchBulk = asyncHandler(async (req, res) => {
       return customerService.updateCustomer(req.storeId, uuid, parsePatchCustomer(input))
     },
   })
-  return bulkUpdateResponse(res, data, "Customers Updated", data.created)
+  const rows = req.auth?.channel === "pos" ? data.created.map(posCustomer) : data.created
+  return bulkUpdateResponse(res, data, "Customers Updated", rows)
 })
+
+/** POS shape of a customer: short numbers, no UUIDs. */
+function posCustomer(view) {
+  return {
+    id: view.customer_number,
+    name: view.name,
+    phone: view.phone || null,
+    email: view.email || null,
+    location_id: view.location_number ?? null,
+    total_debt: Number(view.total_debt || 0),
+    remaining_debt: Number(view.remaining_debt || 0),
+    debt_notes: view.debt_notes || null,
+    is_active: Boolean(view.is_active),
+  }
+}
