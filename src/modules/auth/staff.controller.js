@@ -1,7 +1,17 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js"
 import { asyncHandler } from "../../shared/utils/asyncHandler.js"
 import { bulkStatus, posBulkResponse, extractBulkItems, runBulk } from "../../shared/utils/bulk.util.js"
-import { parseCreateStaff } from "./staff.validation.js"
+import { parseCreateStaff, parsePatchStaff } from "./staff.validation.js"
+import { User } from "./user.model.js"
+import { Location } from "../locations/location.model.js"
+import { AppError } from "../../shared/errors/AppError.js"
+import {
+  bulkUpdateResponse,
+  optionalUuidOfNumber,
+  pickFields,
+  requireBoolean,
+  runBulkUpdate,
+} from "../../shared/utils/bulkUpdate.util.js"
 import * as staffService from "./staff.service.js"
 import * as posHistory from "../pos/posHistory.service.js"
 import { Refs } from "../pos/posResponses.js"
@@ -87,3 +97,55 @@ export const sales = asyncHandler(async (req, res) => {
   const data = await staffService.getStaffSales(req.user, req.params.id, req.query)
   return apiResponse(res, 200, "OK", data)
 })
+
+// ---- Bulk updates (POS offline sync): items[] = [{ id (staff number), ...fields }] ----
+
+function staffActor(req) {
+  return {
+    ...req.user.get({ plain: true }),
+    store_id: req.auth?.store_id || req.user.store_id,
+    location_id: req.auth?.location_id || req.user.location_id,
+  }
+}
+
+function bulkStaffUpdate(parse, message) {
+  return asyncHandler(async (req, res) => {
+    const actor = staffActor(req)
+    const data = await runBulkUpdate(req.body, {
+      model: User,
+      column: "user_number",
+      label: "Staff",
+      storeId: actor.store_id,
+      handler: async (uuid, fields) => {
+        const location = await optionalUuidOfNumber(Location, "location_id_int", actor.store_id, fields.location_id, "Location")
+        const input = location === undefined ? fields : { ...fields, location_id: location }
+        return staffService.patchStaff(actor, uuid, parsePatchStaff(parse(input)))
+      },
+    })
+    const rows = req.auth?.channel === "pos" ? await staffWithLocations(data.created) : data.created
+    return bulkUpdateResponse(res, data, message, rows)
+  })
+}
+
+/** PATCH /staff/bulk — name, phone, role, location_id, is_active, password, pin. */
+export const patchBulk = bulkStaffUpdate((fields) => fields, "Staff Updated")
+
+/** PATCH /staff/bulk/status — { id, is_active }: false = left the job (cannot log in, history stays). */
+export const patchBulkStatus = bulkStaffUpdate(
+  (fields) => ({ is_active: requireBoolean(fields, "is_active") }),
+  "Staff Status Updated"
+)
+
+/** PATCH /staff/bulk/location — { id, location_id (location number) }: moved to another branch. */
+export const patchBulkLocation = bulkStaffUpdate((fields) => {
+  if (fields.location_id === undefined || fields.location_id === null) {
+    throw new AppError("location_id is required", 400)
+  }
+  return { location_id: fields.location_id }
+}, "Staff Location Updated")
+
+/** PATCH /staff/bulk/password — { id, password?, pin? }: a manager resets a forgotten password / PIN. */
+export const patchBulkPassword = bulkStaffUpdate(
+  (fields) => pickFields(fields, ["password", "pin"], "password"),
+  "Staff Password Updated"
+)

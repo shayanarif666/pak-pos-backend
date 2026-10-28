@@ -2,7 +2,10 @@ import { apiResponse } from "../../shared/utils/apiResponse.js"
 import { asyncHandler } from "../../shared/utils/asyncHandler.js"
 import { getStoreForManager } from "../stores/store.service.js"
 import { bulkStatus, extractBulkItems, runBulk } from "../../shared/utils/bulk.util.js"
-import { parseCreateCustomer } from "./customer.validation.js"
+import { parseCreateCustomer, parsePatchCustomer } from "./customer.validation.js"
+import { Customer } from "./customer.model.js"
+import { Location } from "../locations/location.model.js"
+import { bulkUpdateResponse, optionalUuidOfNumber, runBulkUpdate } from "../../shared/utils/bulkUpdate.util.js"
 import * as customerService from "./customer.service.js"
 
 export const list = asyncHandler(async (req, res) => {
@@ -57,4 +60,23 @@ export const addCredit = asyncHandler(async (req, res) => {
     req.user
   )
   return apiResponse(res, 201, "Credit entry recorded", data)
+})
+
+/**
+ * PATCH /customers/bulk (POS offline sync) — items[] = [{ id (customer number), ...fields }]:
+ * name, email, phone, location_id, debt_notes, is_active.
+ */
+export const patchBulk = asyncHandler(async (req, res) => {
+  const data = await runBulkUpdate(req.body, {
+    model: Customer,
+    column: "customer_number",
+    label: "Customer",
+    storeId: req.storeId,
+    handler: async (uuid, fields) => {
+      const location = await optionalUuidOfNumber(Location, "location_id_int", req.storeId, fields.location_id, "Location")
+      const input = location === undefined ? fields : { ...fields, location_id: location }
+      return customerService.updateCustomer(req.storeId, uuid, parsePatchCustomer(input))
+    },
+  })
+  return bulkUpdateResponse(res, data, "Customers Updated", data.created)
 })

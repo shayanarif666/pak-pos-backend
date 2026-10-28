@@ -14,6 +14,7 @@ import {
   createLocation,
   getLocation,
   listLocations,
+  patchBulk,
   patchLocation,
 } from "./location.controller.js"
 
@@ -33,6 +34,8 @@ router.post(
   validate(parseCreateLocation),
   createLocation
 )
+// Bulk update: items[] = [{ id (location number), ...fields }].
+router.patch("/bulk", patchBulk)
 router.get("/:id", getLocation)
 router.patch("/:id", validate(parsePatchLocation), patchLocation)
 

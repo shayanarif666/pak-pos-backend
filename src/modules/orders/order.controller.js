@@ -5,6 +5,7 @@ import {
   parseBulkRefundComplete,
   parseBulkRefundItem,
   parseCreateOrder,
+  parseVoidCancel,
 } from "./order.validation.js"
 import * as orderService from "./order.service.js"
 import { orderIdFromRef, resolveOrderRefs } from "./orderRefs.js"
@@ -16,6 +17,10 @@ import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { bulkLocation } from "../../shared/utils/location.util.js"
 import { Order } from "./order.model.js"
 import * as posHistory from "../pos/posHistory.service.js"
+import { Customer } from "../customers/customer.model.js"
+import { PAYMENT_METHOD } from "../../db/enums.js"
+import { AppError } from "../../shared/errors/AppError.js"
+import { bulkUpdateResponse, uuidOfNumber } from "../../shared/utils/bulkUpdate.util.js"
 
 const isPos = (req) => req.auth?.channel === "pos"
 
@@ -245,4 +250,55 @@ export const refundReceipt = asyncHandler(async (req, res) => {
     req.params.refundId
   )
   return apiResponse(res, 200, "OK", data)
+})
+
+// ---- Bulk updates (POS offline sync): { locationId?, items: [{ id (order number), ... }] } ----
+// Totals, items and taxes of a sale never change: a wrong item is a refund (+ a new sale).
+
+const ORDER_STATUS_UPDATES = ["completed", "cancelled", "voided"]
+
+function bulkOrderUpdate(message, handler) {
+  return asyncHandler(async (req, res) => {
+    const location = await bulkLocation(req)
+    const fallbackStaff = req.body?.staff_id ?? req.body?.staffId ?? null
+    const data = await runBulk(extractBulkItems(req.body), async (item) => {
+      if (!item || typeof item !== "object") throw new AppError("Each item must be an object", 400)
+      const ref = item.staff_id ?? item.staffId ?? fallbackStaff
+      const actor = await staffActor(req, ref == null ? null : String(ref))
+      if (item.id === undefined || item.id === null || item.id === "") throw new AppError("Order id is required", 400)
+      return handler(actor, await orderAt(actor.store_id, item.id, location), item)
+    })
+    const rows = isPos(req) ? await posOrders(data.created.map((row) => row.id)) : data.created
+    return bulkUpdateResponse(res, data, message, rows)
+  })
+}
+
+/** PATCH /orders/bulk — { id, customer_id }: attach the customer the cashier forgot to pick. */
+export const patchBulk = bulkOrderUpdate("Orders Updated", async (actor, id, item) => {
+  const ref = item.customer_id ?? item.customerId
+  if (ref === undefined || ref === null || ref === "") throw new AppError("customer_id is required", 400)
+  const customerId = await uuidOfNumber(Customer, "customer_number", actor.store_id, ref, "Customer")
+  return orderService.attachOrderCustomer(actor, id, customerId)
+})
+
+/**
+ * PATCH /orders/bulk/status — { id, status, reason?, approval_request_id? }:
+ * completed (a pending web / COD order delivered and paid), cancelled (a pending order),
+ * voided (a completed sale; stock goes back, a cashier needs an approval).
+ */
+export const patchBulkStatus = bulkOrderUpdate("Order Status Updated", async (actor, id, item) => {
+  if (!ORDER_STATUS_UPDATES.includes(item.status)) {
+    throw new AppError(`status must be one of: ${ORDER_STATUS_UPDATES.join(", ")}`, 400)
+  }
+  if (item.status === "completed") return orderService.completePendingOrder(actor, id)
+  const fields = parseVoidCancel(item)
+  if (item.status === "cancelled") return orderService.cancelOrder(actor, id, fields)
+  return orderService.voidOrder(actor, id, fields)
+})
+
+/** PATCH /orders/bulk/payment-method — { id, payment_method }: the wrong method was pressed. */
+export const patchBulkPaymentMethod = bulkOrderUpdate("Payment Method Updated", async (actor, id, item) => {
+  const method = item.payment_method ?? item.method
+  if (!PAYMENT_METHOD.includes(method) || method === "mixed") throw new AppError("Invalid payment_method", 400)
+  return orderService.changePaymentMethod(actor, id, method)
 })

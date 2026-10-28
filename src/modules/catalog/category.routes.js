@@ -14,7 +14,16 @@ import {
   parseCreateCategory,
   parsePatchCategory,
 } from "./category.validation.js"
-import { create, createBulk, getOne, list, patch, remove } from "./category.controller.js"
+import {
+  create,
+  createBulk,
+  getOne,
+  list,
+  patch,
+  patchBulk,
+  patchBulkStatus,
+  remove,
+} from "./category.controller.js"
 
 const router = Router()
 const tenant = [authMiddleware, tenantMiddleware, requireTenantStore]
@@ -50,6 +59,9 @@ router.post(
   authorize("store_admin", "manager"),
   createBulk
 )
+// Bulk updates (POS offline sync): items[] = [{ id (category number), ...fields }].
+router.patch("/bulk", ...tenant, authorize("store_admin", "manager"), patchBulk)
+router.patch("/bulk/status", ...tenant, authorize("store_admin", "manager"), patchBulkStatus)
 router.get(
   "/:id",
   ...tenant,

@@ -5,7 +5,7 @@ import {
   requireTenantStore,
   tenantMiddleware,
 } from "../../shared/middlewares/tenant.middleware.js"
-import { clockIn, clockOut, list } from "./staffSession.controller.js"
+import { clockIn, clockOut, patchBulk, list } from "./staffSession.controller.js"
 
 const router = Router()
 
@@ -15,5 +15,7 @@ router.use(authMiddleware, authorize("store_admin", "manager"), tenantMiddleware
 router.get("/", list)
 router.post("/clock-in", clockIn)
 router.post("/clock-out", clockOut)
+// A manager corrects attendance: items[] = [{ id (session number), clock_in_at?, clock_out_at? }].
+router.patch("/bulk", patchBulk)
 
 export default router

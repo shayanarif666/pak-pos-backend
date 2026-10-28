@@ -10,6 +10,7 @@ import { Receipt } from "../payments/receipt.model.js"
 import { User } from "../auth/user.model.js"
 import { Location } from "../locations/location.model.js"
 import { Customer } from "../customers/customer.model.js"
+import { PaymentMethodTaxRate } from "../stores/paymentMethodTaxRate.model.js"
 import { CustomerCreditEntry } from "../customers/customerCreditEntry.model.js"
 import {
   nextOrderRefundItemNumber,
@@ -982,4 +983,121 @@ export async function getRefundReceipt(actor, orderId, refundId) {
     },
     customer: view.customer,
   }
+}
+
+// ---- Order updates (money stays as sold: totals, items and taxes are never edited) ----
+
+/** A pending (web / COD) order delivered and paid: its payments succeed and it completes. */
+export async function completePendingOrder(actor, id) {
+  const order = await findOrder(actor.store_id, id)
+  assertCanSee(actor, order)
+  if (order.order_status !== "pending") throw new ConflictError("Only a pending order can be completed")
+  return sequelize.transaction(async (transaction) => {
+    const now = new Date()
+    for (const payment of order.Payments || []) {
+      if (payment.status === "initiated") {
+        await payment.update({ status: "success", paid_at: now }, { transaction })
+      }
+    }
+    await order.update(
+      {
+        order_status: "completed",
+        payment_status: "paid",
+        amount_paid: Math.max(Number(order.amount_paid || 0), Number(order.total_amount || 0)),
+      },
+      { transaction }
+    )
+    await writeAudit({
+      action: "update",
+      entity_type: "orders",
+      entity_id: order.id,
+      store_id: order.store_id,
+      store_id_int: order.store_id_int,
+      location_id: order.location_id,
+      location_id_int: order.location_id_int,
+      user_id: actor.id,
+      channel: order.channel,
+      note: "Order completed",
+    })
+    return publicOrder(await findOrder(actor.store_id, id))
+  })
+}
+
+/**
+ * The cashier pressed the wrong method (e.g. cash instead of card). Only for a one-method sale
+ * that has no refund yet, while its batch is still open, and only between methods with the same
+ * payment tax — otherwise the bill itself changes, so void it and ring it up again.
+ */
+export async function changePaymentMethod(actor, id, method) {
+  const order = await findOrder(actor.store_id, id)
+  assertCanSee(actor, order)
+  if (order.order_status !== "completed") throw new ConflictError("Only a completed sale can change its payment method")
+  const payments = (order.Payments || []).filter((row) => row.status !== "failed")
+  if (payments.length !== 1 || order.payment_method === "mixed") {
+    throw new ConflictError("A split payment cannot be changed; void it and ring it up again")
+  }
+  const payment = payments[0]
+  if (payment.method === method) return publicOrder(order)
+  if (await OrderRefund.count({ where: { order_id: order.id } })) {
+    throw new ConflictError("This sale has a refund; its payment method cannot change")
+  }
+  const session = order.register_session_id ? await RegisterSession.findByPk(order.register_session_id) : null
+  if (session && session.status !== "open") {
+    throw new ConflictError("The batch of this sale is closed; its payment method cannot change")
+  }
+  const charged = Number(payment.tax_amount || 0)
+  if (charged > 0) {
+    const rate = await PaymentMethodTaxRate.findOne({ where: { store_id: order.store_id, payment_method: method } })
+    const share = Number(payment.amount) - charged
+    const newTax = money((share * Number(rate?.gst_percent || 0)) / 100)
+    if (Math.abs(newTax - charged) > 0.01) {
+      throw new ConflictError(
+        `${payment.method} and ${method} have a different payment tax, so the bill would change; void it and ring it up again`
+      )
+    }
+  }
+
+  return sequelize.transaction(async (transaction) => {
+    const before = payment.method
+    await payment.update({ method }, { transaction })
+    const breakdown = order.tax_breakdown && typeof order.tax_breakdown === "object" ? order.tax_breakdown : null
+    const splits = Array.isArray(breakdown?.payment_gst)
+      ? breakdown.payment_gst.map((row) => (row.method === before ? { ...row, method } : row))
+      : null
+    await order.update(
+      { payment_method: method, ...(splits ? { tax_breakdown: { ...breakdown, payment_gst: splits } } : {}) },
+      { transaction }
+    )
+    // The drawer: the amount moves from the old method's total to the new one's.
+    if (session) {
+      const amount = Number(payment.amount)
+      await applySessionSale(session, { payments: [{ method: before, amount }], total: amount, reverse: true }, { transaction })
+      await applySessionSale(session, { payments: [{ method, amount }], total: amount }, { transaction })
+    }
+    await writeAudit({
+      action: "update",
+      entity_type: "orders",
+      entity_id: order.id,
+      store_id: order.store_id,
+      store_id_int: order.store_id_int,
+      location_id: order.location_id,
+      location_id_int: order.location_id_int,
+      user_id: actor.id,
+      channel: order.channel,
+      note: `Payment method ${before} -> ${method}`,
+    })
+    return publicOrder(await findOrder(actor.store_id, id))
+  })
+}
+
+/** The cashier forgot to pick the customer: attach one to a sale that has none. */
+export async function attachOrderCustomer(actor, id, customerId) {
+  const order = await findOrder(actor.store_id, id)
+  assertCanSee(actor, order)
+  if (order.customer_id && order.customer_id !== customerId) {
+    throw new ConflictError("This order already has a customer")
+  }
+  const customer = await getCustomer(order.store_id, customerId)
+  await order.update({ customer_id: customer.id })
+  return publicOrder(await findOrder(actor.store_id, id))
 }

@@ -406,6 +406,7 @@ export async function posTransfers(transfers) {
     to_location: refs.location(transfer.to_location_id),
     product: refs.product(transfer.product_id),
     qty: num(transfer.qty),
+    received_qty: num(transfer.received_qty),
     status: transfer.status,
     note: transfer.note || null,
     staff: refs.staff(transfer.created_by),
@@ -530,6 +531,9 @@ export async function posProducts(views) {
     low_stock_threshold: num(view.low_stock_threshold),
     total_price_each_unit: num(view.total_price_each_unit),
     total_pack_price: num(view.total_pack_price),
+    is_active: Boolean(view.is_active),
+    is_pos_visible: view.is_pos_visible !== false,
+    is_web_visible: view.is_web_visible !== false,
   }))
 }
 

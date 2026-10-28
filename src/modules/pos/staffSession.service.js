@@ -6,6 +6,8 @@ import { writeAudit } from "../../shared/utils/audit.util.js"
 import { nextStaffSessionNumber } from "../../shared/utils/counter.util.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
+import { AppError } from "../../shared/errors/AppError.js"
+import { User } from "../auth/user.model.js"
 
 /** POS shape: { id, staffId, status, opening_at | closing_at } with short numbers. */
 async function publicStaffSession(row, staff) {
@@ -91,4 +93,46 @@ export async function clockStatusOf(storeId, userIds) {
   })
   const on = new Set(rows.map((row) => row.user_id))
   return new Map(ids.map((id) => [id, on.has(id) ? "clock_in" : "clock_out"]))
+}
+
+/**
+ * A manager corrects an attendance row: clock_in_at / clock_out_at (e.g. the cashier forgot to
+ * clock out). Setting clock_out_at closes the session. A manager only at their own location.
+ */
+export async function updateStaffSession(actor, id, fields) {
+  const row = await StaffSession.findOne({ where: { id, store_id: actor.store_id } })
+  if (!row) throw new NotFoundError("Staff session not found")
+  if (actor.role !== "store_admin" && row.location_id && row.location_id !== actor.location_id) {
+    throw new NotFoundError("Staff session not found")
+  }
+  const dateOf = (key) => {
+    if (fields[key] === undefined) return undefined
+    const date = new Date(fields[key])
+    if (fields[key] === null || Number.isNaN(date.getTime())) throw new AppError(`${key} must be a date-time`, 400)
+    return date
+  }
+  const clockIn = dateOf("clock_in_at")
+  const clockOut = dateOf("clock_out_at")
+  if (clockIn === undefined && clockOut === undefined) throw new AppError("Send clock_in_at and / or clock_out_at", 400)
+  const start = clockIn ?? row.clock_in_at
+  const end = clockOut ?? row.clock_out_at
+  if (end && start && new Date(end) <= new Date(start)) throw new AppError("clock_out_at must be after clock_in_at", 400)
+
+  await row.update({
+    ...(clockIn ? { clock_in_at: clockIn } : {}),
+    ...(clockOut ? { clock_out_at: clockOut, status: "clock_out" } : {}),
+  })
+  const staff = await User.findByPk(row.user_id, { attributes: ["id", "user_number", "name", "role"] })
+  await writeAudit({
+    action: "update",
+    entity_type: "staff_sessions",
+    entity_id: row.id,
+    store_id: row.store_id,
+    store_id_int: row.store_id_int,
+    location_id: row.location_id,
+    location_id_int: row.location_id_int,
+    user_id: actor.id,
+    channel: "pos",
+  })
+  return publicStaffSession(row, staff)
 }

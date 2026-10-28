@@ -2,7 +2,9 @@ import { apiResponse } from "../../shared/utils/apiResponse.js"
 import { asyncHandler } from "../../shared/utils/asyncHandler.js"
 import { getStoreForManager } from "../stores/store.service.js"
 import { bulkStatus, extractBulkItems, posBulkResponse, runBulk } from "../../shared/utils/bulk.util.js"
-import { parseCreateSupplier } from "./supplier.validation.js"
+import { parseCreateSupplier, parsePatchSupplier } from "./supplier.validation.js"
+import { Supplier } from "./supplier.model.js"
+import { bulkUpdateResponse, runBulkUpdate } from "../../shared/utils/bulkUpdate.util.js"
 import * as supplierService from "./supplier.service.js"
 import { posSupplier } from "../pos/posResponses.js"
 import * as posHistory from "../pos/posHistory.service.js"
@@ -51,4 +53,20 @@ export const patch = asyncHandler(async (req, res) => {
 export const remove = asyncHandler(async (req, res) => {
   const data = await supplierService.deactivateSupplier(req.storeId, req.params.id, req.user)
   return apiResponse(res, 200, "Supplier deactivated", data)
+})
+
+/**
+ * PATCH /suppliers/bulk (POS offline sync) — items[] = [{ id (supplier number), ...fields }]:
+ * name, phone, email, address, payment_terms, is_active, location_scope / location_ids.
+ */
+export const patchBulk = asyncHandler(async (req, res) => {
+  const data = await runBulkUpdate(req.body, {
+    model: Supplier,
+    column: "supplier_number",
+    label: "Supplier",
+    storeId: req.storeId,
+    handler: (uuid, fields) => supplierService.updateSupplier(req.storeId, uuid, parsePatchSupplier(fields), req.user),
+  })
+  const rows = req.auth?.channel === "pos" ? data.created.map(posSupplier) : data.created
+  return bulkUpdateResponse(res, data, "Suppliers Updated", rows)
 })

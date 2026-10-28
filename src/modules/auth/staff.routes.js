@@ -7,7 +7,18 @@ import {
 } from "../../shared/middlewares/tenant.middleware.js"
 import { validate } from "../../shared/middlewares/validate.middleware.js"
 import { parseCreateStaff, parsePatchStaff } from "./staff.validation.js"
-import { create, createBulk, getOne, list, patch, sales } from "./staff.controller.js"
+import {
+  create,
+  createBulk,
+  getOne,
+  list,
+  patch,
+  patchBulk,
+  patchBulkLocation,
+  patchBulkPassword,
+  patchBulkStatus,
+  sales,
+} from "./staff.controller.js"
 
 const router = Router()
 
@@ -21,6 +32,11 @@ router.use(
 router.get("/", list)
 router.post("/", validate(parseCreateStaff), create)
 router.post("/bulk", createBulk)
+// Bulk updates (POS offline sync): items[] = [{ id (staff number), ...fields }].
+router.patch("/bulk", patchBulk)
+router.patch("/bulk/status", patchBulkStatus)
+router.patch("/bulk/location", patchBulkLocation)
+router.patch("/bulk/password", patchBulkPassword)
 router.get("/:id/sales", sales)
 router.get("/:id", getOne)
 router.patch("/:id", validate(parsePatchStaff), patch)

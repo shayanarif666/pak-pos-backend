@@ -7,7 +7,7 @@ import {
 } from "../../shared/middlewares/tenant.middleware.js"
 import { validate } from "../../shared/middlewares/validate.middleware.js"
 import { parsePutStock } from "./productStock.validation.js"
-import { getOne, list, listLow, put } from "./productStock.controller.js"
+import { getOne, list, listLow, patchBulk, patchBulkQty, put } from "./productStock.controller.js"
 
 const router = Router()
 const tenant = [authMiddleware, tenantMiddleware, requireTenantStore]
@@ -16,6 +16,9 @@ const write = [...tenant, authorize("store_admin", "manager")]
 
 router.get("/", ...read, list)
 router.get("/low", ...read, listLow)
+// Bulk stock updates (POS offline sync): { locationId, items: [{ product_id (number), ... }] }.
+router.patch("/bulk", ...write, patchBulk)
+router.patch("/bulk/qty", ...write, patchBulkQty)
 router.put("/:productId", ...write, validate(parsePutStock), put)
 router.get("/:id", ...write, getOne)
 

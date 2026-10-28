@@ -25,6 +25,11 @@ import {
   listExpiry,
   listWeight,
   patch,
+  patchBulk,
+  patchBulkPrice,
+  patchBulkStatus,
+  patchBulkVisibility,
+  patchBulkWeight,
   patchWeight,
   putBulkTiers,
   remove,
@@ -45,6 +50,12 @@ router.post(
   create
 )
 router.post("/bulk", ...catalogWrite, createBulk)
+// Bulk updates (POS offline sync): items[] = [{ id (product number), ...fields }].
+router.patch("/bulk", ...catalogWrite, patchBulk)
+router.patch("/bulk/weight", ...catalogWrite, patchBulkWeight)
+router.patch("/bulk/price", ...catalogWrite, patchBulkPrice)
+router.patch("/bulk/status", ...catalogWrite, patchBulkStatus)
+router.patch("/bulk/visibility", ...catalogWrite, patchBulkVisibility)
 router.get("/weight", ...catalogWrite, listWeight)
 router.get("/expiry", ...catalogWrite, listExpiry)
 router.get("/:id/bulk-tiers", ...catalogRead, listBulkTiers)

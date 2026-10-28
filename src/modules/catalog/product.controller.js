@@ -2,7 +2,18 @@ import { apiResponse } from "../../shared/utils/apiResponse.js"
 import { asyncHandler } from "../../shared/utils/asyncHandler.js"
 import { getStoreForManager } from "../stores/store.service.js"
 import { bulkStatus, posBulkResponse, extractBulkItems, runBulk } from "../../shared/utils/bulk.util.js"
-import { parseCreateProduct } from "./product.validation.js"
+import { parseCreateProduct, parsePatchProduct, parseWeightPatch } from "./product.validation.js"
+import { Product } from "./product.model.js"
+import { Category } from "./category.model.js"
+import { parseCatalogVisibility } from "../../db/channelVisibility.js"
+import { AppError } from "../../shared/errors/AppError.js"
+import {
+  bulkUpdateResponse,
+  pickFields,
+  requireBoolean,
+  runBulkUpdate,
+  uuidOfNumber,
+} from "../../shared/utils/bulkUpdate.util.js"
 import { posProduct, posProducts } from "../pos/posResponses.js"
 import * as productService from "./product.service.js"
 import * as posHistory from "../pos/posHistory.service.js"
@@ -88,3 +99,61 @@ export const putBulkTiers = asyncHandler(async (req, res) => {
   )
   return apiResponse(res, 200, "Bulk tiers saved", data)
 })
+
+// ---- Bulk updates (POS offline sync): items[] = [{ id (product number), ...fields }] ----
+
+async function withCategoryRef(storeId, fields) {
+  if (fields.category_id === undefined) return fields
+  return {
+    ...fields,
+    category_id: await uuidOfNumber(Category, "category_number", storeId, fields.category_id, "Category"),
+  }
+}
+
+function bulkProductUpdate(parse, message) {
+  return asyncHandler(async (req, res) => {
+    const data = await runBulkUpdate(req.body, {
+      model: Product,
+      column: "product_number",
+      label: "Product",
+      storeId: req.storeId,
+      handler: async (uuid, fields) =>
+        productService.updateProduct(req.storeId, uuid, parse(await withCategoryRef(req.storeId, fields))),
+    })
+    const rows = req.auth?.channel === "pos" ? await posProducts(data.created) : data.created
+    return bulkUpdateResponse(res, data, message, rows)
+  })
+}
+
+const PRICE_FIELDS = ["selling_price", "cost_price", "pack_selling_price", "pack_cost_price"]
+
+/** PATCH /products/bulk — any product field, as in create (only what is sent changes). */
+export const patchBulk = bulkProductUpdate((fields) => {
+  const patch = parsePatchProduct(fields)
+  if (!Object.keys(patch).length) throw new AppError("No fields to update", 400)
+  return patch
+}, "Products Updated")
+
+/** PATCH /products/bulk/weight — { id, is_weight_based }. */
+export const patchBulkWeight = bulkProductUpdate(parseWeightPatch, "Weight Settings Updated")
+
+/** PATCH /products/bulk/price — { id, selling_price?, cost_price?, pack_selling_price?, pack_cost_price? }. */
+export const patchBulkPrice = bulkProductUpdate(
+  (fields) => pickFields(parsePatchProduct(fields), PRICE_FIELDS, "price"),
+  "Prices Updated"
+)
+
+/** PATCH /products/bulk/status — { id, is_active }: false hides it from sale, the record stays. */
+export const patchBulkStatus = bulkProductUpdate(
+  (fields) => ({ is_active: requireBoolean(fields, "is_active") }),
+  "Product Status Updated"
+)
+
+/** PATCH /products/bulk/visibility — { id, is_pos_visible?, is_web_visible? }. */
+export const patchBulkVisibility = bulkProductUpdate((fields) => {
+  const visibility = parseCatalogVisibility(fields, { patch: true })
+  if (!Object.keys(visibility).length) {
+    throw new AppError("visibility: send is_pos_visible and / or is_web_visible", 400)
+  }
+  return visibility
+}, "Product Visibility Updated")

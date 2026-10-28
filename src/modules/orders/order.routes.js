@@ -25,6 +25,9 @@ import {
   listRefunds,
   salesByLocation,
   listPayments,
+  patchBulk,
+  patchBulkPaymentMethod,
+  patchBulkStatus,
   receipt,
   refundComplete,
   refundCompleteBulk,
@@ -51,6 +54,10 @@ const cancelled = [...tenant, authorize("store_admin", "manager")]
 
 router.post("/", ...place, validate(parseCreateOrder), create)
 router.post("/bulk", ...place, createBulk)
+// Bulk updates (POS offline sync): items[] = [{ id (order number), ... }].
+router.patch("/bulk", ...manage, patchBulk)
+router.patch("/bulk/status", ...manage, patchBulkStatus)
+router.patch("/bulk/payment-method", ...cancelled, patchBulkPaymentMethod)
 router.get("/", ...listRoles, list)
 router.get("/custom", ...staff, listCustom)
 router.get("/cancelled", ...cancelled, listCancelled)

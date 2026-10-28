@@ -19,6 +19,7 @@ import * as currencies from "./migrations/20261026120000-currencies.js"
 import * as refundType from "./migrations/20261027120000-refund-type.js"
 import * as transactionNumber from "./migrations/20261028120000-transaction-number.js"
 import * as refundPayments from "./migrations/20261029120000-refund-payments.js"
+import * as transferReceivedQty from "./migrations/20261030120000-transfer-received-qty.js"
 
 // Migrations the running code cannot work without (e.g. users.token_version is read on every
 // authenticated request). Each one checks before it changes anything, so running it on a
@@ -58,6 +59,8 @@ const REQUIRED = [
   transactionNumber,
   // order_refunds.payments (how each refund was paid back, per method).
   refundPayments,
+  // stock_transfers.received_qty (partial receive).
+  transferReceivedQty,
 ]
 
 export async function ensureSchema() {

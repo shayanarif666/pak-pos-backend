@@ -18,6 +18,8 @@ import {
   list,
   listTargets,
   patch,
+  patchBulk,
+  patchBulkStatus,
   putTargets,
   remove,
 } from "./offer.controller.js"
@@ -33,6 +35,9 @@ const add = [...tenant, authorize("store_admin", "manager", "cashier")]
 router.get("/", ...read, list)
 router.post("/", ...add, validate(parseCreateOffer), create)
 router.post("/bulk", ...add, createBulk)
+// Bulk updates (POS offline sync): items[] = [{ id (offer number), ...fields }].
+router.patch("/bulk", ...write, patchBulk)
+router.patch("/bulk/status", ...write, patchBulkStatus)
 router.get("/:id/targets", ...read, listTargets)
 router.put(
   "/:id/targets",

@@ -13,6 +13,7 @@ import {
   getOne,
   list,
   patch,
+  patchBulk,
   remove,
 } from "./supplier.controller.js"
 
@@ -29,6 +30,8 @@ router.use(
 router.get("/", list)
 router.post("/", validate(parseCreateSupplier), create)
 router.post("/bulk", createBulk)
+// Bulk update (POS offline sync): items[] = [{ id (supplier number), ...fields }].
+router.patch("/bulk", patchBulk)
 router.get("/:id", getOne)
 router.patch("/:id", validate(parsePatchSupplier), patch)
 router.delete("/:id", remove)

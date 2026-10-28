@@ -3,6 +3,9 @@ import { asyncHandler } from "../../shared/utils/asyncHandler.js"
 import * as storeService from "../stores/store.service.js"
 import * as locationService from "./location.service.js"
 import { posView } from "../pos/posHistory.service.js"
+import { Location } from "./location.model.js"
+import { parsePatchLocation } from "./location.validation.js"
+import { bulkUpdateResponse, runBulkUpdate } from "../../shared/utils/bulkUpdate.util.js"
 
 export const listLocations = asyncHandler(async (req, res) => {
   const actor = {
@@ -46,4 +49,19 @@ export const patchLocation = asyncHandler(async (req, res) => {
     req.user
   )
   return apiResponse(res, 200, "Location updated", location)
+})
+
+/**
+ * PATCH /locations/bulk — items[] = [{ id (location number), ...fields }]: name, address_line,
+ * city, postal_code, phone, is_active, is_default, manager_* (a manager only their own branch).
+ */
+export const patchBulk = asyncHandler(async (req, res) => {
+  const data = await runBulkUpdate(req.body, {
+    model: Location,
+    column: "location_id_int",
+    label: "Location",
+    storeId: req.storeId,
+    handler: (uuid, fields) => locationService.updateLocation(req.storeId, uuid, parsePatchLocation(fields), req.user),
+  })
+  return bulkUpdateResponse(res, data, "Locations Updated", data.created)
 })

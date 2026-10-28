@@ -2,7 +2,9 @@ import { apiResponse } from "../../shared/utils/apiResponse.js"
 import { asyncHandler } from "../../shared/utils/asyncHandler.js"
 import { getStoreForManager } from "../stores/store.service.js"
 import { bulkStatus, posBulkResponse, extractBulkItems, runBulk } from "../../shared/utils/bulk.util.js"
-import { parseCreateOffer } from "./offer.validation.js"
+import { parseCreateOffer, parsePatchOffer } from "./offer.validation.js"
+import { Offer } from "./offer.model.js"
+import { bulkUpdateResponse, requireBoolean, runBulkUpdate } from "../../shared/utils/bulkUpdate.util.js"
 import * as offerService from "./offer.service.js"
 import { actingAs, resolveStaff } from "../../shared/utils/staff.util.js"
 import { posOffer, posOffers } from "../pos/posResponses.js"
@@ -82,3 +84,29 @@ export const putTargets = asyncHandler(async (req, res) => {
   )
   return apiResponse(res, 200, "Targets updated", data)
 })
+
+// ---- Bulk updates (POS offline sync): items[] = [{ id (offer number), ...fields }] ----
+
+function bulkOfferUpdate(parse, message) {
+  return asyncHandler(async (req, res) => {
+    const data = await runBulkUpdate(req.body, {
+      model: Offer,
+      column: "offer_number",
+      label: "Offer",
+      storeId: req.storeId,
+      handler: (uuid, fields) => offerService.updateOffer(req.user, uuid, parse(fields)),
+    })
+    const views = data.created.map(({ summary: _summary, ...view }) => view)
+    const rows = req.auth?.channel === "pos" ? await posOffers(views) : views
+    return bulkUpdateResponse(res, data, message, rows)
+  })
+}
+
+/** PATCH /offers/bulk — name, type, discount, min / buy / get qty, dates, locations, is_active. */
+export const patchBulk = bulkOfferUpdate(parsePatchOffer, "Offers Updated")
+
+/** PATCH /offers/bulk/status — { id, is_active }: switch a sale on or off at once. */
+export const patchBulkStatus = bulkOfferUpdate(
+  (fields) => ({ is_active: requireBoolean(fields, "is_active") }),
+  "Offer Status Updated"
+)

@@ -188,7 +188,15 @@ export async function putStock(actor, productId, fields) {
     else if (fields.delta !== undefined) newQty = oldQty + Number(fields.delta)
 
     const signed = newQty - oldQty
-    const movement_type = signed > 0 ? "stock_in" : signed < 0 ? "stock_out" : "adjustment"
+    const derived = signed > 0 ? "stock_in" : signed < 0 ? "stock_out" : "adjustment"
+    // A sent movement_type must match the direction: stock_in adds, stock_out takes away.
+    if (fields.movement_type === "stock_in" && signed < 0) {
+      throw new AppError("stock_in cannot lower the stock", 400)
+    }
+    if (fields.movement_type === "stock_out" && signed > 0) {
+      throw new AppError("stock_out cannot raise the stock", 400)
+    }
+    const movement_type = fields.movement_type || derived
     const reason =
       fields.reason ||
       (oldQty !== 0 ? (signed > 0 ? "purchase" : "count") : "opening_balance")
