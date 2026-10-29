@@ -8,6 +8,7 @@ import {
   money,
   priceAfterProductDiscount,
   priceCatalogLine,
+  productUnitDiscount,
   quoteOrderTotals,
   quoteShipping,
   splitPaymentTax,
@@ -35,6 +36,23 @@ describe("pricing.service", () => {
       discount_value: 10,
     }
     assert.equal(priceAfterProductDiscount(product), 90)
+  })
+
+  it("applies the category discount after the product discount", () => {
+    const product = {
+      id: "p1",
+      selling_price: 100,
+      has_product_discount: true,
+      discount_type: "percentage",
+      discount_value: 5,
+      category: { discount_type: "percentage", discount_value: 5 },
+    }
+    assert.equal(productUnitDiscount(product), 9.75)
+    assert.equal(priceAfterProductDiscount(product), 90.25)
+    const line = priceCatalogLine({ product, quantity: 2 })
+    assert.equal(line.discount_amount, 19.5)
+    assert.equal(line.subtotal, 180.5)
+    assert.equal(line.pricing_source, "product+category")
   })
 
   it("applies category discount when product has none", () => {

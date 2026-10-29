@@ -22,16 +22,22 @@ function categoryOf(product, category) {
   return category || product?.Category || product?.category || null
 }
 
+/**
+ * Discount on one unit: the product's own discount, then the category's discount on what is
+ * left (both apply, one after the other: 100 → 5% → 95 → 5% → 90.25). Each is capped so the
+ * price never goes below 0.
+ */
 export function productUnitDiscount(product, category) {
   const list = Number(product.selling_price || 0)
-  if (product.has_product_discount) {
-    return applyDiscount(list, product.discount_type, product.discount_value)
-  }
+  const own = product.has_product_discount
+    ? applyDiscount(list, product.discount_type, product.discount_value)
+    : 0
   const cat = categoryOf(product, category)
-  if (cat?.discount_type && cat.discount_value != null) {
-    return applyDiscount(list, cat.discount_type, cat.discount_value)
-  }
-  return 0
+  const fromCategory =
+    cat?.discount_type && cat.discount_value != null
+      ? applyDiscount(money(list - own), cat.discount_type, cat.discount_value)
+      : 0
+  return money(own + fromCategory)
 }
 
 export function priceAfterProductDiscount(product, category) {
@@ -130,12 +136,14 @@ export function priceCatalogLine({
   const afterProduct = priceAfterProductDiscount(product, product.Category || product.category)
   const live = offers.filter((offer) => offerIsLive(offer, { locationId, now }))
   const matching = live.filter((offer) => matchingTargets(offer, product).length)
-  const catalogSource =
-    product.has_product_discount
-      ? "product"
-      : product.Category?.discount_type || product.category?.discount_type
-        ? "category"
-        : "list"
+  const hasCategoryDiscount = Number((product.Category || product.category)?.discount_value) > 0
+  const catalogSource = product.has_product_discount
+    ? hasCategoryDiscount
+      ? "product+category"
+      : "product"
+    : hasCategoryDiscount
+      ? "category"
+      : "list"
 
   const candidates = [
     {

@@ -18,10 +18,14 @@ Follow these steps in this exact order so the POS shows the same numbers the bac
 
 ```
 list       = product.selling_price
-unitDisc   = product discount if has_product_discount, else category discount, else 0
-             percentage → round(list × value / 100)      fixed → value      (never more than list)
+ownDisc    = has_product_discount ? product discount on list : 0
+catDisc    = category discount on (list − ownDisc)          ← both apply, one after the other
+             percentage → round(base × value / 100)      fixed → value      (never more than base)
+unitDisc   = round(ownDisc + catDisc)
 discount   = round(unitDisc × qty)
 ```
+
+Example: 100 Rs, product 5% + category 5% → 5 + 4.75 = 9.75 off → 90.25 per unit.
 
 If a live offer applies (flash sale / promotional / bulk / BOGO), work out the saving of each one. Take **the one that saves the most** and use it instead of the line above. Offers never stack.
 
