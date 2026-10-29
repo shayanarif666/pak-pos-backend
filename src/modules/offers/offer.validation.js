@@ -182,7 +182,7 @@ export function parseCreateOffer(body) {
     get_qty: optionalInt(body, "get_qty"),
     start_at: optionalDate(body, "start_at"),
     end_at: optionalDate(body, "end_at"),
-    is_active: body.is_active === undefined ? true : Boolean(body.is_active),
+    is_active: offerActive(body) ?? true,
   }
   assertWindow(fields.start_at, fields.end_at)
   assertOfferRules(fields)
@@ -214,7 +214,8 @@ export function parsePatchOffer(body) {
   if (body.get_qty !== undefined) patch.get_qty = optionalInt(body, "get_qty")
   if (body.start_at !== undefined) patch.start_at = optionalDate(body, "start_at")
   if (body.end_at !== undefined) patch.end_at = optionalDate(body, "end_at")
-  if (body.is_active !== undefined) patch.is_active = Boolean(body.is_active)
+  const active = offerActive(body)
+  if (active !== undefined) patch.is_active = active
   if (!Object.keys(patch).length) throw new AppError("No fields to update", 400)
   return patch
 }
@@ -250,4 +251,19 @@ export function parseReplaceTargets(body) {
   const raw = Array.isArray(body) ? body : body.targets
   if (!Array.isArray(raw)) throw new AppError("targets must be an array", 400)
   return raw.map(parseTargetRow)
+}
+
+/**
+ * Active / inactive: is_active (true / false) or status ("active" / "inactive"). An inactive
+ * offer is never applied to any product or category. undefined = not sent.
+ */
+export function offerActive(body) {
+  if (body.status !== undefined && body.status !== null && body.status !== "") {
+    const status = String(body.status).toLowerCase()
+    if (status !== "active" && status !== "inactive") throw new AppError("status must be active or inactive", 400)
+    return status === "active"
+  }
+  if (body.is_active === undefined || body.is_active === null) return undefined
+  if (body.is_active === "false" || body.is_active === 0 || body.is_active === "0") return false
+  return Boolean(body.is_active)
 }

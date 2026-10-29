@@ -466,6 +466,7 @@ export async function posOffers(views) {
       location_scope: view.location_scope || "all",
       locations: (view.locations || []).map((row) => ({ id: row.location_number ?? row.id ?? null, name: row.name || null })),
       is_active: view.is_active,
+      status: view.is_active ? "active" : "inactive",
       staff: refs.staff(view.created_by),
     }
   })
