@@ -3,6 +3,8 @@ import { asyncHandler } from "../../shared/utils/asyncHandler.js"
 import * as sessionService from "./registerSession.service.js"
 import { resolveStaff } from "../../shared/utils/staff.util.js"
 import * as posHistory from "./posHistory.service.js"
+import { parseCloseBatch, parseOpenBatch } from "./registerSession.validation.js"
+import { extractBulkItems, posBulkResponse, runBulk } from "../../shared/utils/bulk.util.js"
 
 function actorFromReq(req) {
   const user = req.user
@@ -37,20 +39,24 @@ export const getOne = asyncHandler(async (req, res) => {
   return apiResponse(res, 200, "OK", data)
 })
 
-async function batchStaff(req, actor) {
-  return resolveStaff(actor.store_id, req.body.staff_ref, req.user)
+/**
+ * Batch open / close: one batch (body already validated by the route) or, for POS offline sync,
+ * several at once ({ location_id?, items: [{ staffId, ... }, ...] }) — each item validated and
+ * saved on its own, in order; a location_id sent once applies to every item without its own.
+ */
+function batchAction(run, parse, status, message) {
+  return asyncHandler(async (req, res) => {
+    const actor = actorFromReq(req)
+    const one = async ({ staff_ref, ...fields }) =>
+      run(actor, await resolveStaff(actor.store_id, staff_ref, req.user), fields)
+    if (!Array.isArray(req.body?.items)) return apiResponse(res, status, message, await one(req.body))
+    const location_id = req.body.location_id ?? req.body.locationId
+    const data = await runBulk(extractBulkItems(req.body), (item) =>
+      one(parse({ ...(location_id == null ? {} : { location_id }), ...(item || {}) }))
+    )
+    return posBulkResponse(res, data, message, data.created)
+  })
 }
 
-export const openBatch = asyncHandler(async (req, res) => {
-  const actor = actorFromReq(req)
-  const { staff_ref: _ref, ...fields } = req.body
-  const data = await sessionService.openBatch(actor, await batchStaff(req, actor), fields)
-  return apiResponse(res, 201, "Batch Open", data)
-})
-
-export const closeBatch = asyncHandler(async (req, res) => {
-  const actor = actorFromReq(req)
-  const { staff_ref: _ref, ...fields } = req.body
-  const data = await sessionService.closeBatch(actor, await batchStaff(req, actor), fields)
-  return apiResponse(res, 200, "Batch Closed", data)
-})
+export const openBatch = batchAction(sessionService.openBatch, parseOpenBatch, 201, "Batch Open")
+export const closeBatch = batchAction(sessionService.closeBatch, parseCloseBatch, 200, "Batch Closed")

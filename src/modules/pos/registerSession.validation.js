@@ -61,7 +61,8 @@ export function parseOpenBatch(body) {
     note: body.note == null || body.note === "" ? null : String(body.note).trim(),
     // Offline POS: when this shift actually opened, if that's earlier than when this request
     // reaches the server. Defaults to now when omitted.
-    opened_at: optionalDate(body, "opened_at"),
+    // opening_at (the name the POS replies with) also works.
+    opened_at: optionalDate(body, "opened_at") ?? optionalDate(body, "opening_at"),
   }
 }
 
@@ -84,6 +85,7 @@ export function parseCloseBatch(body) {
     note: body.note == null || body.note === "" ? null : String(body.note).trim(),
     // Offline POS: when this shift actually closed (e.g. at day-end), if that's earlier than
     // when this request reaches the server. Defaults to now when omitted.
-    closed_at: optionalDate(body, "closed_at"),
+    // closing_at (the name the POS replies with) also works.
+    closed_at: optionalDate(body, "closed_at") ?? optionalDate(body, "closing_at"),
   }
 }

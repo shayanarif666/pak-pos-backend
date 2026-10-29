@@ -5,7 +5,7 @@ import {
   requireTenantStore,
   tenantMiddleware,
 } from "../../shared/middlewares/tenant.middleware.js"
-import { validate } from "../../shared/middlewares/validate.middleware.js"
+import { validateOneOrBulk } from "../../shared/middlewares/validate.middleware.js"
 import { parseCloseBatch, parseOpenBatch } from "./registerSession.validation.js"
 import {
   closeBatch,
@@ -24,8 +24,8 @@ router.get("/", ...staff, list)
 router.get("/current", ...till, current)
 // Batch (cash drawer) opening / closing. Mounted at /batches and, for older clients,
 // /register-sessions.
-router.post("/open", ...till, validate(parseOpenBatch), openBatch)
-router.post("/close", ...till, validate(parseCloseBatch), closeBatch)
+router.post("/open", ...till, validateOneOrBulk(parseOpenBatch), openBatch)
+router.post("/close", ...till, validateOneOrBulk(parseCloseBatch), closeBatch)
 router.get("/:id", ...staff, getOne)
 
 export default router

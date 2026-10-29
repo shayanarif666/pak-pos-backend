@@ -5,6 +5,7 @@ import * as staffSessionService from "./staffSession.service.js"
 import * as posHistory from "./posHistory.service.js"
 import { StaffSession } from "./staffSession.model.js"
 import { bulkUpdateResponse, runBulkUpdate } from "../../shared/utils/bulkUpdate.util.js"
+import { extractBulkItems, posBulkResponse, runBulk } from "../../shared/utils/bulk.util.js"
 
 // The POS sends the staff member as id (their user number); staff_id / staffId also work.
 const STAFF_KEYS = ["staff_id", "staffId", "id"]
@@ -31,19 +32,25 @@ export const list = asyncHandler(async (req, res) => {
   return posHistory.sendPage(res, await posHistory.staffSessions(req))
 })
 
-export const clockIn = asyncHandler(async (req, res) => {
-  const actor = actorFromReq(req)
-  const staff = await resolveStaff(actor.store_id, staffRefFrom(req.body, STAFF_KEYS), req.user)
-  const data = await staffSessionService.clockIn(actor, staff, { clocked_at: clockedAt(req.body) })
-  return apiResponse(res, 201, "Clock In Session", data)
-})
+/**
+ * Clock in / out: one staff member ({ staffId, clocked_at? }) or, for POS offline sync, many at
+ * once ({ items: [{ staffId, clocked_at? }, ...] }) — each item saved on its own, in order.
+ */
+function clockAction(run, status, message) {
+  return asyncHandler(async (req, res) => {
+    const actor = actorFromReq(req)
+    const one = async (body) => {
+      const staff = await resolveStaff(actor.store_id, staffRefFrom(body, STAFF_KEYS), req.user)
+      return run(actor, staff, { clocked_at: clockedAt(body) })
+    }
+    if (!Array.isArray(req.body?.items)) return apiResponse(res, status, message, await one(req.body || {}))
+    const data = await runBulk(extractBulkItems(req.body), (item) => one(item || {}))
+    return posBulkResponse(res, data, message, data.created)
+  })
+}
 
-export const clockOut = asyncHandler(async (req, res) => {
-  const actor = actorFromReq(req)
-  const staff = await resolveStaff(actor.store_id, staffRefFrom(req.body, STAFF_KEYS), req.user)
-  const data = await staffSessionService.clockOut(actor, staff, { clocked_at: clockedAt(req.body) })
-  return apiResponse(res, 200, "Clock Out Session", data)
-})
+export const clockIn = clockAction(staffSessionService.clockIn, 201, "Clock In Session")
+export const clockOut = clockAction(staffSessionService.clockOut, 200, "Clock Out Session")
 
 /** PATCH /staff-sessions/bulk — items[] = [{ id (session number), clock_in_at?, clock_out_at? }]. */
 export const patchBulk = asyncHandler(async (req, res) => {
