@@ -27,7 +27,7 @@ discount   = round(unitDisc × qty)
 
 Example: 100 Rs, product 5% + category 5% → 5 + 4.75 = 9.75 off → 90.25 per unit.
 
-If a live offer applies (flash sale / promotional / bulk / BOGO), work out the saving of each one. Take **the one that saves the most** and use it instead of the line above. Offers never stack.
+If a live offer applies (flash sale / promotional / bulk / BOGO), work out the saving of each one. Take **the one that saves the most** and use it instead of the line above. Offers never stack. No offer is considered when the order has `offer_exempt: true` or the line has `offer_exempt: true` (product / category discounts still apply). Only active offers count.
 
 - **Flash sale:** `unit = min(list, promo_price)`
 - **Promotional / bulk:** `unit = list − discount(list)`, and bulk applies only when `qty ≥ min_qty`

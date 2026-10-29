@@ -49,6 +49,8 @@ function parseItem(row) {
     sku: optionalString(row, "sku"),
     unit: optionalString(row, "unit"),
     cost_price: row.cost_price == null ? undefined : Number(row.cost_price),
+    // No offer on this line (the product / category discount still applies).
+    offer_exempt: Boolean(row.offer_exempt),
   }
 }
 
@@ -134,6 +136,8 @@ export function parseCreateOrder(body) {
     order_discount_value:
       body.order_discount_value == null ? undefined : Number(body.order_discount_value),
     tax_exempt: Boolean(body.tax_exempt),
+    // No offer on any line of this order (product / category discounts still apply).
+    offer_exempt: Boolean(body.offer_exempt),
     amount_paid: Array.isArray(body.amount_paid) || body.amount_paid == null || body.amount_paid === "" ? undefined : Number(body.amount_paid),
     approval_request_id: optionalUuid(body, "approval_request_id"),
     // Offline POS: when the sale was rung up on the device (ISO date-time).

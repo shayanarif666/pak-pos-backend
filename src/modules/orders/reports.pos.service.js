@@ -214,6 +214,16 @@ function salesSummary(completed, extras, query) {
     voided_orders: extras.void_orders,
     cancelled_orders: extras.cancelled_orders,
     cost: 0,
+    // Line discounts split by where they came from (lines sold before this was kept: unknown).
+    discounts_by_source: {
+      product: 0,
+      category: 0,
+      "product+category": 0,
+      bulk_tier: 0,
+      offer: 0,
+      custom: 0,
+      unknown: 0,
+    },
   }
 
   for (const { order, figures } of completed) {
@@ -230,6 +240,12 @@ function salesSummary(completed, extras, query) {
     addMoney(totals, "total_sales", figures.total)
     addMoney(totals, "cost", figures.cost)
     addTaxes(totals.taxes, figures.taxes)
+    for (const line of figures.lines) {
+      if (!(Number(line.line_discount) > 0)) continue
+      const source = line.item.discount_source
+      const key = source && source in totals.discounts_by_source ? source : "unknown"
+      addMoney(totals.discounts_by_source, key, line.line_discount)
+    }
 
     const bucket = trendBucket(order.placed_at, query)
     if (!trend.has(bucket)) trend.set(bucket, { bucket, sales: 0, orders: 0 })
@@ -307,6 +323,65 @@ function addLine(row, line) {
 }
 
 /** Per product: units, gross, discounts, net, each line tax, total (payment-method tax is per bill, see tax_breakdown). */
+function offersOf(item) {
+  const value = item.offers
+  if (Array.isArray(value)) return value
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value)
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  }
+  return []
+}
+
+/**
+ * Each offer that priced a sold line: how many orders and units it was on, units given free
+ * (BOGO), the discount it gave and the sales of those lines. Refunded units are left out.
+ */
+function byOffer(completed) {
+  const groups = new Map()
+  for (const { order, figures } of completed) {
+    for (const line of figures.lines) {
+      if (line.units <= 0) continue
+      const qty = Number(line.item.quantity || 0)
+      const share = qty > 0 ? line.units / qty : 0
+      for (const offer of offersOf(line.item)) {
+        const key = offer.id ?? offer.name
+        if (!groups.has(key)) {
+          groups.set(key, {
+            offer: { id: offer.id ?? null, name: offer.name || null, type: offer.type || null },
+            orderIds: new Set(),
+            units: 0,
+            free_units: 0,
+            discount_given: 0,
+            sales: 0,
+          })
+        }
+        const row = groups.get(key)
+        row.orderIds.add(order.id)
+        row.units = money(row.units + line.units)
+        row.free_units = money(row.free_units + Number(line.item.free_qty || 0) * share)
+        addMoney(row, "discount_given", line.line_discount)
+        addMoney(row, "sales", line.total)
+      }
+    }
+  }
+  const rows = [...groups.values()]
+    .map(({ orderIds, ...row }) => ({ ...row, orders: orderIds.size }))
+    .sort((a, b) => Number(b.discount_given) - Number(a.discount_given))
+  return {
+    rows,
+    totals: {
+      offers: rows.length,
+      discount_given: money(rows.reduce((sum, row) => sum + Number(row.discount_given), 0)),
+      sales: money(rows.reduce((sum, row) => sum + Number(row.sales), 0)),
+    },
+  }
+}
+
 function byProduct(completed) {
   const groups = new Map()
   for (const { figures } of completed) {
@@ -820,6 +895,7 @@ async function buildPosReports(actor, query = {}, { withLocations = false } = {}
     refunded_orders: refundedOrders(orders),
     cancelled_orders: cancelledOrders(orders),
     by_cashier: byCashier(extras.completed),
+    by_offer: byOffer(extras.completed),
     tax_breakdown: taxBreakdown(extras.completed),
     ...(withLocations ? { by_location: byLocation(extras.completed) } : {}),
   }

@@ -153,12 +153,30 @@ export async function posOrders(orderIds) {
     location: orders.map((order) => order.location_id),
     product: items.map((item) => item.product_id),
   })
+  // The line's category as sold; older lines (saved before it was kept) fall back to the product's.
+  await refs.load(
+    "category",
+    items.map((item) => item.category_id || refs.get("product", item.product_id)?.category_id)
+  )
   const currency = await currencyFor(orders.map((order) => order.store_id))
   return orders.map((order) => orderView(order, refs, currency(order.store_id)))
 }
 
 export async function posOrder(orderId) {
   return (await posOrders([orderId]))[0] || null
+}
+
+function parseList(value) {
+  if (Array.isArray(value)) return value
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value)
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  }
+  return []
 }
 
 function orderItemView(item, refs) {
@@ -171,12 +189,20 @@ function orderItemView(item, refs) {
     total: Number(lineTotal.toFixed(2)),
   }
   if (item.product_id) {
+    const categoryId = item.category_id || refs.get("product", item.product_id)?.category_id
+    const category = refs.category(categoryId)
     return {
       id: item.item_number,
       // The product as sold: the title saved on the line (it may have been renamed since).
       product: { ...(refs.product(item.product_id) || { id: null, sku: null, unit: null }), title: item.title },
+      category: category ? { ...category, name: item.category_name || category.name } : null,
       qty: num(item.quantity),
       ...prices,
+      // Where the discount came from (none | product | category | product+category | bulk_tier |
+      // offer) and the offer(s) applied, as they were at the sale. null on lines sold before this was kept.
+      discount_source: item.discount_source || null,
+      offers: parseList(item.offers),
+      free_qty: num(item.free_qty) ?? 0,
     }
   }
   return {
@@ -210,6 +236,7 @@ function orderView(order, refs, currency) {
     id: order.order_number,
     location: refs.location(order.location_id),
     is_custom: Boolean(order.is_custom),
+    offer_exempt: Boolean(order.offer_exempt),
     staff: refs.staff(order.cashier_id),
     customer: refs.customer(order.customer_id),
     batch: refs.batch(order.register_session_id),

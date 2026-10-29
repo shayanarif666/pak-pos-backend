@@ -163,6 +163,8 @@ export function priceCatalogLine({
       unit,
       discount: money((list - unit) * qty),
       offer_id: offer.id,
+      offer,
+      target,
       source: offer.type,
     })
   }
@@ -175,6 +177,7 @@ export function priceCatalogLine({
       unit: bulk.unit,
       discount: money((list - bulk.unit) * qty),
       offer_id: bulk.offer?.id || null,
+      offer: bulk.offer || null,
       source: bulk.source,
     })
   }
@@ -188,6 +191,7 @@ export function priceCatalogLine({
       unit: list,
       discount,
       offer_id: offer.id,
+      offer,
       source: "bogo",
       free_qty: free,
     })
@@ -216,6 +220,34 @@ export function priceCatalogLine({
     subtotal: line_subtotal,
     offer_id: best.offer_id,
     pricing_source: best.source,
+    discount_source: discountSource(best.source),
+    // The offer that priced this line, as it was at the sale (kept on the order line).
+    offers: best.offer ? [offerSnapshot(best.offer, best.target, best.discount)] : [],
+    free_qty: best.free_qty || 0,
+  }
+}
+
+/** Where a line's discount came from: none | product | category | product+category | bulk_tier | offer | custom. */
+export function discountSource(pricingSource) {
+  if (["flash_sale", "promotional", "bogo", "offer_bulk"].includes(pricingSource)) return "offer"
+  if (pricingSource === "product_bulk") return "bulk_tier"
+  if (pricingSource === "list" || !pricingSource) return "none"
+  return pricingSource
+}
+
+/** An offer as it was when it priced a line: { id (offer number), name, type, …, amount saved }. */
+export function offerSnapshot(offer, target, amount) {
+  return {
+    id: offer.offer_number ?? null,
+    name: offer.name || null,
+    type: offer.type,
+    discount_type: offer.discount_type || null,
+    discount_value: offer.discount_value == null ? null : Number(offer.discount_value),
+    min_qty: offer.min_qty == null ? null : Number(offer.min_qty),
+    buy_qty: offer.buy_qty == null ? null : Number(offer.buy_qty),
+    get_qty: offer.get_qty == null ? null : Number(offer.get_qty),
+    promo_price: target?.promo_price == null ? null : Number(target.promo_price),
+    amount: money(amount),
   }
 }
 

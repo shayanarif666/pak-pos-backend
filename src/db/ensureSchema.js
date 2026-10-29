@@ -20,6 +20,7 @@ import * as refundType from "./migrations/20261027120000-refund-type.js"
 import * as transactionNumber from "./migrations/20261028120000-transaction-number.js"
 import * as refundPayments from "./migrations/20261029120000-refund-payments.js"
 import * as transferReceivedQty from "./migrations/20261030120000-transfer-received-qty.js"
+import * as orderItemOffers from "./migrations/20261031120000-order-item-offers.js"
 
 // Migrations the running code cannot work without (e.g. users.token_version is read on every
 // authenticated request). Each one checks before it changes anything, so running it on a
@@ -61,6 +62,8 @@ const REQUIRED = [
   refundPayments,
   // stock_transfers.received_qty (partial receive).
   transferReceivedQty,
+  // order_items category / discount source / offers / free_qty, orders.offer_exempt.
+  orderItemOffers,
 ]
 
 export async function ensureSchema() {

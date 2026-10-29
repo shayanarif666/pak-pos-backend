@@ -312,7 +312,8 @@ export async function createOrder(actor, input) {
         product,
         quantity: item.quantity,
         weight: item.weight,
-        offers,
+        // offer_exempt (order or line): no offer; product / category discounts still apply.
+        offers: input.offer_exempt || item.offer_exempt ? [] : offers,
         bulkTiers: tiersByProduct.get(product.id) || [],
         locationId: location?.id,
         now,
@@ -323,6 +324,8 @@ export async function createOrder(actor, input) {
           ? lineTaxBreakdown({ ...store, charge_tax_on_sales: false }, null, null, 0)
           : lineTaxBreakdown(store, product, product.Category, line.subtotal, line.quantity)
       )
+      line.category_id = product.Category?.id || product.category_id || null
+      line.category_name = product.Category?.name || null
       return line
     })
 
@@ -466,6 +469,7 @@ export async function createOrder(actor, input) {
           location_id_int: location?.location_id_int || null,
           ...visibilityFromOrderChannel(channel),
           is_custom,
+          offer_exempt: Boolean(input.offer_exempt),
           order_number,
           cashier_id,
           customer_id: customer?.id || null,
@@ -531,6 +535,8 @@ export async function createOrder(actor, input) {
         product_id: line.product_id,
         title: line.title,
         custom_category: line.custom_category || null,
+        category_id: line.category_id || null,
+        category_name: line.category_name || null,
         sku: line.sku,
         barcode: line.barcode,
         unit: line.unit,
@@ -541,6 +547,10 @@ export async function createOrder(actor, input) {
         cost_price: line.cost_price,
         quantity: line.quantity,
         discount_amount: line.discount_amount,
+        discount_source: line.discount_source || (line.product_id ? "none" : "custom"),
+        offer_id: line.offer_id || null,
+        offers: line.offers || [],
+        free_qty: line.free_qty || 0,
         tax_amount: line.tax_amount,
         product_tax_amount: line.product_tax_amount || 0,
         category_tax_amount: line.category_tax_amount || 0,

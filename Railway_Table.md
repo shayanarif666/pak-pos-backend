@@ -295,6 +295,20 @@ ALTER TABLE stock_transfers ADD COLUMN received_qty DECIMAL(12,4) NULL AFTER qty
 UPDATE stock_transfers SET received_qty = qty WHERE status = 'completed';
 ```
 
+## 9. Order offers — `20261031120000-order-item-offers`
+
+What priced each sold line (category, discount source, offers, BOGO free qty) and orders.offer_exempt. Details: `backend docs/RAILWAY_TABLE_UPDATED.md`.
+
+```sql
+ALTER TABLE order_items ADD COLUMN category_id CHAR(36) NULL AFTER custom_category;
+ALTER TABLE order_items ADD COLUMN category_name VARCHAR(255) NULL AFTER category_id;
+ALTER TABLE order_items ADD COLUMN discount_source VARCHAR(32) NULL AFTER discount_amount;
+ALTER TABLE order_items ADD COLUMN offer_id CHAR(36) NULL AFTER discount_source;
+ALTER TABLE order_items ADD COLUMN offers JSON NULL AFTER offer_id;
+ALTER TABLE order_items ADD COLUMN free_qty DECIMAL(12,4) NOT NULL DEFAULT 0 AFTER offers;
+ALTER TABLE orders ADD COLUMN offer_exempt TINYINT(1) NOT NULL DEFAULT 0;
+```
+
 ## After a manual run: mark the migrations as done
 
 So the server does not try them again on start:
@@ -307,7 +321,8 @@ INSERT IGNORE INTO SequelizeMeta (name) VALUES
   ('20261027120000-refund-type'),
   ('20261028120000-transaction-number'),
   ('20261029120000-refund-payments'),
-  ('20261030120000-transfer-received-qty');
+  ('20261030120000-transfer-received-qty'),
+  ('20261031120000-order-item-offers');
 ```
 
 ## Check

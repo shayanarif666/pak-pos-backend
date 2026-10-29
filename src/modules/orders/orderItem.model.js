@@ -16,6 +16,9 @@ export const OrderItem = sequelize.define(
     title: { type: DataTypes.TEXT, allowNull: false },
     // Custom sale lines only: the category typed at the till (no catalog product behind it).
     custom_category: { type: DataTypes.STRING(255), allowNull: true },
+    // Catalog lines: the product's category as it was at the sale.
+    category_id: uuidCol(true),
+    category_name: { type: DataTypes.STRING(255), allowNull: true },
     sku: { type: DataTypes.STRING(255), allowNull: true },
     barcode: { type: DataTypes.STRING(255), allowNull: true },
     unit: { type: DataTypes.ENUM(...PRODUCT_UNIT), allowNull: true },
@@ -31,6 +34,13 @@ export const OrderItem = sequelize.define(
       allowNull: false,
       defaultValue: 0,
     },
+    // Where discount_amount came from: none | product | category | product+category | bulk_tier | offer | custom.
+    discount_source: { type: DataTypes.STRING(32), allowNull: true },
+    offer_id: uuidCol(true),
+    // The offer(s) that priced this line, as they were at the sale: [{ id, name, type, …, amount }].
+    offers: { type: DataTypes.JSON, allowNull: true },
+    // BOGO: units given free.
+    free_qty: { type: DataTypes.DECIMAL(12, 4), allowNull: false, defaultValue: 0 },
     tax_amount: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
     product_tax_amount: {
       type: DataTypes.DECIMAL(12, 2),

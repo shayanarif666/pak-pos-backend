@@ -21,6 +21,8 @@ export const Order = sequelize.define(
     channel: { type: DataTypes.ENUM(...ORDER_CHANNEL), allowNull: false },
     ...visibilityFlagFields(),
     is_custom: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+    // Rung up with offer_exempt: no offer applied to any line.
+    offer_exempt: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     order_number: { type: DataTypes.INTEGER, allowNull: false },
     cashier_id: uuidCol(true),
     customer_id: uuidCol(true),
