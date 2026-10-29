@@ -65,6 +65,26 @@ describe("pricing.service", () => {
     assert.equal(priceAfterProductDiscount(product), 80)
   })
 
+  it("never applies an inactive, expired or other-location offer", () => {
+    const product = { id: "p1", category_id: "c1", title: "Pepsi", selling_price: 100, has_product_discount: false }
+    const offer = (extra) => ({
+      id: "o1",
+      type: "promotional",
+      is_active: true,
+      discount_type: "percentage",
+      discount_value: 10,
+      OfferTargets: [{ category_id: "c1" }],
+      ...extra,
+    })
+    const priced = (row) => priceCatalogLine({ product, quantity: 2, offers: [row], locationId: "l1" })
+    assert.equal(priced(offer()).discount_source, "offer")
+    assert.equal(priced(offer()).discount_amount, 20)
+    assert.equal(priced(offer({ is_active: false })).discount_amount, 0)
+    assert.equal(priced(offer({ end_at: "2020-01-01T00:00:00Z" })).discount_amount, 0)
+    assert.equal(priced(offer({ location_scope: "selected", offerLocations: [{ location_id: "l2" }] })).discount_amount, 0)
+    assert.deepEqual(priced(offer({ is_active: false })).offers, [])
+  })
+
   it("computes BOGO free qty in groups", () => {
     assert.equal(bogoFreeQty(3, 2, 1), 1)
     assert.equal(bogoFreeQty(5, 2, 1), 1)
