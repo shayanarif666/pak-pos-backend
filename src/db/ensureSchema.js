@@ -22,12 +22,15 @@ import * as refundPayments from "./migrations/20261029120000-refund-payments.js"
 import * as transferReceivedQty from "./migrations/20261030120000-transfer-received-qty.js"
 import * as orderItemOffers from "./migrations/20261031120000-order-item-offers.js"
 import * as orderStatusV2 from "./migrations/20261101120000-order-status-v2.js"
+import * as numberColumns from "./migrations/20261102120000-number-columns.js"
 
 // Migrations the running code cannot work without (e.g. users.token_version is read on every
 // authenticated request). Each one checks before it changes anything, so running it on a
 // database that already has the change is a no-op. Deploys that only run `npm start` used to
 // skip `db:migrate`, which left production failing with "Unknown column 'token_version'".
 const REQUIRED = [
+  // The short numbers every reply uses (a fresh database lacks them; first, others build on them).
+  numberColumns,
   productImagesFeatured,
   authTokenVersionDomainUnique,
   userSessions,
