@@ -7,6 +7,7 @@ export const databaseConfig = {
   username: env.DB_USER,
   password: env.DB_PASSWORD,
   dialect: "mysql",
+  ...(env.DB_SSL ? { dialectOptions: { ssl: { minVersion: "TLSv1.2", rejectUnauthorized: true } } } : {}),
   // Keep DATETIME comparisons in UTC; report ranges use store timezone explicitly.
   timezone: "+00:00",
   logging: env.NODE_ENV === "development" ? false : false,

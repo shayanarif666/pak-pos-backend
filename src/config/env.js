@@ -19,6 +19,8 @@ export const env = {
   DB_NAME: process.env.DB_NAME || "pak_pos",
   DB_USER: process.env.DB_USER || "root",
   DB_PASSWORD: process.env.DB_PASSWORD ?? "",
+  // Hosted MySQL (Aiven, TiDB Cloud…) needs TLS: DB_SSL=true.
+  DB_SSL: process.env.DB_SSL === "true",
   JWT_SECRET: required("JWT_SECRET"),
   DB_POOL_MAX: Number(process.env.DB_POOL_MAX) || 20,
   JWT_ACCESS_EXPIRES_IN: process.env.JWT_ACCESS_EXPIRES_IN || "1d",
