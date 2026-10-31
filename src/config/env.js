@@ -44,6 +44,9 @@ export const env = {
   SMTP_USER: process.env.SMTP_USER || "",
   SMTP_PASS: process.env.SMTP_PASS || "",
   SMTP_FROM: process.env.SMTP_FROM || process.env.SMTP_USER || "",
+  // Resend (HTTPS API, preferred when set): the API key and the sender, e.g. "POS <no-reply@domain.com>".
+  RESEND_API_KEY: process.env.RESEND_API_KEY || "",
+  MAIL_FROM: process.env.MAIL_FROM || process.env.SMTP_FROM || process.env.SMTP_USER || "",
   FRONTEND_URL: process.env.FRONTEND_URL || "http://localhost:3000",
   // Render free plan: the service's own health URL, pinged every 10 min so it never sleeps.
   KEEP_ALIVE_URL: process.env.KEEP_ALIVE_URL || "",
