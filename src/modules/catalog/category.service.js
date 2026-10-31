@@ -3,6 +3,7 @@ import { sequelize } from "../../db/sequelize.js"
 import { Category } from "./category.model.js"
 import { CategoryLocation } from "./catalogLocation.model.js"
 import { Location } from "../locations/location.model.js"
+import { findLiveStoreBySlug } from "../stores/store.service.js"
 import {
   BRANCH_ROLES,
   locationScopeView,
