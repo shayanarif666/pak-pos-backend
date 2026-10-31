@@ -19,6 +19,7 @@ import { ApprovalRequest } from "../modules/pos/approvalRequest.model.js"
 import { Category } from "../modules/catalog/category.model.js"
 import { Product } from "../modules/catalog/product.model.js"
 import { ProductStock } from "../modules/catalog/productStock.model.js"
+import { CategoryLocation, ProductLocation } from "../modules/catalog/catalogLocation.model.js"
 import { ProductBulkTier } from "../modules/catalog/productBulkTier.model.js"
 import { Supplier } from "../modules/inventory/supplier.model.js"
 import { SupplierLedger } from "../modules/inventory/supplierLedger.model.js"
@@ -124,6 +125,12 @@ export function registerModels() {
   Product.belongsTo(Store, { foreignKey: "store_id" })
   Product.belongsTo(Category, { foreignKey: "category_id" })
   Category.hasMany(Product, { foreignKey: "category_id" })
+  Category.hasMany(CategoryLocation, { foreignKey: "category_id", as: "categoryLocations" })
+  CategoryLocation.belongsTo(Category, { foreignKey: "category_id" })
+  CategoryLocation.belongsTo(Location, { foreignKey: "location_id" })
+  Product.hasMany(ProductLocation, { foreignKey: "product_id", as: "productLocations" })
+  ProductLocation.belongsTo(Product, { foreignKey: "product_id" })
+  ProductLocation.belongsTo(Location, { foreignKey: "location_id" })
 
   Product.hasMany(ProductStock, { foreignKey: "product_id" })
   ProductStock.belongsTo(Product, { foreignKey: "product_id" })
@@ -260,6 +267,8 @@ export {
   Category,
   Product,
   ProductStock,
+  CategoryLocation,
+  ProductLocation,
   ProductBulkTier,
   Supplier,
   SupplierLedger,

@@ -2,7 +2,7 @@ import { DataTypes } from "sequelize"
 import { sequelize } from "../../db/sequelize.js"
 import { modelOptions, uuidCol, uuidPk } from "../../db/columnTypes.js"
 import { catalogChannelVisibilityFields } from "../../db/channelVisibility.js"
-import { DISCOUNT_TYPE, PRODUCT_UNIT } from "../../db/enums.js"
+import { DISCOUNT_TYPE, PRODUCT_UNIT, SUPPLIER_LOCATION_SCOPE } from "../../db/enums.js"
 
 export const Product = sequelize.define(
   "Product",
@@ -75,6 +75,8 @@ export const Product = sequelize.define(
     // GST are applied at checkout, not here. total_pack_price does the same on
     // pack_selling_price (fixed amounts count once per unit in the pack) and is NULL for loose
     // items. Kept up to date by product.service (productTotals) on every create / update.
+    // "all" = sold at every location; "selected" = only at the locations in product_locations.
+    location_scope: { type: DataTypes.ENUM(...SUPPLIER_LOCATION_SCOPE), allowNull: false, defaultValue: "all" },
     total_price_each_unit: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
     total_pack_price: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
     is_published: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },

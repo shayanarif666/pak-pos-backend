@@ -1,5 +1,6 @@
 import { AppError } from "../../shared/errors/AppError.js"
 import { parseCatalogVisibility } from "../../db/channelVisibility.js"
+import { parseLocationScope } from "../../shared/utils/locationScope.util.js"
 import { DISCOUNT_TYPE, TAX_AMOUNT_TYPE } from "../../db/enums.js"
 
 function requireString(body, key) {
@@ -112,6 +113,8 @@ export function parseCreateCategory(body) {
         ? 0
         : optionalInt(body, "sort_order"),
     ...parseCatalogVisibility(body),
+    // Where the category is sold: all locations (default) or selected ones.
+    ...parseLocationScope(body),
   }
   assertPair(fields.tax_type, fields.tax_value, "tax")
   assertPair(fields.discount_type, fields.discount_value, "discount")
@@ -158,5 +161,6 @@ export function parsePatchCategory(body) {
   if (body.is_active !== undefined) fields.is_active = optionalBool(body, "is_active")
   if (body.sort_order !== undefined) fields.sort_order = optionalInt(body, "sort_order")
   Object.assign(fields, parseCatalogVisibility(body, { patch: true }))
+  Object.assign(fields, parseLocationScope(body))
   return fields
 }

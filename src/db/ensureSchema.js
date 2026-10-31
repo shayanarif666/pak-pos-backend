@@ -23,6 +23,7 @@ import * as transferReceivedQty from "./migrations/20261030120000-transfer-recei
 import * as orderItemOffers from "./migrations/20261031120000-order-item-offers.js"
 import * as orderStatusV2 from "./migrations/20261101120000-order-status-v2.js"
 import * as numberColumns from "./migrations/20261102120000-number-columns.js"
+import * as catalogLocations from "./migrations/20261103120000-catalog-locations.js"
 
 // Migrations the running code cannot work without (e.g. users.token_version is read on every
 // authenticated request). Each one checks before it changes anything, so running it on a
@@ -70,6 +71,8 @@ const REQUIRED = [
   orderItemOffers,
   // partial_refunded / partial statuses, order line discount snapshots.
   orderStatusV2,
+  // categories / products location_scope and their category_locations / product_locations.
+  catalogLocations,
 ]
 
 export async function ensureSchema() {

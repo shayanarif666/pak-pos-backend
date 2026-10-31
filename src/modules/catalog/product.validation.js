@@ -1,5 +1,6 @@
 import { AppError } from "../../shared/errors/AppError.js"
 import { parseCatalogVisibility } from "../../db/channelVisibility.js"
+import { parseLocationScope } from "../../shared/utils/locationScope.util.js"
 import { DISCOUNT_TYPE, PRODUCT_UNIT, TAX_AMOUNT_TYPE } from "../../db/enums.js"
 
 /**
@@ -248,6 +249,8 @@ export function parseCreateProduct(rawBody) {
     low_stock_threshold: optionalNumber(body, "low_stock_threshold") ?? 10,
     is_published: optionalBool(body, "is_published") ?? false,
     ...parseCatalogVisibility(body),
+    // Where the product is sold: all locations (default) or selected ones.
+    ...parseLocationScope(body),
     is_active: body.is_active === undefined ? true : Boolean(body.is_active),
   }
 
@@ -330,6 +333,7 @@ export function parsePatchProduct(rawBody) {
     fields.is_published = optionalBool(body, "is_published")
   }
   Object.assign(fields, parseCatalogVisibility(body, { patch: true }))
+  Object.assign(fields, parseLocationScope(body))
   if (body.is_active !== undefined) fields.is_active = optionalBool(body, "is_active")
   return fields
 }

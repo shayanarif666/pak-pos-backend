@@ -23,13 +23,17 @@ export const DATA_MODULES = {
   },
   payments: { table: "payments", cascade: [] },
   receipts: { table: "receipts", cascade: [] },
-  categories: { table: "categories", cascade: [] },
+  categories: {
+    table: "categories",
+    cascade: [{ table: "category_locations", fk: "category_id" }],
+  },
   products: {
     table: "products",
     cascade: [
       { table: "product_stocks", fk: "product_id" },
       { table: "product_bulk_tiers", fk: "product_id" },
       { table: "reviews", fk: "product_id" },
+      { table: "product_locations", fk: "product_id" },
     ],
   },
   product_stocks: { table: "product_stocks", cascade: [] },

@@ -198,7 +198,7 @@ export async function staffSessions(req) {
 export async function categories(req) {
   const scope = await scopeOf(req)
   const pageInfo = pageOf(req.query)
-  const listed = (await listCategories(scope.store_id)).filter(inWindow(req.query, (row) => row.created_at))
+  const listed = (await listCategories(scope.store_id, scope, { location_id: scope.location_id })).filter(inWindow(req.query, (row) => row.created_at))
   const { items, total } = slicePage(listed, pageInfo)
   return paged(await posCategories(items), total, pageInfo)
 }

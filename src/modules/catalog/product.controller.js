@@ -25,13 +25,15 @@ export const list = asyncHandler(async (req, res) => {
 })
 
 export const getOne = asyncHandler(async (req, res) => {
-  const data = await productService.getProductView(req.user, req.params.id, req.query)
+  const data = await productService.getProductView(req.user, req.params.id, req.query, {
+    withSummary: req.auth?.channel !== "pos",
+  })
   return apiResponse(res, 200, "OK", data)
 })
 
 export const create = asyncHandler(async (req, res) => {
   const store = await getStoreForManager(req.storeId)
-  const product = await productService.createProduct(store, req.body)
+  const product = await productService.createProduct(store, req.body, req.user)
   if (req.auth?.channel === "pos") {
     // Every field, with short numbers (id = product_number, category_id = category_number).
     return apiResponse(res, 201, "Products Created", await posProduct(product))
@@ -42,7 +44,7 @@ export const create = asyncHandler(async (req, res) => {
 export const createBulk = asyncHandler(async (req, res) => {
   const store = await getStoreForManager(req.storeId)
   const data = await runBulk(extractBulkItems(req.body), async (item) => {
-    return productService.createProduct(store, parseCreateProduct(item))
+    return productService.createProduct(store, parseCreateProduct(item), req.user)
   })
   if (req.auth?.channel === "pos") {
     const created = []
@@ -56,7 +58,8 @@ export const patch = asyncHandler(async (req, res) => {
   const product = await productService.updateProduct(
     req.storeId,
     req.params.id,
-    req.body
+    req.body,
+    req.user
   )
   return apiResponse(res, 200, "Product updated", product)
 })
@@ -118,7 +121,12 @@ function bulkProductUpdate(parse, message) {
       label: "Product",
       storeId: req.storeId,
       handler: async (uuid, fields) =>
-        productService.updateProduct(req.storeId, uuid, parse(await withCategoryRef(req.storeId, fields))),
+        productService.updateProduct(
+          req.storeId,
+          uuid,
+          parse(await withCategoryRef(req.storeId, fields)),
+          req.user
+        ),
     })
     const rows = req.auth?.channel === "pos" ? await posProducts(data.created) : data.created
     return bulkUpdateResponse(res, data, message, rows)

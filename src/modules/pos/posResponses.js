@@ -620,6 +620,12 @@ export async function posOffer(view) {
   return (await posOffers([view]))[0]
 }
 
+/** location_scope + locations [{ id: location number, name }] (empty for "all"). */
+const posLocationScope = (view) => {
+  const locations = (view.locations || []).map((row) => ({ id: row.location_number, name: row.name || null }))
+  return { location_scope: view.location_scope || (locations.length ? "selected" : "all"), locations }
+}
+
 /** From publicCategory(): every field, with the short numbers and the parent's name. */
 export async function posCategories(views) {
   const refs = await new Refs().load("category", views.map((view) => view.parent_category_id))
@@ -636,6 +642,7 @@ export async function posCategories(views) {
     discount_type: view.discount_type || null,
     discount_value: num(view.discount_value),
     discount_name: view.discount_name || null,
+    ...posLocationScope(view),
     is_active: view.is_active,
   }))
 }
@@ -675,6 +682,7 @@ export async function posProducts(views) {
     low_stock_threshold: num(view.low_stock_threshold),
     total_price_each_unit: num(view.total_price_each_unit),
     total_pack_price: num(view.total_pack_price),
+    ...posLocationScope(view),
     is_active: Boolean(view.is_active),
     is_pos_visible: view.is_pos_visible !== false,
     is_web_visible: view.is_web_visible !== false,

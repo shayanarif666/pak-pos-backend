@@ -2,7 +2,7 @@ import { DataTypes } from "sequelize"
 import { sequelize } from "../../db/sequelize.js"
 import { modelOptions, uuidCol, uuidPk } from "../../db/columnTypes.js"
 import { catalogChannelVisibilityFields } from "../../db/channelVisibility.js"
-import { DISCOUNT_TYPE, TAX_AMOUNT_TYPE } from "../../db/enums.js"
+import { DISCOUNT_TYPE, SUPPLIER_LOCATION_SCOPE, TAX_AMOUNT_TYPE } from "../../db/enums.js"
 
 export const Category = sequelize.define(
   "Category",
@@ -24,6 +24,8 @@ export const Category = sequelize.define(
     discount_name: { type: DataTypes.STRING(255), allowNull: true },
     is_active: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
     sort_order: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+    // "all" = sold at every location; "selected" = only at the locations in category_locations.
+    location_scope: { type: DataTypes.ENUM(...SUPPLIER_LOCATION_SCOPE), allowNull: false, defaultValue: "all" },
     ...catalogChannelVisibilityFields(),
   },
   {
