@@ -620,10 +620,10 @@ export async function posOffer(view) {
   return (await posOffers([view]))[0]
 }
 
-/** location_scope + locations [{ id: location number, name }] (empty for "all"). */
+/** location_scope + location_ids: the location numbers, as sent in the request ([] for "all"). */
 const posLocationScope = (view) => {
-  const locations = (view.locations || []).map((row) => ({ id: row.location_number, name: row.name || null }))
-  return { location_scope: view.location_scope || (locations.length ? "selected" : "all"), locations }
+  const ids = (view.locations || []).map((row) => row.location_number).filter((id) => id != null)
+  return { location_scope: view.location_scope || (ids.length ? "selected" : "all"), location_ids: ids }
 }
 
 /** From publicCategory(): every field, with the short numbers and the parent's name. */
