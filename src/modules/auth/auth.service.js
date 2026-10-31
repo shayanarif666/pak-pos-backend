@@ -128,15 +128,16 @@ const posLocation = (row) => ({ id: row.location_id_int, name: row.name, address
 /**
  * POS login (store admin / manager): the store with its trial / active status, the location(s)
  * and the staff the till may switch to by PIN, all with the short numbers the POS works with.
- * - Store admin: locations[] (every active location) and users[] (every manager and cashier,
- *   each with locationId).
- * - Manager: location{} (their own) and users[] (the cashiers of that location).
+ * The signed-in user is the first row of users[] (no separate user object).
+ * - Store admin: locations[] (every active location) and users[] (the admin, locationId null,
+ *   then every manager and cashier, each with locationId).
+ * - Manager: location{} (their own) and users[] (the manager, then the cashiers of that location).
  */
 async function posLoginBody(pos, user) {
   const body = await buildPosLogin(pos, user)
-  if (!body) return { user: publicPosStaff(user, null) }
-  const store = await Store.findByPk(user.store_id, { attributes: ["id", "status"] })
-  return { user: publicPosStaff(user, store), ...body }
+  const self = publicPosStaff(user, null, { withLocation: user.role === "store_admin" })
+  if (!body) return { users: [self] }
+  return { ...body, users: [self, ...body.users] }
 }
 
 async function buildPosLogin(pos, user) {
