@@ -9,7 +9,8 @@ services:
     branch: main
     autoDeploy: true
     buildCommand: npm ci
-    startCommand: npm start
+    # A fresh database gets every table first (both steps skip what is already there).
+    startCommand: npm run db:migrate && npm run db:seed:superadmin && npm start
     healthCheckPath: /api/v1/health
     envVars:
       - key: NODE_ENV
@@ -28,6 +29,8 @@ services:
         sync: false
       - key: DB_SSL
         value: "true"
+      - key: DB_SSL_CA
+        sync: false # the provider's CA certificate (PEM)
       - key: JWT_SECRET
         generateValue: true
       - key: JWT_ACCESS_EXPIRES_IN

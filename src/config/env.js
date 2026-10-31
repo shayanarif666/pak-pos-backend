@@ -21,6 +21,9 @@ export const env = {
   DB_PASSWORD: process.env.DB_PASSWORD ?? "",
   // Hosted MySQL (Aiven, TiDB Cloud…) needs TLS: DB_SSL=true.
   DB_SSL: process.env.DB_SSL === "true",
+  // The provider's CA certificate (PEM text; Aiven: Overview → CA certificate). A literal "\n"
+  // in the value is read as a line break.
+  DB_SSL_CA: (process.env.DB_SSL_CA || "").replace(/\\n/g, "\n"),
   JWT_SECRET: required("JWT_SECRET"),
   DB_POOL_MAX: Number(process.env.DB_POOL_MAX) || 20,
   JWT_ACCESS_EXPIRES_IN: process.env.JWT_ACCESS_EXPIRES_IN || "1d",
