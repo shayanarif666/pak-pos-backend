@@ -45,6 +45,8 @@ export const env = {
   SMTP_PASS: process.env.SMTP_PASS || "",
   SMTP_FROM: process.env.SMTP_FROM || process.env.SMTP_USER || "",
   FRONTEND_URL: process.env.FRONTEND_URL || "http://localhost:3000",
+  // Render free plan: the service's own health URL, pinged every 10 min so it never sleeps.
+  KEEP_ALIVE_URL: process.env.KEEP_ALIVE_URL || "",
 }
 
 export const isProduction = env.NODE_ENV === "production"

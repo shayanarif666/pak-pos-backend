@@ -16,6 +16,9 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      # Free plan: ping our own health URL every 10 min so the service never sleeps.
+      - key: KEEP_ALIVE_URL
+        value: https://pak-pos-backend.onrender.com/api/v1/health
       - key: NODE_VERSION
         value: "24"
       - key: DB_HOST

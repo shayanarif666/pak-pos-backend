@@ -39,7 +39,25 @@ async function start() {
   const app = createApp()
   app.listen(env.PORT, () => {
     logger.info(`API listening on port ${env.PORT}`)
+    scheduleKeepAlive()
   })
+}
+
+// Render's free plan puts the service to sleep after 15 min without a request. A request to our
+// own public health URL every 10 min keeps it (and, through the health check's SELECT 1, the
+// free database) awake. Off unless KEEP_ALIVE_URL is set (not needed locally or on a paid plan).
+const KEEP_ALIVE_MS = 10 * 60 * 1000
+
+function scheduleKeepAlive() {
+  if (!env.KEEP_ALIVE_URL) return
+  setInterval(() => {
+    fetch(env.KEEP_ALIVE_URL, { signal: AbortSignal.timeout(30000) })
+      .then((res) => {
+        if (!res.ok) logger.warn(`Keep-alive ping got ${res.status}`)
+      })
+      .catch((err) => logger.warn(`Keep-alive ping failed: ${err.message}`))
+  }, KEEP_ALIVE_MS).unref()
+  logger.info(`Keep-alive ping every 10 min: ${env.KEEP_ALIVE_URL}`)
 }
 
 start().catch((err) => {
