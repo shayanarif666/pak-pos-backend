@@ -5,7 +5,7 @@ services:
     name: pak-pos-backend
     runtime: node
     region: singapore
-    plan: starter # always on; the free plan sleeps after 15 min idle (30–60 s first request)
+    plan: free # sleeps after 15 min idle (first request 30–60 s); switch to starter to keep it always on
     branch: main
     autoDeploy: true
     buildCommand: npm ci
@@ -19,7 +19,7 @@ services:
       - key: DB_HOST
         sync: false
       - key: DB_PORT
-        value: "3306"
+        sync: false # hosted MySQL ports differ (Aiven e.g. 12345, TiDB 4000)
       - key: DB_NAME
         sync: false
       - key: DB_USER
