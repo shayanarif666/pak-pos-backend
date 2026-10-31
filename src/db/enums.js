@@ -49,11 +49,16 @@ export const RECORD_CHANNEL = ["web", "pos", "both"]
 export const ORDER_STATUS = [
   "pending",
   "completed",
+  // Some items refunded; the rest of the sale stands.
+  "partial_refunded",
   "voided",
   "cancelled",
   "refunded",
 ]
-export const ORDER_PAYMENT_STATUS = ["pending", "paid", "failed", "refunded"]
+// partial = paid less than the total; the rest is udhaar (remaining_amount).
+export const ORDER_PAYMENT_STATUS = ["pending", "paid", "partial", "failed", "refunded"]
+/** Orders that are sales (all or part of them stands): reports and lists count these as sold. */
+export const SOLD_ORDER_STATUSES = ["completed", "partial_refunded"]
 export const PAYMENT_METHOD = [
   "cash",
   "card",

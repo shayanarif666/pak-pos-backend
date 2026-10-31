@@ -326,6 +326,7 @@ export async function createOrder(actor, input) {
       )
       line.category_id = product.Category?.id || product.category_id || null
       line.category_name = product.Category?.name || null
+      line.category_tax_name = product.Category?.tax_name || null
       return line
     })
 
@@ -550,6 +551,8 @@ export async function createOrder(actor, input) {
         discount_source: line.discount_source || (line.product_id ? "none" : "custom"),
         offer_id: line.offer_id || null,
         offers: line.offers || [],
+        product_discount: line.product_discount || null,
+        category_discount: line.category_discount || null,
         free_qty: line.free_qty || 0,
         tax_amount: line.tax_amount,
         product_tax_amount: line.product_tax_amount || 0,
@@ -558,6 +561,7 @@ export async function createOrder(actor, input) {
         product_taxes: line.product_taxes || [],
         category_tax_type: line.category_tax_type || null,
         category_tax_value: line.category_tax_value ?? null,
+        category_tax_name: line.category_tax_name || null,
         subtotal: line.subtotal,
       })),
       { transaction }
@@ -607,7 +611,8 @@ export async function createOrder(actor, input) {
           tax_amount,
           currency: store.currency || "PKR",
           status: isWeb ? "initiated" : "success",
-          paid_at: isWeb ? null : syncedAt,
+          // When the money changed hands: the sale's time (an offline sale syncs later).
+          paid_at: isWeb ? null : placedAt,
           // The till's card / wallet reference, if sent; transaction_number is set by the model.
           gateway_transaction_id: row.transaction_id || null,
         },
@@ -653,7 +658,8 @@ export async function createOrder(actor, input) {
         tax_amount: totals.tax_amount,
         shipping_fee: totals.shipping_fee,
         total_amount: totals.total_amount,
-        issued_at: syncedAt,
+        // The receipt is dated when the sale happened, not when an offline sale synced.
+        issued_at: placedAt,
       },
       { transaction }
     )
@@ -676,7 +682,12 @@ export async function createOrder(actor, input) {
     }
 
     await order.update(
-      { amount_paid, change_due },
+      {
+        amount_paid,
+        change_due,
+        // Paid less than the total (udhaar): partial; remaining_amount = what is still owed.
+        ...(!isWeb && creditAmount > 0 ? { payment_status: "partial" } : {}),
+      },
       { transaction }
     )
 

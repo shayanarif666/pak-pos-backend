@@ -31,8 +31,8 @@ import {
   one,
   posCategories,
   posOffers,
-  posOrder,
-  posOrders,
+  posOrderDetail,
+  posOrderHistory,
   posProducts,
   posReceipt,
   posRefundReceipt,
@@ -232,7 +232,9 @@ export async function products(req) {
 
 // ---- 4 / 13. Orders: ?status=completed | pending | cancelled (cancelled + voided) | refunded ----
 const ORDER_STATUS = {
-  completed: ["completed"],
+  // A sale with some items refunded is still a completed sale (status partial_refunded).
+  completed: ["completed", "partial_refunded"],
+  partial_refunded: ["partial_refunded"],
   pending: ["pending"],
   cancelled: ["cancelled", "voided"],
   refunded: ["refunded"],
@@ -244,7 +246,7 @@ export async function orders(req) {
   const where = { store_id: scope.store_id, ...atLocation(scope), ...dateRange(req.query, "placed_at") }
   const status = queryRef(req.query, "status")
   if (status && status !== "all") {
-    if (!ORDER_STATUS[status]) throw new AppError("status must be completed, pending, cancelled, refunded or all", 400)
+    if (!ORDER_STATUS[status]) throw new AppError("status must be completed, partial_refunded, pending, cancelled, refunded or all", 400)
     where.order_status = { [Op.in]: ORDER_STATUS[status] }
   }
   const staffId = await staffOf(scope, req.query)
@@ -263,7 +265,7 @@ export async function orders(req) {
     limit: pageInfo.limit,
     offset: pageInfo.offset,
   })
-  return paged(await posOrders(rows.map((row) => row.id)), count, pageInfo)
+  return paged(await posOrderHistory(rows.map((row) => row.id)), count, pageInfo)
 }
 
 // ---- 5 / 6. Refunds: ?type=complete (whole orders) | partial (some items) ----
@@ -563,7 +565,7 @@ export async function orderDetail(req, ref) {
   const order = await Order.findOne({ where: { id: orderId, store_id: scope.store_id }, attributes: ["id", "location_id"] })
   if (!order) throw new NotFoundError("Order not found")
   assertAtScope(scope, order, "Order")
-  return posOrder(order.id)
+  return posOrderDetail(order.id)
 }
 
 function assertAtScope(scope, row, label) {

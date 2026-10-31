@@ -309,6 +309,10 @@ ALTER TABLE order_items ADD COLUMN free_qty DECIMAL(12,4) NOT NULL DEFAULT 0 AFT
 ALTER TABLE orders ADD COLUMN offer_exempt TINYINT(1) NOT NULL DEFAULT 0;
 ```
 
+## 10. Order status v2 — `20261101120000-order-status-v2`
+
+orders: `partial_refunded` order status, `partial` payment status; order_items: product / category discount snapshots and category tax name. SQL: `backend docs/RAILWAY_TABLE_UPDATED.md` (second part).
+
 ## After a manual run: mark the migrations as done
 
 So the server does not try them again on start:
@@ -322,7 +326,8 @@ INSERT IGNORE INTO SequelizeMeta (name) VALUES
   ('20261028120000-transaction-number'),
   ('20261029120000-refund-payments'),
   ('20261030120000-transfer-received-qty'),
-  ('20261031120000-order-item-offers');
+  ('20261031120000-order-item-offers'),
+  ('20261101120000-order-status-v2');
 ```
 
 ## Check

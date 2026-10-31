@@ -23,7 +23,7 @@ import { Product } from "../catalog/product.model.js"
 import { Category } from "../catalog/category.model.js"
 import { Supplier } from "../inventory/supplier.model.js"
 import { RegisterSession } from "./registerSession.model.js"
-import { buildReceiptView, buildRefundReceiptView } from "./receiptView.js"
+import { buildReceiptView, buildRefundReceiptView, remainingAmountOf } from "./receiptView.js"
 
 export const num = (value) => (value == null ? null : Number(value))
 
@@ -144,7 +144,14 @@ const byIds = (rows, ids) => {
 export async function posOrders(orderIds) {
   const ids = [...new Set(orderIds.filter(Boolean))]
   if (!ids.length) return []
-  const orders = byIds(await Order.findAll({ where: { id: { [Op.in]: ids } }, include: [{ model: OrderItem }] }), ids)
+  const orders = byIds(
+    await Order.findAll({
+      where: { id: { [Op.in]: ids } },
+      include: [{ model: OrderItem }, { model: Payment, attributes: ["amount", "status"] }],
+    }),
+    ids
+  )
+  const credit = await creditRefundedByOrder(ids)
   const items = orders.flatMap((order) => order.OrderItems || [])
   const refs = await new Refs().loadAll({
     user: orders.flatMap((order) => [order.cashier_id, order.cancelled_by]),
@@ -159,7 +166,9 @@ export async function posOrders(orderIds) {
     items.map((item) => item.category_id || refs.get("product", item.product_id)?.category_id)
   )
   const currency = await currencyFor(orders.map((order) => order.store_id))
-  return orders.map((order) => orderView(order, refs, currency(order.store_id)))
+  return orders.map((order) =>
+    orderView(order, refs, currency(order.store_id), remainingAmountOf(order, order.Payments, credit.get(order.id) || 0))
+  )
 }
 
 export async function posOrder(orderId) {
@@ -227,7 +236,7 @@ function paymentSplitsOf(order) {
   return Array.isArray(breakdown?.payment_gst) ? breakdown.payment_gst : []
 }
 
-function orderView(order, refs, currency) {
+function orderView(order, refs, currency, remainingAmount = 0) {
   const items = [...(order.OrderItems || [])].sort((a, b) => a.item_number - b.item_number)
   // subtotal here includes the product and category tax of the lines.
   const subtotal =
@@ -266,6 +275,8 @@ function orderView(order, refs, currency) {
     total_amount: num(order.total_amount),
     amount_paid: num(order.amount_paid),
     change_due: num(order.change_due),
+    // Udhaar still owed on this sale (payment_status partial); 0 when fully paid.
+    remaining_amount: remainingAmount,
     cancel_reason: order.cancel_reason || order.void_reason || null,
     cancelled_by: refs.staff(order.cancelled_by),
     placed_at: order.placed_at,
@@ -347,26 +358,131 @@ async function receiptStore(storeId) {
   return Store.findByPk(storeId, { attributes: ["name", "ntn", "strn", "currency"] })
 }
 
-export async function posReceipt(receipt) {
-  const [order, paymentRows, store] = await Promise.all([
-    Order.findByPk(receipt.order_id, { include: [{ model: OrderItem }] }),
+/** Udhaar given back by each order's refunds (the credit part of their payments). */
+async function creditRefundedByOrder(orderIds) {
+  const ids = [...new Set(orderIds.filter(Boolean))]
+  if (!ids.length) return new Map()
+  const rows = await OrderRefund.findAll({ where: { order_id: { [Op.in]: ids } }, attributes: ["order_id", "payments"] })
+  const out = new Map()
+  for (const row of rows) {
+    const parts = Array.isArray(row.payments) ? row.payments : []
+    const credit = parts.filter((part) => part.method === "credit").reduce((sum, part) => sum + Number(part.amount || 0), 0)
+    out.set(row.order_id, (out.get(row.order_id) || 0) + credit)
+  }
+  return out
+}
+
+/** Everything a receipt / order detail prints for one order, loaded in a few queries. */
+async function receiptContext(order) {
+  const items = order?.OrderItems || []
+  const [paymentRows, store, refs, credit] = await Promise.all([
     Payment.findAll({
-      where: { order_id: receipt.order_id },
-      attributes: ["transaction_number", "method", "amount", "status"],
+      where: { order_id: order.id },
+      attributes: ["id", "transaction_number", "method", "amount", "tax_amount", "status", "paid_at"],
     }),
-    receiptStore(receipt.store_id),
+    receiptStore(order.store_id),
+    new Refs().loadAll({
+      user: [order.cashier_id],
+      location: [order.location_id],
+      customer: [order.customer_id],
+      batch: [order.register_session_id],
+      product: items.map((item) => item.product_id),
+    }),
+    creditRefundedByOrder([order.id]),
   ])
-  const refs = await new Refs().loadAll({
-    user: [receipt.cashier_id],
-    location: [receipt.location_id],
-    customer: [order?.customer_id],
-  })
+  await refs.load("category", items.map((item) => item.category_id || refs.get("product", item.product_id)?.category_id))
   const lookups = {
     staff: (id) => refs.staff(id),
     location: (id) => refs.location(id),
     customer: (id) => refs.customer(id),
+    product: (id) => {
+      const ref = refs.product(id)
+      return ref ? { ...ref, category_id: refs.get("product", id)?.category_id } : null
+    },
+    category: (id) => refs.category(id),
   }
-  return buildReceiptView({ receipt, order, paymentRows, lookups, store })
+  return { paymentRows, store, refs, lookups, creditRefunded: credit.get(order.id) || 0 }
+}
+
+export async function posReceipt(receipt) {
+  const order = await Order.findByPk(receipt.order_id, { include: [{ model: OrderItem }] })
+  const { paymentRows, store, lookups, creditRefunded } = await receiptContext(order)
+  return buildReceiptView({ receipt, order, paymentRows, lookups, store, creditRefunded })
+}
+
+/**
+ * GET /orders/:id (POS): the receipt's detail (lines with product / category / offer, taxes,
+ * payments) plus the staff, batch, transactions (payment rows) and refunds of the order.
+ */
+export async function posOrderDetail(orderId) {
+  const order = await Order.findByPk(orderId, { include: [{ model: OrderItem }] })
+  if (!order) return null
+  const refunds = await OrderRefund.findAll({ where: { order_id: order.id }, attributes: ["id", "receipt_id"] })
+  const receipt = await Receipt.findOne({
+    where: {
+      order_id: order.id,
+      ...(refunds.length ? { id: { [Op.notIn]: refunds.map((row) => row.receipt_id).filter(Boolean) } } : {}),
+    },
+    order: [["issued_at", "ASC"]],
+  })
+  const { paymentRows, store, refs, lookups, creditRefunded } = await receiptContext(order)
+  const view = buildReceiptView({ receipt, order, paymentRows, lookups, store, creditRefunded })
+  return {
+    ...view,
+    receipt_id: receipt?.receipt_number ?? null,
+    staff: refs.staff(order.cashier_id),
+    batch: refs.batch(order.register_session_id),
+    is_custom: Boolean(order.is_custom),
+    offer_exempt: Boolean(order.offer_exempt),
+    placed_at: order.placed_at,
+    cancel_reason: order.cancel_reason || order.void_reason || null,
+    transactions: [...paymentRows]
+      .sort((a, b) => Number(a.transaction_number || 0) - Number(b.transaction_number || 0))
+      .map((row) => ({
+        id: row.transaction_number,
+        method: row.method,
+        amount: num(row.amount),
+        tax_amount: num(row.tax_amount) ?? 0,
+        status: row.status,
+        paid_at: row.paid_at,
+      })),
+    refunds: await posRefunds(refunds.map((row) => row.id)),
+  }
+}
+
+/**
+ * GET /orders (POS lists / order history): one short row per order —
+ * { id, is_custom, location_name, items, currency, total_amount, status, payment_status,
+ *   remaining_amount, placed_at, channel }. GET /orders/:id has the full detail.
+ */
+export async function posOrderHistory(orderIds) {
+  const ids = [...new Set(orderIds.filter(Boolean))]
+  if (!ids.length) return []
+  const orders = byIds(
+    await Order.findAll({
+      where: { id: { [Op.in]: ids } },
+      include: [{ model: OrderItem, attributes: ["id"] }, { model: Payment, attributes: ["amount", "status"] }],
+    }),
+    ids
+  )
+  const [refs, credit] = await Promise.all([
+    new Refs().loadAll({ location: orders.map((order) => order.location_id) }),
+    creditRefundedByOrder(orders.map((order) => order.id)),
+  ])
+  const currency = await currencyFor(orders.map((order) => order.store_id))
+  return orders.map((order) => ({
+    id: order.order_number,
+    is_custom: Boolean(order.is_custom),
+    location_name: refs.location(order.location_id)?.name || null,
+    items: (order.OrderItems || []).length,
+    currency: currency(order.store_id),
+    total_amount: num(order.total_amount),
+    status: order.order_status,
+    payment_status: order.payment_status,
+    remaining_amount: remainingAmountOf(order, order.Payments, credit.get(order.id) || 0),
+    placed_at: order.placed_at,
+    channel: order.channel,
+  }))
 }
 
 export async function posRefundReceipt(refund, receipt) {

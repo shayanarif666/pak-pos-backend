@@ -28,6 +28,12 @@ function categoryOf(product, category) {
  * price never goes below 0.
  */
 export function productUnitDiscount(product, category) {
+  const { own, fromCategory } = unitDiscountParts(product, category)
+  return money(own + fromCategory)
+}
+
+/** The two parts of productUnitDiscount: the product's own and the category's (per unit). */
+export function unitDiscountParts(product, category) {
   const list = Number(product.selling_price || 0)
   const own = product.has_product_discount
     ? applyDiscount(list, product.discount_type, product.discount_value)
@@ -37,7 +43,7 @@ export function productUnitDiscount(product, category) {
     cat?.discount_type && cat.discount_value != null
       ? applyDiscount(money(list - own), cat.discount_type, cat.discount_value)
       : 0
-  return money(own + fromCategory)
+  return { own, fromCategory, category: cat }
 }
 
 export function priceAfterProductDiscount(product, category) {
@@ -136,12 +142,14 @@ export function priceCatalogLine({
   const afterProduct = priceAfterProductDiscount(product, product.Category || product.category)
   const live = offers.filter((offer) => offerIsLive(offer, { locationId, now }))
   const matching = live.filter((offer) => matchingTargets(offer, product).length)
-  const hasCategoryDiscount = Number((product.Category || product.category)?.discount_value) > 0
-  const catalogSource = product.has_product_discount
-    ? hasCategoryDiscount
+  // Where the catalog discount comes from — by the amounts actually taken off (a 0% discount
+  // is no discount).
+  const parts = unitDiscountParts(product, product.Category || product.category)
+  const catalogSource = parts.own > 0
+    ? parts.fromCategory > 0
       ? "product+category"
       : "product"
-    : hasCategoryDiscount
+    : parts.fromCategory > 0
       ? "category"
       : "list"
 
@@ -224,7 +232,27 @@ export function priceCatalogLine({
     // The offer that priced this line, as it was at the sale (kept on the order line).
     offers: best.offer ? [offerSnapshot(best.offer, best.target, best.discount)] : [],
     free_qty: best.free_qty || 0,
+    // The product / category discount, when it (and not an offer) priced the line.
+    product_discount:
+      CATALOG_SOURCES.includes(best.source) && parts.own > 0
+        ? discountSnapshot(product.discount_name, product.discount_type, product.discount_value, parts.own * qty)
+        : null,
+    category_discount:
+      CATALOG_SOURCES.includes(best.source) && parts.fromCategory > 0
+        ? discountSnapshot(
+            parts.category?.discount_name,
+            parts.category?.discount_type,
+            parts.category?.discount_value,
+            parts.fromCategory * qty
+          )
+        : null,
   }
+}
+
+const CATALOG_SOURCES = ["product", "category", "product+category"]
+
+function discountSnapshot(name, type, value, amount) {
+  return { name: name || null, type: type || null, value: value == null ? null : Number(value), amount: money(amount) }
 }
 
 /** Where a line's discount came from: none | product | category | product+category | bulk_tier | offer | custom. */

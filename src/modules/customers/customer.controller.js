@@ -1,7 +1,7 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js"
 import { asyncHandler } from "../../shared/utils/asyncHandler.js"
 import { getStoreForManager } from "../stores/store.service.js"
-import { bulkStatus, extractBulkItems, runBulk } from "../../shared/utils/bulk.util.js"
+import { bulkStatus, extractBulkItems, posBulkResponse, runBulk } from "../../shared/utils/bulk.util.js"
 import { parseCreateCustomer, parsePatchCustomer } from "./customer.validation.js"
 import { Customer } from "./customer.model.js"
 import { Location } from "../locations/location.model.js"
@@ -22,7 +22,8 @@ export const create = asyncHandler(async (req, res) => {
   const store = await getStoreForManager(req.storeId)
   const data = await customerService.createCustomer(store, req.body)
   if (req.auth?.channel === "pos") {
-    return apiResponse(res, 201, "Customer Successfully Created", null)
+    // Its number is the customer_id an udhaar order sends.
+    return apiResponse(res, 201, "Customer Successfully Created", posCustomer(data))
   }
   return apiResponse(res, 201, "Customer created", data)
 })
@@ -33,7 +34,7 @@ export const createBulk = asyncHandler(async (req, res) => {
     return customerService.createCustomer(store, parseCreateCustomer(item))
   })
   if (req.auth?.channel === "pos") {
-    return apiResponse(res, bulkStatus(data), "Customers Successfully Created", null)
+    return posBulkResponse(res, data, "Customers Successfully Created", data.created.map(posCustomer))
   }
   return apiResponse(res, bulkStatus(data), "Bulk customers processed", data)
 })

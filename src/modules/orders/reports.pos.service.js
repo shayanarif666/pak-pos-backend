@@ -135,7 +135,13 @@ function orderFigures(order) {
     // What the store keeps: net goods + every tax + shipping.
     total: money(net + taxes.total + shipping),
     // What was charged at the till, before any refund.
-    collected: money(order.total_amount || 0),
+    charged: money(order.total_amount || 0),
+    // What actually came in (the payments) — udhaar left on the sale is not collected.
+    collected: money(
+      (order.Payments || [])
+        .filter((row) => !row.status || row.status === "success")
+        .reduce((total, row) => total + Number(row.amount || 0), 0)
+    ),
     refunded,
     refunded_tax: refundedTax,
     cost: sum("cost"),
@@ -191,7 +197,7 @@ function trendBucket(placedAt, query) {
  * Sales summary, after refunds:
  *   gross_sales − line_discounts − order_discounts = net_sales
  *   net_sales + taxes.total (+ shipping) = total_sales
- *   total_collected (charged at the till) − refunds = total_sales
+ *   total_collected (what the payments brought in) + on_credit (udhaar) − refunds = total_sales
  */
 function salesSummary(completed, extras, query) {
   const trend = new Map()
@@ -207,6 +213,8 @@ function salesSummary(completed, extras, query) {
     shipping: 0,
     total_sales: 0,
     total_collected: 0,
+    // Udhaar: sold but not yet paid (charged − payments), before refunds.
+    on_credit: 0,
     refunds: extras.refunded_amount,
     refunded_tax: extras.refunded_tax,
     refunded_orders: extras.refunded_orders,
@@ -228,6 +236,7 @@ function salesSummary(completed, extras, query) {
 
   for (const { order, figures } of completed) {
     totals.total_collected = money(totals.total_collected + figures.collected)
+    totals.on_credit = money(totals.on_credit + Math.max(0, figures.charged - figures.collected))
     if (figures.fully_refunded) continue
     totals.orders += 1
     totals.units_sold = money(totals.units_sold + figures.units)
@@ -337,6 +346,15 @@ function offersOf(item) {
   return []
 }
 
+function freeUnitsKept(item, offer, unitsKept) {
+  const free = Number(item.free_qty || 0)
+  if (!(free > 0)) return 0
+  const buy = Number(offer.buy_qty), get = Number(offer.get_qty)
+  if (buy > 0 && get > 0) return Math.min(free, Math.floor(unitsKept / (buy + get)) * get)
+  const qty = Number(item.quantity || 0)
+  return qty > 0 ? Math.round((free * unitsKept) / qty) : 0
+}
+
 /**
  * Each offer that priced a sold line: how many orders and units it was on, units given free
  * (BOGO), the discount it gave and the sales of those lines. Refunded units are left out.
@@ -363,7 +381,8 @@ function byOffer(completed) {
         const row = groups.get(key)
         row.orderIds.add(order.id)
         row.units = money(row.units + line.units)
-        row.free_units = money(row.free_units + Number(line.item.free_qty || 0) * share)
+        // BOGO: whole free units still with the customer (refunded units leave fewer full groups).
+        row.free_units = money(row.free_units + freeUnitsKept(line.item, offer, line.units))
         addMoney(row, "discount_given", line.line_discount)
         addMoney(row, "sales", line.total)
       }
@@ -440,16 +459,31 @@ function paymentBreakdown(completed) {
     return groups.get(key)
   }
   for (const { order, figures } of completed) {
-    const payments = order.Payments || []
+    const payments = (order.Payments || []).filter((row) => !row.status || row.status === "success")
     const paid = payments.reduce((sum, row) => sum + Number(row.amount || 0), 0)
     for (const payment of payments) {
       const row = rowOf(payment.method)
       row.transactions += 1
       addMoney(row, "gross_amount", payment.amount)
       addMoney(row, "tax", payment.tax_amount)
-      if (paid > 0) addMoney(row, "refunds", figures.refunded * (Number(payment.amount) / paid))
     }
-    if (!payments.length && figures.refunded > 0) addMoney(rowOf(order.payment_method), "refunds", figures.refunded)
+    // Refunds go back the way each refund says (card to card, cash from the drawer); the udhaar
+    // part (credit) is no payment method's money. Older refunds without that split: by share.
+    for (const refund of order.OrderRefunds || []) {
+      const parts = Array.isArray(refund.payments) ? refund.payments : null
+      if (parts) {
+        for (const part of parts) {
+          if (part.method === "credit") continue
+          const row = rowOf(part.method)
+          addMoney(row, "refunds", part.amount)
+          addMoney(row, "tax", -Number(part.payment_tax_amount || 0))
+        }
+      } else if (paid > 0) {
+        for (const payment of payments) addMoney(rowOf(payment.method), "refunds", Number(refund.amount || 0) * (Number(payment.amount) / paid))
+      } else {
+        addMoney(rowOf(order.payment_method), "refunds", refund.amount)
+      }
+    }
   }
   const rows = withPercents(
     [...groups.values()]
@@ -488,7 +522,7 @@ function byCashier(completed) {
     }
     const row = groups.get(id)
     row.orders += 1
-    addMoney(row, "total_sales", figures.collected)
+    addMoney(row, "total_sales", figures.charged)
     addMoney(row, "discounts", money(Number(order.line_discount_amount || 0) + Number(order.discount_amount || 0) + Number(order.coupon_discount_amount || 0)))
     addMoney(row, "tax", order.tax_amount)
     addMoney(row, "refunds", figures.refunded)
@@ -639,7 +673,7 @@ function refundVoidRows(orders) {
 
 async function loadOrders(actor, query) {
   return Order.findAll({
-    where: orderWhere(actor, query, ["completed", "voided", "refunded", "cancelled"]),
+    where: orderWhere(actor, query, ["completed", "partial_refunded", "voided", "refunded", "cancelled"]),
     include: [
       {
         model: OrderItem,
@@ -698,7 +732,7 @@ async function zReports(actor, query, scope) {
         where: {
           store_id: actor.store_id,
           register_session_id: { [Op.in]: sessions.map((row) => row.id) },
-          order_status: { [Op.in]: ["completed", "refunded"] },
+          order_status: { [Op.in]: ["completed", "partial_refunded", "refunded"] },
         },
         include: [{ model: OrderItem }, { model: Payment }, { model: OrderRefund }],
       })

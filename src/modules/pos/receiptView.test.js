@@ -109,38 +109,54 @@ const store = { name: "Acadex", ntn: "1234567-8", strn: null, currency: "PKR" }
 describe("receiptView", () => {
   const view = buildReceiptView({ receipt, order, paymentRows, lookups, store })
 
-  it("carries only what the receipt prints, each figure once", () => {
-    assert.deepEqual(Object.keys(view), [
-      "id", "order_id", "store", "issued_at", "channel", "status", "payment_status", "payment_method",
-      "location", "cashier", "customer", "currency", "items", "subtotal", "discount_amount", "tax_amount",
-      "total", "amount_paid", "change_due", "payments", "tax_breakdown",
-    ])
+  it("prints the sale with its totals; sales tax shown because it was charged", () => {
     assert.equal(view.id, 1)
     assert.equal(view.order_id, 1)
+    assert.equal(view.issued_at, order.placed_at)
     assert.deepEqual(view.store, { name: "Acadex", ntn: "1234567-8", strn: null })
     assert.deepEqual(view.cashier, { id: 4, name: "Yasir Ali Khan" })
     assert.equal(view.subtotal, 290)
+    assert.deepEqual(view.sales_tax, { rate: 18, amount: 52.2 })
+    assert.equal(view.payment_gst_amount, 66.22)
     assert.equal(view.tax_amount, 190.12)
     assert.equal(view.total, 480.12)
     assert.equal(view.amount_paid, 1000)
     assert.equal(view.change_due, 519.88)
-    assert.equal(view.tax_breakdown, null)
+    assert.equal("order_discount" in view, false)
+    assert.equal("fbr_fee" in view, false)
+    assert.equal("remaining_amount" in view, false)
   })
 
-  it("lists the items in line order with their total including tax", () => {
-    assert.deepEqual(view.items, [
-      { id: 1, title: "1 Litre Pepsi", sku: "1-LITRE-PEPSI", qty: 2, unit_price: 100, discount_amount: 10, refunded_qty: 0, total: 267.9 },
-      { id: 2, title: "Lux Soap", sku: "LUX-SOAP", qty: 1, unit_price: 100, discount_amount: 0, refunded_qty: 0, total: 146 },
+  it("each line carries its product taxes, category tax and sales tax", () => {
+    assert.deepEqual(view.items.map((item) => item.product.title), ["1 Litre Pepsi", "Lux Soap"])
+    const pepsi = view.items[0]
+    assert.equal(pepsi.product.id, 1)
+    assert.deepEqual(pepsi.product.taxes, [{ name: "GST", type: "percentage", value: 18, amount: 34.2 }])
+    assert.deepEqual(pepsi.category.tax, { name: null, type: "percentage", value: 5, amount: 9.5 })
+    assert.deepEqual(pepsi.sales_tax, { rate: 18, amount: 34.2 })
+    assert.equal(pepsi.offer, null)
+    assert.equal(pepsi.discount_amount, 10)
+    assert.equal(pepsi.total, 267.9)
+    assert.equal(view.items[1].total, 146)
+  })
+
+  it("shows each payment with its GST %, amount, handed over and change", () => {
+    assert.deepEqual(view.payments, [
+      { method: "cash", gst_percent: 16, gst_amount: 66.22, amount: 480.12, paid: 1000, change: 519.88, status: "success" },
     ])
   })
 
-  it("shows each payment's method, status and amount", () => {
-    assert.deepEqual(view.payments, [{ method: "cash", status: "success", amount: 480.12 }])
-  })
-
-  it("adds the tax breakdown on an FBR invoice", () => {
-    const fbr = buildReceiptView({ receipt, order: { ...order, fbr_invoice_enabled: true }, paymentRows, lookups, store })
-    assert.deepEqual(fbr.tax_breakdown, { product_tax: 52.2, category_tax: 19.5, sales_tax: 52.2, payment_tax: 66.22 })
+  it("adds the order discount, FBR fee and remaining udhaar only when the sale had them", () => {
+    const other = buildReceiptView({
+      receipt,
+      order: { ...order, fbr_invoice_enabled: true, fbr_tax_amount: "1.00", order_discount_type: "percentage", discount_amount: "29.00", total_amount: "480.12" },
+      paymentRows: [{ ...paymentRows[0], amount: "100.00" }],
+      lookups,
+      store,
+    })
+    assert.deepEqual(other.order_discount, { type: "percentage", value: 10, amount: 29 })
+    assert.equal(other.fbr_fee, 1)
+    assert.equal(other.remaining_amount, 380.12)
   })
 })
 

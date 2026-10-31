@@ -36,6 +36,9 @@ export const OrderItem = sequelize.define(
     },
     // Where discount_amount came from: none | product | category | product+category | bulk_tier | offer | custom.
     discount_source: { type: DataTypes.STRING(32), allowNull: true },
+    // The product / category discount that priced this line, as at the sale: { name, type, value, amount }.
+    product_discount: { type: DataTypes.JSON, allowNull: true },
+    category_discount: { type: DataTypes.JSON, allowNull: true },
     offer_id: uuidCol(true),
     // The offer(s) that priced this line, as they were at the sale: [{ id, name, type, …, amount }].
     offers: { type: DataTypes.JSON, allowNull: true },
@@ -61,6 +64,7 @@ export const OrderItem = sequelize.define(
     product_taxes: { type: DataTypes.JSON, allowNull: true },
     category_tax_type: { type: DataTypes.STRING(32), allowNull: true },
     category_tax_value: { type: DataTypes.DECIMAL(5, 2), allowNull: true },
+    category_tax_name: { type: DataTypes.STRING(255), allowNull: true },
     subtotal: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
   },
   {

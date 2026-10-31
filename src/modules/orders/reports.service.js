@@ -1,3 +1,4 @@
+import { SOLD_ORDER_STATUSES } from "../../db/enums.js"
 import { Op } from "sequelize"
 import { Order } from "./order.model.js"
 import { OrderItem } from "./orderItem.model.js"
@@ -123,7 +124,7 @@ export function applyDateRange(where, query = {}, timeZone = "Asia/Karachi") {
   if (to) where.placed_at[Op.lte] = to
 }
 
-export function orderWhere(actor, query = {}, statuses = ["completed"], timeZone = "Asia/Karachi") {
+export function orderWhere(actor, query = {}, statuses = SOLD_ORDER_STATUSES, timeZone = "Asia/Karachi") {
   const scope = reportScope(actor, query)
   const where = {
     store_id: actor.store_id,
@@ -292,7 +293,7 @@ export function addMoney(target, key, value) {
 
 async function loadCompletedOrders(actor, query, timeZone = "Asia/Karachi") {
   return Order.findAll({
-    where: orderWhere(actor, query, ["completed"], timeZone),
+    where: orderWhere(actor, query, SOLD_ORDER_STATUSES, timeZone),
     include: [{ model: OrderItem }],
     order: [["placed_at", "ASC"]],
   })
@@ -377,7 +378,7 @@ export async function dashboardReport(actor, query = {}) {
   const store = await getStoreForManager(actor.store_id)
   const timeZone = store.timezone || "Asia/Karachi"
   const period = resolvePeriod(query)
-  const statuses = ["completed", "voided", "refunded"]
+  const statuses = [...SOLD_ORDER_STATUSES, "voided", "refunded"]
   const orders = await Order.findAll({
     where: orderWhere(actor, query, statuses, timeZone),
     include: [{ model: OrderItem }, { model: Payment }, { model: OrderRefund }],
@@ -538,7 +539,7 @@ export async function paymentsReport(actor, query = {}) {
         model: Order,
         required: true,
         attributes: ["id"],
-        where: orderWhere(actor, query, ["completed"], timeZone),
+        where: orderWhere(actor, query, SOLD_ORDER_STATUSES, timeZone),
       },
     ],
   })

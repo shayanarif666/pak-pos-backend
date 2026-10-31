@@ -36,6 +36,7 @@ import { RegisterSession } from "../pos/registerSession.model.js"
 import { requireApprovedAction } from "../pos/approval.service.js"
 import { writeAudit } from "../../shared/utils/audit.util.js"
 import { AppError } from "../../shared/errors/AppError.js"
+import { SOLD_ORDER_STATUSES } from "../../db/enums.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
@@ -265,7 +266,7 @@ export async function salesByLocation(actor, query = {}) {
     const count = Number(row.orders) || 0
     const amount = Number(row.amount) || 0
     entry.orders += count
-    if (row.order_status === "completed") {
+    if (SOLD_ORDER_STATUSES.includes(row.order_status)) {
       entry.completed_orders += count
       entry.sales += amount
     } else if (row.order_status === "pending") {
@@ -281,7 +282,7 @@ export async function salesByLocation(actor, query = {}) {
     const entry = bucket(row.location_id)
     entry.refunds_count += Number(row.refunds) || 0
     entry.refunds_amount += Number(row.amount) || 0
-    if (row.order_status === "completed") entry.partial_refunds += Number(row.amount) || 0
+    if (SOLD_ORDER_STATUSES.includes(row.order_status)) entry.partial_refunds += Number(row.amount) || 0
   }
 
   const rows = [...byLocation.values()].map((entry) => ({
@@ -421,7 +422,7 @@ export async function listOrderPayments(actor, id) {
 export async function addOrderPayment(actor, id, fields) {
   const order = await findOrder(actor.store_id, id)
   assertCanSee(actor, order)
-  if (!["completed", "pending"].includes(order.order_status)) {
+  if (![...SOLD_ORDER_STATUSES, "pending"].includes(order.order_status)) {
     throw new ConflictError("Cannot add a payment to this order")
   }
 
@@ -448,7 +449,7 @@ export async function addOrderPayment(actor, id, fields) {
   await order.update({
     amount_paid,
     payment_method: methods.length > 1 ? "mixed" : methods[0],
-    payment_status: amount_paid >= Number(order.total_amount) ? "paid" : "pending",
+    payment_status: amount_paid + 0.009 >= Number(order.total_amount) ? "paid" : amount_paid > 0 ? "partial" : "pending",
   })
   return payment
 }
@@ -563,7 +564,7 @@ export async function cancelOrder(actor, id, fields) {
   const store = await getStoreForManager(actor.store_id)
   const order = await findOrder(store.id, id)
   assertCanSee(actor, order)
-  if (order.order_status === "completed") {
+  if (SOLD_ORDER_STATUSES.includes(order.order_status)) {
     throw new ConflictError("Use void for a completed sale")
   }
   if (!["pending"].includes(order.order_status)) {
@@ -689,7 +690,7 @@ export async function refundOrderItem(actor, id, fields) {
   const store = await getStoreForManager(actor.store_id)
   const order = await findOrder(store.id, id)
   assertCanSee(actor, order)
-  if (!["completed", "refunded"].includes(order.order_status)) {
+  if (![...SOLD_ORDER_STATUSES, "refunded"].includes(order.order_status)) {
     throw new ConflictError("Only a completed sale can be item-refunded")
   }
 
@@ -826,7 +827,8 @@ export async function refundOrderItem(actor, id, fields) {
     )
     await order.update(
       {
-        order_status: allRefunded ? "refunded" : "completed",
+        // Some items back: partial_refunded; the payment status stays as it was (paid / partial).
+        order_status: allRefunded ? "refunded" : "partial_refunded",
         payment_status: allRefunded ? "refunded" : order.payment_status,
       },
       { transaction }
@@ -919,7 +921,7 @@ export async function refundEntireOrder(actor, id, fields) {
   const store = await getStoreForManager(actor.store_id)
   const order = await findOrder(store.id, id)
   assertCanSee(actor, order)
-  if (!["completed", "refunded"].includes(order.order_status)) {
+  if (![...SOLD_ORDER_STATUSES, "refunded"].includes(order.order_status)) {
     throw new ConflictError("Only a completed sale can be refunded")
   }
 
