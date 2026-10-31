@@ -54,6 +54,81 @@ function parseItem(row) {
   }
 }
 
+// ---- POS-priced order: the till sends every figure; the server saves them as they are ----
+
+const DISCOUNT_SOURCES = ["none", "product", "category", "product+category", "bulk_tier", "offer", "custom"]
+const TAX_LEVELS = ["product", "category", "sales"]
+
+function moneyAtLeastZero(row, key, label) {
+  if (row[key] === undefined || row[key] === null || row[key] === "") return null
+  const value = Number(row[key])
+  if (Number.isNaN(value) || value < 0) throw new AppError(`${label}.${key} must be a number >= 0`, 400)
+  return value
+}
+
+/** A line the till priced: { product_id | title, qty, unit_price, cost_price?, discount?, taxes[] }. */
+function parsePricedLine(row, index) {
+  const label = `lines[${index}]`
+  if (!row || typeof row !== "object") throw new AppError(`${label} is invalid`, 400)
+  const quantity = Number(row.qty ?? row.quantity ?? row.weight)
+  if (Number.isNaN(quantity) || quantity <= 0) throw new AppError(`${label}.qty must be > 0`, 400)
+  const product_id = optionalRef(row, ["product_id", "productId"])
+  const title = optionalString(row, "title")
+  if (!product_id && !title) throw new AppError(`${label} needs product_id, or title for a custom line`, 400)
+  const unit_price = moneyAtLeastZero(row, "unit_price", label) ?? moneyAtLeastZero(row, "price", label)
+  if (unit_price == null) throw new AppError(`${label}.unit_price is required`, 400)
+
+  let discount = null
+  if (row.discount && typeof row.discount === "object") {
+    const source = row.discount.source == null ? "custom" : String(row.discount.source)
+    if (!DISCOUNT_SOURCES.includes(source)) {
+      throw new AppError(`${label}.discount.source must be one of ${DISCOUNT_SOURCES.join(", ")}`, 400)
+    }
+    discount = {
+      source,
+      offer_ref: optionalRef(row.discount, ["offer_id", "offerId"]),
+      amount: moneyAtLeastZero(row.discount, "amount", `${label}.discount`) ?? 0,
+      free_qty: moneyAtLeastZero(row.discount, "free_qty", `${label}.discount`) ?? 0,
+    }
+  }
+
+  const taxes = (Array.isArray(row.taxes) ? row.taxes : []).map((tax, t) => {
+    const taxLabel = `${label}.taxes[${t}]`
+    if (!tax || typeof tax !== "object") throw new AppError(`${taxLabel} is invalid`, 400)
+    const level = String(tax.level || "product")
+    if (!TAX_LEVELS.includes(level)) throw new AppError(`${taxLabel}.level must be product, category or sales`, 400)
+    const amount = moneyAtLeastZero(tax, "amount", taxLabel)
+    if (amount == null) throw new AppError(`${taxLabel}.amount is required`, 400)
+    return {
+      level,
+      name: tax.name == null ? null : String(tax.name).trim(),
+      type: tax.type === "fixed" ? "fixed" : "percentage",
+      rate: moneyAtLeastZero(tax, "rate", taxLabel) ?? moneyAtLeastZero(tax, "value", taxLabel),
+      amount,
+    }
+  })
+
+  return {
+    product_id,
+    title,
+    custom_category: optionalString(row, "category") || optionalString(row, "custom_category"),
+    quantity,
+    weight: row.weight == null ? null : Number(row.weight),
+    unit_price,
+    cost_price: moneyAtLeastZero(row, "cost_price", label),
+    priced: { discount, taxes },
+  }
+}
+
+/** { type?, value?, amount } for order_discount, { code, amount } for coupon; null / missing = none. */
+function pricedAmount(body, key, extra) {
+  const value = body[key]
+  if (value == null || value === "") return null
+  if (typeof value !== "object") throw new AppError(`${key} must be an object`, 400)
+  const amount = moneyAtLeastZero(value, "amount", key) ?? 0
+  return { ...extra(value), amount }
+}
+
 function parsePayment(row) {
   if (!row || typeof row !== "object") throw new AppError("Invalid payment", 400)
   const method = String(row.method || "")
@@ -71,7 +146,10 @@ function parsePayment(row) {
   // The card / wallet reference of this payment, if the till has one.
   const raw = row.transaction_id ?? row.transactionId
   const transaction_id = raw == null || raw === "" ? null : String(raw).trim().slice(0, 255)
-  return { method, amount, bill_share, paid, transaction_id }
+  // POS-priced order: this method's payment tax as the till worked it out.
+  const tax_rate = moneyAtLeastZero(row, "tax_rate", "payment")
+  const tax_amount = moneyAtLeastZero(row, "tax_amount", "payment")
+  return { method, amount, bill_share, paid, transaction_id, tax_rate, tax_amount }
 }
 
 function optionalMoney(body, key) {
@@ -98,7 +176,13 @@ export function parseCreateOrder(body) {
   if (!ORDER_CHANNEL.includes(channel)) {
     throw new AppError("channel must be web or pos", 400)
   }
-  const items = Array.isArray(body.items) ? body.items.map(parseItem) : []
+  // lines[] = the till priced the order (every figure is saved as sent); items[] = the server prices it.
+  const precomputed = Array.isArray(body.lines)
+  const items = precomputed
+    ? body.lines.map(parsePricedLine)
+    : Array.isArray(body.items)
+      ? body.items.map(parseItem)
+      : []
   if (!items.length && channel !== "web") {
     throw new AppError("items are required", 400)
   }
@@ -143,6 +227,19 @@ export function parseCreateOrder(body) {
     // Offline POS: when the sale was rung up on the device (ISO date-time).
     placed_at: optionalString(body, "placed_at"),
     offline: Boolean(body.offline),
+    ...(precomputed
+      ? {
+          precomputed: true,
+          is_custom: Boolean(body.is_custom) || items.every((line) => !line.product_id),
+          order_discount: pricedAmount(body, "order_discount", (value) => ({
+            type: value.type == null ? null : String(value.type),
+            value: value.value == null ? null : Number(value.value),
+          })),
+          coupon: pricedAmount(body, "coupon", (value) => ({ code: value.code == null ? null : String(value.code).trim() })),
+          shipping_fee: moneyAtLeastZero(body, "shipping_fee", "order") ?? 0,
+          total_amount: moneyAtLeastZero(body, "total_amount", "order"),
+        }
+      : {}),
   }
 }
 

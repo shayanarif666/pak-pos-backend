@@ -3,6 +3,7 @@ import { Order } from "./order.model.js"
 import { Product } from "../catalog/product.model.js"
 import { Customer } from "../customers/customer.model.js"
 import { RegisterSession } from "../pos/registerSession.model.js"
+import { Offer } from "../offers/offer.model.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 
 const isNumber = (ref) => /^\d+$/.test(String(ref))
@@ -48,11 +49,36 @@ export async function resolveOrderRefs(storeId, input) {
       })
     : []
   const byNumber = new Map(products.map((row) => [String(row.product_number), row.id]))
+  // A POS-priced line may name the offer that priced it (offer number or UUID).
+  const offerNumbers = [
+    ...new Set(
+      (input.items || [])
+        .map((item) => item.priced?.discount?.offer_ref)
+        .filter((ref) => ref && isNumber(ref))
+        .map(Number)
+    ),
+  ]
+  const offers = offerNumbers.length
+    ? await Offer.findAll({
+        where: { store_id: storeId, offer_number: { [Op.in]: offerNumbers } },
+        attributes: ["id", "offer_number"],
+      })
+    : []
+  const offerByNumber = new Map(offers.map((row) => [String(row.offer_number), row.id]))
   const items = (input.items || []).map((item) => {
-    if (!item.product_id || !isNumber(item.product_id)) return item
-    const id = byNumber.get(String(Number(item.product_id)))
-    if (!id) throw new NotFoundError(`Product ${item.product_id} not found`)
-    return { ...item, product_id: id }
+    let next = item
+    if (item.product_id && isNumber(item.product_id)) {
+      const id = byNumber.get(String(Number(item.product_id)))
+      if (!id) throw new NotFoundError(`Product ${item.product_id} not found`)
+      next = { ...next, product_id: id }
+    }
+    const offerRef = item.priced?.discount?.offer_ref
+    if (offerRef) {
+      const offerId = isNumber(offerRef) ? offerByNumber.get(String(Number(offerRef))) : offerRef
+      if (!offerId) throw new NotFoundError(`Offer ${offerRef} not found`)
+      next = { ...next, priced: { ...next.priced, discount: { ...next.priced.discount, offer_id: offerId } } }
+    }
+    return next
   })
   return {
     ...input,

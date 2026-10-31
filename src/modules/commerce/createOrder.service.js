@@ -9,6 +9,7 @@ import { Receipt } from "../payments/receipt.model.js"
 import { CouponRedemption } from "../coupons/couponRedemption.model.js"
 import { Product } from "../catalog/product.model.js"
 import { Category } from "../catalog/category.model.js"
+import { Offer } from "../offers/offer.model.js"
 import { getStoreForManager } from "../stores/store.service.js"
 import { getLocation } from "../locations/location.service.js"
 import { Customer } from "../customers/customer.model.js"
@@ -38,6 +39,7 @@ import {
   priceCatalogLine,
   priceCustomLine,
   applyDiscount,
+  offerSnapshot,
   quoteOrderTotals,
   splitPaymentTax,
 } from "./pricing.service.js"
@@ -194,6 +196,111 @@ function requestedLocationId(actor, store, input) {
   return actor.location_id || store.default_location_id
 }
 
+// ---- POS-priced orders: the till sends every figure; nothing is priced again here ----
+
+const sumOf = (rows, pick) => money(rows.reduce((sum, row) => sum + Number(pick(row) || 0), 0))
+
+/** One line as the till priced it, in the shape the order line is saved in. */
+function posPricedLine(item, product, offersById) {
+  const qty = Number(item.quantity)
+  const { discount, taxes } = item.priced
+  const discount_amount = money(discount?.amount || 0)
+  const source = discount?.source || (discount_amount > 0 ? "custom" : product ? "none" : "custom")
+  const offer = discount?.offer_id ? offersById.get(discount.offer_id) : null
+  const ofLevel = (level) => taxes.filter((tax) => tax.level === level)
+  const categoryTax = ofLevel("category")[0] || null
+  const unit_price = money(item.unit_price)
+  const snapshot = (amount) => ({ name: null, type: null, value: null, amount })
+  return {
+    product_id: product?.id || null,
+    title: item.title || product?.title,
+    custom_category: product ? null : item.custom_category || null,
+    category_id: product ? product.Category?.id || product.category_id || null : null,
+    category_name: product?.Category?.name || null,
+    category_tax_name: categoryTax?.name || null,
+    sku: product?.sku || null,
+    barcode: product?.barcode || null,
+    unit: product?.unit || null,
+    is_weight_based: Boolean(product?.is_weight_based),
+    weight: product?.is_weight_based ? qty : item.weight ?? null,
+    qty_packs:
+      product?.is_pack_product && product.pack_size ? Math.floor(qty / Number(product.pack_size)) : null,
+    quantity: qty,
+    unit_price,
+    cost_price: money(item.cost_price ?? product?.cost_price ?? 0),
+    discount_amount,
+    discount_source: source,
+    offer_id: offer?.id || null,
+    offers: offer ? [offerSnapshot(offer, null, discount_amount)] : [],
+    product_discount: source === "product" ? snapshot(discount_amount) : null,
+    category_discount: source === "category" ? snapshot(discount_amount) : null,
+    free_qty: discount?.free_qty || 0,
+    subtotal: money(unit_price * qty - discount_amount),
+    tax_amount: sumOf(taxes, (tax) => tax.amount),
+    product_tax_amount: sumOf(ofLevel("product"), (tax) => tax.amount),
+    category_tax_amount: sumOf(ofLevel("category"), (tax) => tax.amount),
+    sales_tax_amount: sumOf(ofLevel("sales"), (tax) => tax.amount),
+    product_taxes: ofLevel("product").map((tax) => ({ name: tax.name, type: tax.type, value: tax.rate, amount: money(tax.amount) })),
+    category_tax_type: categoryTax ? categoryTax.type : null,
+    category_tax_value: categoryTax?.rate ?? null,
+    pricing_source: "pos",
+  }
+}
+
+/** The order's totals and payment rows from the till's figures (sums of what it sent). */
+function posPricedTotals({ lines, store, input, orderDiscount, couponDiscount }) {
+  const splits = (input.payments || []).map((row) => {
+    const gst_amount = money(row.tax_amount || 0)
+    const amount = money(row.amount ?? (row.bill_share != null ? Number(row.bill_share) + gst_amount : row.paid || 0))
+    return {
+      method: row.method,
+      bill_share: money(amount - gst_amount),
+      gst_percent: row.tax_rate ?? 0,
+      gst_amount,
+      amount,
+      paid: money(row.paid ?? amount),
+      change: row.method === "cash" ? money(Math.max(0, Number(row.paid ?? amount) - amount)) : 0,
+      transaction_id: row.transaction_id || null,
+    }
+  })
+  const subtotal = sumOf(lines, (line) => line.subtotal)
+  const line_tax = sumOf(lines, (line) => line.tax_amount)
+  const shipping_fee = money(input.shipping_fee || 0)
+  const gst = sumOf(splits, (row) => row.gst_amount)
+  const salesRate = input.items.flatMap((item) => item.priced.taxes).find((tax) => tax.level === "sales")?.rate
+  const tax_amount = money(line_tax + gst)
+  const totals = {
+    gross_amount: sumOf(lines, (line) => Number(line.unit_price) * Number(line.quantity)),
+    line_discount_amount: sumOf(lines, (line) => line.discount_amount),
+    subtotal,
+    discount_amount: money(orderDiscount),
+    coupon_discount_amount: money(couponDiscount),
+    shipping_fee,
+    line_tax,
+    product_tax_amount: sumOf(lines, (line) => line.product_tax_amount),
+    category_tax_amount: sumOf(lines, (line) => line.category_tax_amount),
+    sales_tax_amount: sumOf(lines, (line) => line.sales_tax_amount),
+    sales_tax_rate: salesRate ?? (store.sales_tax_rate == null ? null : Number(store.sales_tax_rate)),
+    fbr_invoice_enabled: Boolean(store.fbr_invoice_enabled),
+    fbr_tax_amount: store.fbr_invoice_enabled ? tax_amount : 0,
+    gst,
+    payment_gst_amount: gst,
+    payment_gst_splits: splits.map((row) => ({
+      method: row.method,
+      amount: row.amount,
+      gst_percent: row.gst_percent,
+      gst_amount: row.gst_amount,
+    })),
+    tax_amount,
+    // The till's total wins; without one it is the sum of what it sent.
+    total_amount: money(
+      input.total_amount ?? subtotal - orderDiscount - couponDiscount + line_tax + shipping_fee + gst
+    ),
+    cost_total: sumOf(lines, (line) => Number(line.cost_price) * Number(line.quantity)),
+  }
+  return { totals, split: { splits, gst } }
+}
+
 const OFFLINE_AFTER_MS = 2 * 60 * 1000
 const MAX_OFFLINE_AGE_MS = 30 * 24 * 60 * 60 * 1000
 
@@ -289,7 +396,24 @@ export async function createOrder(actor, input) {
       tiersByProduct.set(tier.product_id, list)
     }
 
-    const priced = items.map((item) => {
+    const offerIds = input.precomputed
+      ? [...new Set(items.map((item) => item.priced?.discount?.offer_id).filter(Boolean))]
+      : []
+    const offersById = new Map(
+      (offerIds.length ? await Offer.findAll({ where: { id: offerIds, store_id: store.id }, transaction }) : []).map(
+        (row) => [row.id, row]
+      )
+    )
+
+    const priced = input.precomputed
+      ? items.map((item) => {
+          if (!item.product_id) return posPricedLine(item, null, offersById)
+          const product = productMap.get(item.product_id)
+          if (!product) throw new NotFoundError("Product not found")
+          if (!product.is_active) throw new AppError("Product is not active", 400)
+          return posPricedLine(item, product, offersById)
+        })
+      : items.map((item) => {
       if (is_custom && !item.product_id) {
         if (!item.title) throw new AppError("Custom lines require a title", 400)
         if (item.unit_price == null) {
@@ -333,7 +457,9 @@ export async function createOrder(actor, input) {
     const lineSubtotal = money(
       priced.reduce((sum, line) => sum + Number(line.subtotal), 0)
     )
-    const orderDiscount = resolveOrderDiscount(lineSubtotal, input)
+    const orderDiscount = input.precomputed
+      ? money(input.order_discount?.amount || 0)
+      : resolveOrderDiscount(lineSubtotal, input)
     // A manual order discount is a discount_override: cashiers need a manager's approval.
     if (orderDiscount > 0 && actor.role === "cashier") {
       await requireApprovedAction({
@@ -343,7 +469,7 @@ export async function createOrder(actor, input) {
         approvalRequestId: input.approval_request_id,
       })
     }
-    if (!input.tax_exempt && orderDiscount > 0 && lineSubtotal > 0) {
+    if (!input.precomputed && !input.tax_exempt && orderDiscount > 0 && lineSubtotal > 0) {
       const taxableShare = money((lineSubtotal - orderDiscount) / lineSubtotal)
       for (const line of priced) {
         if (!line.product_id) {
@@ -375,7 +501,14 @@ export async function createOrder(actor, input) {
 
     let coupon = null
     let couponDiscount = 0
-    if (input.coupon_code) {
+    if (input.precomputed) {
+      // The till's coupon amount is kept; the code (if any) links the coupon and counts the use.
+      couponDiscount = money(input.coupon?.amount || 0)
+      if (input.coupon?.code) {
+        coupon = await findCouponByCode(store.id, input.coupon.code)
+        if (!coupon) throw new AppError("Coupon not found", 400)
+      }
+    } else if (input.coupon_code) {
       coupon = await findCouponByCode(store.id, input.coupon_code)
       if (!coupon) throw new AppError("Coupon not found", 400)
       const reason = couponBlockReason(coupon, {
@@ -412,6 +545,11 @@ export async function createOrder(actor, input) {
       throw new AppError("payment_method is required", 400)
     }
 
+    let totals
+    let split
+    if (input.precomputed) {
+      ;({ totals, split } = posPricedTotals({ lines: priced, store, input, orderDiscount, couponDiscount }))
+    } else {
     // The bill before payment tax, then each payment's tax on its own share of it.
     const preGst = quoteOrderTotals({
       lines: priced,
@@ -425,7 +563,7 @@ export async function createOrder(actor, input) {
       taxRates,
       taxExempt: Boolean(input.tax_exempt),
     })
-    const split = splitPaymentTax({
+    split = splitPaymentTax({
       store,
       taxRates,
       preGst: preGst.total_amount,
@@ -433,7 +571,7 @@ export async function createOrder(actor, input) {
       paymentMethod: payment_method,
       taxExempt: Boolean(input.tax_exempt),
     })
-    const totals = {
+    totals = {
       ...preGst,
       gst: split.gst,
       payment_gst_amount: split.gst,
@@ -441,6 +579,7 @@ export async function createOrder(actor, input) {
       tax_amount: money(preGst.line_tax + split.gst),
       fbr_tax_amount: preGst.fbr_invoice_enabled && !input.tax_exempt ? money(preGst.line_tax + split.gst) : 0,
       total_amount: money(preGst.total_amount + split.gst),
+    }
     }
     const isWeb = channel === "web"
 
@@ -480,7 +619,8 @@ export async function createOrder(actor, input) {
           line_discount_amount: totals.line_discount_amount,
           subtotal: totals.subtotal,
           is_order_discounted: orderDiscount > 0,
-          order_discount_type: orderDiscount > 0 ? input.order_discount_type : null,
+          order_discount_type:
+            orderDiscount > 0 ? (input.precomputed ? input.order_discount?.type : input.order_discount_type) : null,
           discount_amount: totals.discount_amount,
           coupon_id: coupon?.id || null,
           coupon_code: coupon?.code || null,
