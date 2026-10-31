@@ -46,14 +46,14 @@ export function parseLocationScope(body) {
 }
 
 /**
- * Only the store admin chooses the locations. A manager or cashier never sends them: what they
- * create is for the location in their token, and editing it does not move it.
+ * Any role may send location_scope / location_ids (the client sends a manager's own location).
+ * Only when a manager or cashier creates a row without them does it default to the location in
+ * their token instead of every location.
  */
 export function scopeForActor(actor, fields, { creating }) {
-  if (!BRANCH_ROLES.has(actor?.role)) return fields
+  if (!creating || !BRANCH_ROLES.has(actor?.role) || fields.location_scope !== undefined) return fields
   if (!actor.location_id) throw new ForbiddenError("Your account has no location")
-  const { location_scope: _scope, location_ids: _ids, ...rest } = fields
-  return creating ? { ...rest, location_scope: "selected", location_ids: [actor.location_id] } : rest
+  return { ...fields, location_scope: "selected", location_ids: [actor.location_id] }
 }
 
 /**
