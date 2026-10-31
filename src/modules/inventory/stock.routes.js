@@ -5,6 +5,7 @@ import {
   requireTenantStore,
   tenantMiddleware,
 } from "../../shared/middlewares/tenant.middleware.js"
+import { requestScope } from "../../shared/middlewares/requestScope.middleware.js"
 import { validate } from "../../shared/middlewares/validate.middleware.js"
 import { parseCreateMovement } from "./stock.validation.js"
 import { create, createBulk, list } from "./stock.controller.js"
@@ -19,7 +20,7 @@ router.use(
 )
 
 router.get("/", list)
-router.post("/", validate(parseCreateMovement), create)
-router.post("/bulk", createBulk)
+router.post("/", requestScope(), validate(parseCreateMovement), create)
+router.post("/bulk", requestScope(), createBulk)
 
 export default router

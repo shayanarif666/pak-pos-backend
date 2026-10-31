@@ -4,7 +4,7 @@ import { Supplier } from "./supplier.model.js"
 import { SupplierLocation } from "./supplierLocation.model.js"
 import { Location } from "../locations/location.model.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
-import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
+import { scopeForActor } from "../../shared/utils/locationScope.util.js"
 import { nextSupplierNumber } from "../../shared/utils/counter.util.js"
 
 const SUPPLIER_LOCATIONS_INCLUDE = {
@@ -63,19 +63,8 @@ async function loadSupplier(storeId, id, transaction) {
   return row
 }
 
-/**
- * Only the store admin chooses where a supplier delivers (all locations or selected ones).
- * A manager or cashier never sends locations: whatever the body says, their supplier is for
- * the store and location in their token, and editing it does not move it.
- */
-function resolveScopeForActor(actor, fields, { creating }) {
-  if (!BRANCH_ROLES.has(actor?.role)) return fields
-  if (!actor.location_id) throw new ForbiddenError("Your account has no location")
-  const { location_scope: _scope, location_ids: _ids, ...rest } = fields
-  return creating
-    ? { ...rest, location_scope: "selected", location_ids: [actor.location_id] }
-    : rest
-}
+/** Any role may send where the supplier delivers; a manager's / cashier's new one without it is for their location. */
+const resolveScopeForActor = scopeForActor
 
 /**
  * location_ids may hold location numbers (1, 2, 3...) or UUIDs; returns the matching active

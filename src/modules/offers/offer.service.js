@@ -9,7 +9,7 @@ import { Location } from "../locations/location.model.js"
 import { assertOfferRules } from "./offer.validation.js"
 import { nextOfferNumber } from "../../shared/utils/counter.util.js"
 import { AppError } from "../../shared/errors/AppError.js"
-import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
+import { scopeForActor } from "../../shared/utils/locationScope.util.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 
 const targetInclude = { model: OfferTarget }
@@ -94,18 +94,8 @@ function assertCanSee(actor, offer) {
   }
 }
 
-/**
- * Only the store admin chooses where an offer runs (all locations or selected ones). A manager's
- * or cashier's offer is always for the location in their token, and editing it does not move it.
- */
-function resolveScopeForActor(actor, fields, { creating }) {
-  if (!BRANCH_ROLES.has(actor?.role)) return fields
-  if (!actor.location_id) throw new ForbiddenError("Your account has no location")
-  const { location_scope: _scope, location_ids: _ids, ...rest } = fields
-  return creating
-    ? { ...rest, location_scope: "selected", location_ids: [actor.location_id] }
-    : rest
-}
+/** Any role may send where the offer runs; a manager's / cashier's new offer without it is for their location. */
+const resolveScopeForActor = scopeForActor
 
 /**
  * location_ids may hold location numbers (1, 2, 3...) or UUIDs; returns the matching active

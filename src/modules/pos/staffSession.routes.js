@@ -1,6 +1,7 @@
 import { Router } from "express"
 import { authMiddleware } from "../../shared/middlewares/auth.middleware.js"
 import { authorize } from "../../shared/middlewares/authorize.middleware.js"
+import { requestScope } from "../../shared/middlewares/requestScope.middleware.js"
 import {
   requireTenantStore,
   tenantMiddleware,
@@ -13,8 +14,10 @@ const router = Router()
 router.use(authMiddleware, authorize("store_admin", "manager"), tenantMiddleware, requireTenantStore)
 
 router.get("/", list)
-router.post("/clock-in", clockIn)
-router.post("/clock-out", clockOut)
+// Each item is one staff member (id / staff_id); a staff_id sent once on top fills the rest.
+const clockScope = requestScope({ staffKeys: ["staff_id", "staffId", "id"] })
+router.post("/clock-in", clockScope, clockIn)
+router.post("/clock-out", clockScope, clockOut)
 // A manager corrects attendance: items[] = [{ id (session number), clock_in_at?, clock_out_at? }].
 router.patch("/bulk", patchBulk)
 

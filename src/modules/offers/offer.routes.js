@@ -5,6 +5,7 @@ import {
   requireTenantStore,
   tenantMiddleware,
 } from "../../shared/middlewares/tenant.middleware.js"
+import { requestScope } from "../../shared/middlewares/requestScope.middleware.js"
 import { validate } from "../../shared/middlewares/validate.middleware.js"
 import {
   parseCreateOffer,
@@ -33,8 +34,8 @@ const detail = [...tenant, authorize("store_admin", "manager")]
 const add = [...tenant, authorize("store_admin", "manager", "cashier")]
 
 router.get("/", ...read, list)
-router.post("/", ...add, validate(parseCreateOffer), create)
-router.post("/bulk", ...add, createBulk)
+router.post("/", ...add, requestScope({ location: false }), validate(parseCreateOffer), create)
+router.post("/bulk", ...add, requestScope({ location: false }), createBulk)
 // Bulk updates (POS offline sync): items[] = [{ id (offer number), ...fields }].
 router.patch("/bulk", ...write, patchBulk)
 router.patch("/bulk/status", ...write, patchBulkStatus)

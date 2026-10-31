@@ -5,6 +5,7 @@ import {
   requireTenantStore,
   tenantMiddleware,
 } from "../../shared/middlewares/tenant.middleware.js"
+import { requestScope } from "../../shared/middlewares/requestScope.middleware.js"
 import { validate } from "../../shared/middlewares/validate.middleware.js"
 import {
   applyProductImages,
@@ -46,10 +47,11 @@ router.post(
   ...catalogWrite,
   uploadProductImages(),
   applyProductImages({ kind: "products" }),
+  requestScope({ location: false }),
   validate(parseCreateProduct),
   create
 )
-router.post("/bulk", ...catalogWrite, createBulk)
+router.post("/bulk", ...catalogWrite, requestScope({ location: false }), createBulk)
 // Bulk updates (POS offline sync): items[] = [{ id (product number), ...fields }].
 router.patch("/bulk", ...catalogWrite, patchBulk)
 router.patch("/bulk/weight", ...catalogWrite, patchBulkWeight)

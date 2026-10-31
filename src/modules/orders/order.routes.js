@@ -5,6 +5,7 @@ import {
   requireTenantStore,
   tenantMiddleware,
 } from "../../shared/middlewares/tenant.middleware.js"
+import { requestScope } from "../../shared/middlewares/requestScope.middleware.js"
 import { validate } from "../../shared/middlewares/validate.middleware.js"
 import {
   parseAddPayment,
@@ -52,8 +53,8 @@ const place = [
 const manage = [...tenant, authorize("store_admin", "manager", "cashier")]
 const cancelled = [...tenant, authorize("store_admin", "manager")]
 
-router.post("/", ...place, validate(parseCreateOrder), create)
-router.post("/bulk", ...place, createBulk)
+router.post("/", ...place, requestScope(), validate(parseCreateOrder), create)
+router.post("/bulk", ...place, requestScope(), createBulk)
 // Bulk updates (POS offline sync): items[] = [{ id (order number), ... }].
 router.patch("/bulk", ...manage, patchBulk)
 router.patch("/bulk/status", ...manage, patchBulkStatus)
@@ -64,8 +65,8 @@ router.get("/cancelled", ...cancelled, listCancelled)
 router.get("/refunds", ...staff, listRefunds)
 router.get("/refunds/:refundId/receipt", ...staff, refundReceiptById)
 router.get("/summary/locations", ...cancelled, salesByLocation)
-router.post("/refunds/bulk", ...manage, refundItemsBulk)
-router.post("/refunds/complete/bulk", ...manage, refundCompleteBulk)
+router.post("/refunds/bulk", ...manage, requestScope(), refundItemsBulk)
+router.post("/refunds/complete/bulk", ...manage, requestScope(), refundCompleteBulk)
 router.get("/:id/payments", ...staff, listPayments)
 router.post(
   "/:id/payments",
@@ -75,10 +76,11 @@ router.post(
   addPayment
 )
 router.get("/:id/receipt", ...staff, receipt)
-router.post("/:id/refund", ...manage, validate(parseRefundItem), refundItem)
+router.post("/:id/refund", ...manage, requestScope(), validate(parseRefundItem), refundItem)
 router.post(
   "/:id/refund/complete",
   ...manage,
+  requestScope(),
   validate(parseRefundComplete),
   refundComplete
 )

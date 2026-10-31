@@ -5,6 +5,7 @@ import {
   requireTenantStore,
   tenantMiddleware,
 } from "../../shared/middlewares/tenant.middleware.js"
+import { requestScope } from "../../shared/middlewares/requestScope.middleware.js"
 import { validate } from "../../shared/middlewares/validate.middleware.js"
 import { parseCreateStaff, parsePatchStaff } from "./staff.validation.js"
 import {
@@ -31,7 +32,8 @@ router.use(
 
 router.get("/", list)
 router.post("/", validate(parseCreateStaff), create)
-router.post("/bulk", createBulk)
+// Each staff item names its own location; only storeId is taken from the top.
+router.post("/bulk", requestScope({ location: false }), createBulk)
 // Bulk updates (POS offline sync): items[] = [{ id (staff number), ...fields }].
 router.patch("/bulk", patchBulk)
 router.patch("/bulk/status", patchBulkStatus)

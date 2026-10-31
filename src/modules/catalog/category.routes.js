@@ -5,6 +5,7 @@ import {
   requireTenantStore,
   tenantMiddleware,
 } from "../../shared/middlewares/tenant.middleware.js"
+import { requestScope } from "../../shared/middlewares/requestScope.middleware.js"
 import { validate } from "../../shared/middlewares/validate.middleware.js"
 import {
   applyCloudinaryImages,
@@ -50,6 +51,7 @@ router.post(
   ...tenant,
   authorize("store_admin", "manager"),
   ...categoryImages,
+  requestScope({ location: false }),
   validate(parseCreateCategory),
   create
 )
@@ -57,6 +59,7 @@ router.post(
   "/bulk",
   ...tenant,
   authorize("store_admin", "manager"),
+  requestScope({ location: false }),
   createBulk
 )
 // Bulk updates (POS offline sync): items[] = [{ id (category number), ...fields }].

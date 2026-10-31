@@ -5,6 +5,7 @@ import {
   requireTenantStore,
   tenantMiddleware,
 } from "../../shared/middlewares/tenant.middleware.js"
+import { requestScope } from "../../shared/middlewares/requestScope.middleware.js"
 import { validate } from "../../shared/middlewares/validate.middleware.js"
 import { parseCreateSupplier, parsePatchSupplier } from "./supplier.validation.js"
 import {
@@ -28,8 +29,8 @@ router.use(
 )
 
 router.get("/", list)
-router.post("/", validate(parseCreateSupplier), create)
-router.post("/bulk", createBulk)
+router.post("/", requestScope({ location: false }), validate(parseCreateSupplier), create)
+router.post("/bulk", requestScope({ location: false }), createBulk)
 // Bulk update (POS offline sync): items[] = [{ id (supplier number), ...fields }].
 router.patch("/bulk", patchBulk)
 router.get("/:id", getOne)
