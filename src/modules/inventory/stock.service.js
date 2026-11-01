@@ -4,6 +4,7 @@ import { sequelize } from "../../db/sequelize.js"
 import { StockMovement } from "./stockMovement.model.js"
 import { Store } from "../stores/store.model.js"
 import { Location } from "../locations/location.model.js"
+import { User } from "../auth/user.model.js"
 import {
   getProduct,
   getProductByNumber,
@@ -24,6 +25,8 @@ import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
 const movementInclude = [
   { model: Store, attributes: ["id", "name"] },
   { model: Location, attributes: ["id", "name", "location_id_int"] },
+  // Who did it (the store admin too, who is not in the staff list).
+  { model: User, as: "staff", attributes: ["id", "user_number", "name", "role"] },
 ]
 
 /** product / variant of a movement: a variant shows its product and its own number and name. */
@@ -68,6 +71,7 @@ function publicMovement(row, extras = {}) {
     qty_after: json.qty_after == null ? null : Number(json.qty_after),
     supplier_id: json.supplier_id,
     staff_id: json.staff_id,
+    staff: json.staff ? { id: json.staff.id, user_number: json.staff.user_number, name: json.staff.name, role: json.staff.role } : null,
     order_id: json.order_id,
     created_at: json.created_at,
     ...publicVisibility(json),
