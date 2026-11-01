@@ -10,6 +10,7 @@ import { validate } from "../../shared/middlewares/validate.middleware.js"
 import {
   applyProductImages,
   uploadProductImages,
+  uploadSingleImage,
 } from "../../shared/middlewares/upload.middleware.js"
 import {
   parseBulkTiers,
@@ -20,6 +21,7 @@ import {
 import {
   create,
   createBulk,
+  getImage,
   getOne,
   list,
   listBulkTiers,
@@ -34,6 +36,8 @@ import {
   patchWeight,
   putBulkTiers,
   remove,
+  removeImage,
+  uploadImage,
 } from "./product.controller.js"
 
 const router = Router()
@@ -42,6 +46,11 @@ const catalogRead = [...tenant, authorize("store_admin", "manager", "cashier")]
 const catalogWrite = [...tenant, authorize("store_admin", "manager")]
 
 router.get("/", ...catalogRead, list)
+// Product image, one per product: multipart image (+ productId: number or UUID).
+router.post("/image", ...catalogWrite, uploadSingleImage("image"), uploadImage)
+router.post("/:id/image", ...catalogWrite, uploadSingleImage("image"), uploadImage)
+router.get("/:id/image", ...catalogRead, getImage)
+router.delete("/:id/image", ...catalogWrite, removeImage)
 router.post(
   "/",
   ...catalogWrite,

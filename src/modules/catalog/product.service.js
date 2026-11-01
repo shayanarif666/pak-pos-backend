@@ -670,6 +670,32 @@ export async function updateProduct(storeId, id, input, actor = null) {
   return publicProduct(await getProduct(storeId, product.id))
 }
 
+// ---- Product image: one image per product ----
+
+/** A product reference from the POS: its number (e.g. 1) or UUID. */
+export async function getProductByRef(storeId, ref) {
+  const value = String(ref ?? "").trim()
+  if (!value) throw new AppError("productId is required", 400)
+  return /^\d+$/.test(value) ? getProductByNumber(storeId, Number(value)) : getProduct(storeId, value)
+}
+
+const imageView = (product) => ({
+  id: product.product_number,
+  title: product.title,
+  image: product.featured_image || null,
+})
+
+export async function getProductImage(storeId, ref) {
+  return imageView(await getProductByRef(storeId, ref))
+}
+
+/** Sets the product's one image (replaces any earlier one). */
+export async function setProductImage(storeId, ref, url) {
+  const product = await getProductByRef(storeId, ref)
+  await product.update({ featured_image: url, images: url ? [{ url }] : [] })
+  return imageView(product)
+}
+
 export async function deleteProduct(storeId, id) {
   const product = await getProduct(storeId, id)
   await product.update({ is_active: false, is_published: false, is_pos_visible: false })

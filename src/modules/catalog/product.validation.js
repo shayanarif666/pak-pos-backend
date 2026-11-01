@@ -251,7 +251,8 @@ export function parseCreateProduct(rawBody) {
     ...parseCatalogVisibility(body),
     // Where the product is sold: all locations (default) or selected ones.
     ...parseLocationScope(body),
-    is_active: body.is_active === undefined ? true : Boolean(body.is_active),
+    // optionalBool: a multipart form sends "false" as text.
+    is_active: optionalBool(body, "is_active") ?? true,
   }
 
   if (fields.discount_type && !DISCOUNT_TYPE.includes(fields.discount_type)) {

@@ -16,6 +16,7 @@ import {
 } from "../../shared/utils/bulkUpdate.util.js"
 import { posProduct, posProducts } from "../pos/posResponses.js"
 import * as productService from "./product.service.js"
+import { uploadImageBuffer } from "../../shared/utils/cloudinary.util.js"
 import * as posHistory from "../pos/posHistory.service.js"
 
 export const list = asyncHandler(async (req, res) => {
@@ -67,6 +68,30 @@ export const patch = asyncHandler(async (req, res) => {
 export const remove = asyncHandler(async (req, res) => {
   const product = await productService.deleteProduct(req.storeId, req.params.id)
   return apiResponse(res, 200, "Product disabled", product)
+})
+
+// ---- Product image (one per product): upload, read, remove ----
+
+/** POST /products/image (productId + image file) or POST /products/:id/image (image file). */
+export const uploadImage = asyncHandler(async (req, res) => {
+  const ref = req.params.id ?? req.body?.productId ?? req.body?.product_id
+  if (!req.file) throw new AppError("Send the image file in the image field", 400)
+  // Check the product first, so a wrong id never uploads a file.
+  await productService.getProductByRef(req.storeId, ref)
+  const result = await uploadImageBuffer(req.file.buffer, {
+    folder: `pak-pos/${req.storeId}/products`,
+    filename: req.file.originalname,
+  })
+  const data = await productService.setProductImage(req.storeId, ref, result.secure_url)
+  return apiResponse(res, 200, "Product Image Uploaded", data)
+})
+
+export const getImage = asyncHandler(async (req, res) => {
+  return apiResponse(res, 200, "OK", await productService.getProductImage(req.storeId, req.params.id))
+})
+
+export const removeImage = asyncHandler(async (req, res) => {
+  return apiResponse(res, 200, "Product Image Removed", await productService.setProductImage(req.storeId, req.params.id, null))
 })
 
 export const listWeight = asyncHandler(async (req, res) => {

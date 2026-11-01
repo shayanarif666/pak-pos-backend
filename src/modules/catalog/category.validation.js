@@ -107,7 +107,8 @@ export function parseCreateCategory(body) {
     discount_type: optionalDiscountType(body, "discount_type") ?? null,
     discount_value: optionalNumber(body, "discount_value") ?? null,
     discount_name: optionalString(body, "discount_name") ?? null,
-    is_active: body.is_active === undefined ? true : Boolean(body.is_active),
+    // optionalBool: a multipart form sends "false" as text.
+    is_active: optionalBool(body, "is_active") ?? true,
     sort_order:
       body.sort_order === undefined || body.sort_order === null
         ? 0

@@ -23,6 +23,16 @@ export function parseLocationScope(body) {
 
   let ids = []
   if (hasIds) {
+    // A multipart form sends the list as text: "[1,2]" or "1,2".
+    if (typeof body.location_ids === "string") {
+      const text = body.location_ids.trim()
+      try {
+        body.location_ids = text ? JSON.parse(text) : []
+      } catch {
+        body.location_ids = text.split(",").map((value) => value.trim()).filter(Boolean)
+      }
+      if (!Array.isArray(body.location_ids)) body.location_ids = [body.location_ids]
+    }
     if (!Array.isArray(body.location_ids)) {
       throw new AppError("location_ids must be an array of location ids", 400)
     }
