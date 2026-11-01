@@ -9,6 +9,7 @@ import { nextProductNumber } from "../../shared/utils/counter.util.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { AppError } from "../../shared/errors/AppError.js"
+import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
 import { copyVisibility, publicVisibility } from "../../db/channelVisibility.js"
 import { Location } from "../locations/location.model.js"
 import {
@@ -33,7 +34,6 @@ import {
   locationScopeView,
   replaceLocationLinks,
   resolveStoreLocations,
-  scopeForActor,
   soldAt,
 } from "../../shared/utils/locationScope.util.js"
 
@@ -69,11 +69,134 @@ const VARIANTS_INCLUDE = {
   model: Product,
   as: "variants",
   attributes: [
-    "id", "product_number", "variant_name", "title", "sku", "barcode", "cost_price", "selling_price", "is_active",
+    "id", "product_number", "variant_number", "variant_name", "title", "sku", "barcode", "cost_price", "selling_price", "is_active",
     "is_pack_product", "pack_size", "pack_cost_price", "pack_selling_price", "sell_loose", "variant_taxes", "taxes",
+    "low_stock_threshold",
   ],
   separate: true,
-  order: [["product_number", "ASC"]],
+  order: [["variant_number", "ASC"], ["product_number", "ASC"]],
+}
+
+/** A JSON column that may come back as text. */
+function jsonList(value) {
+  if (Array.isArray(value)) return value
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value)
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  }
+  return []
+}
+
+/**
+ * A manager / cashier makes products for their own location only: sold there, stocked there.
+ * On an edit they cannot change where it is sold or stocked.
+ */
+function productScopeForActor(actor, fields, { creating }) {
+  if (!BRANCH_ROLES.has(actor?.role)) return fields
+  if (!actor.location_id) throw new ForbiddenError("Your account has no location")
+  const { location_scope: _scope, location_ids: _ids, stock_scope: _stock, stock_location_ids: _stockIds, ...rest } = fields
+  if (!creating) return rest
+  return { ...rest, location_scope: "selected", location_ids: [actor.location_id], stock_scope: "all" }
+}
+
+/** Every active location of the store, by number. */
+async function storeLocations(storeId) {
+  return Location.findAll({
+    where: { store_id: storeId, is_active: true },
+    attributes: ["id", "location_id_int", "name"],
+    order: [["location_id_int", "ASC"]],
+  })
+}
+
+/**
+ * Where a product is sold (its location_scope) and, out of those, where its stock is held (its
+ * stock_scope: all = every location it is sold at). A variant follows its parent.
+ */
+export async function stockPlaces(product, actor = null) {
+  const json = product.toJSON ? product.toJSON() : product
+  let owner = json
+  if (json.parent_product_id) {
+    const parent = await Product.findByPk(json.parent_product_id, { include: [PRODUCT_LOCATIONS_INCLUDE] })
+    if (parent) owner = parent.toJSON()
+  }
+  const all = await storeLocations(json.store_id)
+  const soldIds =
+    (owner.location_scope || "all") === "selected" ? new Set((owner.productLocations || []).map((link) => link.location_id)) : null
+  const sold = soldIds ? all.filter((row) => soldIds.has(row.id)) : all
+  const stockIds = owner.stock_scope === "selected" ? new Set(jsonList(owner.stock_location_ids)) : null
+  let held = stockIds ? sold.filter((row) => stockIds.has(row.id)) : sold
+  // A manager / cashier only works with their own location.
+  if (BRANCH_ROLES.has(actor?.role)) held = held.filter((row) => row.id === actor.location_id)
+  return { sold, held }
+}
+
+/** stock_location_ids for the row: UUIDs, only locations the product is sold at. */
+async function stockScopeColumns(storeId, stock_scope, stock_location_ids, soldIds, warnings, transaction) {
+  if (stock_scope !== "selected") return { stock_scope: "all", stock_location_ids: null }
+  const ids = await resolveStoreLocations(storeId, stock_location_ids, transaction)
+  const kept = soldIds ? ids.filter((id) => soldIds.includes(id)) : ids
+  if (kept.length < ids.length) warnings.push("stock_location_ids: a location the product is not sold at was left out")
+  return { stock_scope: "selected", stock_location_ids: kept }
+}
+
+/**
+ * Stock of one sellable product (a variant, or a product without variants) per location.
+ * - mode "opening" (create, a new variant, a new stock location): each qty is added as
+ *   stock_in / opening_balance; every stock location gets a stock row (qty 0 when none was sent).
+ * - mode "count" (edit): qty is what was counted; the difference is written as adjustment / count.
+ * A location that does not hold the product's stock is skipped and named in warnings.
+ */
+async function applyProductStock({ store, target, rows, held, actor, mode, warnings, label, fallbackRef }) {
+  const byRef = new Map()
+  for (const location of held) {
+    byRef.set(location.id, location)
+    byRef.set(String(location.location_id_int), location)
+  }
+  const wanted = new Map()
+  for (const row of rows || []) {
+    const ref = row.location ?? fallbackRef ?? actor?.location_id ?? store.default_location_id ?? (held.length === 1 ? held[0].id : null)
+    const location = ref == null ? null : byRef.get(String(ref))
+    if (!location) {
+      warnings.push(`${label}: location ${ref ?? "(none)"} does not hold this product's stock, skipped`)
+      continue
+    }
+    wanted.set(location.id, { location, qty: row.qty, expiry_date: row.expiry_date })
+  }
+  const entries =
+    mode === "opening" ? held.map((location) => wanted.get(location.id) || { location, qty: 0 }) : [...wanted.values()]
+  if (!entries.length) return
+  await sequelize.transaction(async (transaction) => {
+    for (const entry of entries) {
+      let delta = Number(entry.qty)
+      if (mode === "count") {
+        const current = await ProductStock.findOne({
+          where: { location_id: entry.location.id, product_id: target.id },
+          attributes: ["qty"],
+          transaction,
+        })
+        delta = Number(entry.qty) - Number(current?.qty || 0)
+      }
+      await applyStockDelta(
+        {
+          storeId: store.id,
+          storeIdInt: store.store_id_int,
+          location: entry.location,
+          productId: target.id,
+          delta,
+          movement_type: mode === "count" ? "adjustment" : "stock_in",
+          reason: mode === "count" ? "count" : "opening_balance",
+          reason_note: mode === "count" ? `Stock count of ${target.title}` : `Opening stock of ${target.title}`,
+          staff_id: actor?.id || null,
+          ...(entry.expiry_date ? { expiry_date: entry.expiry_date } : {}),
+        },
+        { transaction }
+      )
+    }
+  })
 }
 
 /** Sold at locationId: the product's own locations and its category's both include it. */
@@ -254,9 +377,12 @@ function publicProduct(product, extras = {}) {
     // Variants: a parent lists them (has_variants, variants[]); a variant names its parent.
     parent_product_id: json.parent_product_id || null,
     variant_name: json.variant_name || null,
+    variant_number: json.variant_number ?? null,
     has_variants: Boolean(json.has_variants),
     variants: (json.variants || []).map((row) => ({
       id: row.id,
+      // Its number inside this product: 1, 2, 3…
+      variant_number: row.variant_number ?? null,
       product_number: row.product_number,
       name: row.variant_name,
       title: row.title,
@@ -304,6 +430,9 @@ function publicProduct(product, extras = {}) {
     low_stock_threshold: json.low_stock_threshold,
     // "all" = every location; "selected" = only location_ids.
     ...locationScopeView(json, json.productLocations),
+    // Which of those locations hold its stock: all, or selected = stock_location_ids.
+    stock_scope: json.stock_scope || "all",
+    stock_location_ids: json.stock_scope === "selected" ? jsonList(json.stock_location_ids) : [],
     is_published: json.is_published,
     ...publicVisibility(json),
     is_active: json.is_active,
@@ -378,8 +507,10 @@ export async function getProductByNumber(storeId, productNumber) {
 }
 
 async function attachStocks(products, actor, locationId) {
-  const ids = products.map((p) => p.id)
+  const ids = products.flatMap((p) => [p.id, ...(p.variants || []).map((v) => v.id)])
   if (!ids.length) return products.map((p) => publicProduct(p, { stocks: [] }))
+  const locations = await storeLocations(actor.store_id)
+  const locationById = new Map(locations.map((row) => [row.id, row]))
 
   const where = { store_id: actor.store_id, product_id: { [Op.in]: ids } }
   if (actor.role !== "store_admin") {
@@ -399,17 +530,38 @@ async function attachStocks(products, actor, locationId) {
     byProduct.set(row.product_id, list)
   }
 
-  return products.map((product) => {
-    const stocks = (byProduct.get(product.id) || []).map((row) => publicStock(row, product))
+  const sortStocks = (list) => list.sort((a, b) => Number(a.location_number || 0) - Number(b.location_number || 0))
+  const statusOf = (stocks) => {
     // Stock in the locations shown: total and in / low / out.
     const total_qty = money(stocks.reduce((sum, row) => sum + Number(row.qty || 0), 0))
-    const stock_status = total_qty <= 0 ? "out" : stocks.some((row) => row.is_low) ? "low" : "in"
-    return publicProduct(product, { stocks, total_qty, stock_status })
+    return { total_qty, stock_status: total_qty <= 0 ? "out" : stocks.some((row) => row.is_low) ? "low" : "in" }
+  }
+  return products.map((product) => {
+    const json = product.toJSON ? product.toJSON() : product
+    const stockIds = json.stock_scope === "selected" ? jsonList(json.stock_location_ids) : null
+    // The locations holding its stock (availability), as numbers and names.
+    const stock_locations = (stockIds || []).map((id) => locationById.get(id)).filter(Boolean)
+      .map((row) => ({ id: row.id, location_number: row.location_id_int, name: row.name }))
+    const variantStocks = new Map(
+      (product.variants || []).map((variant) => [
+        variant.id,
+        sortStocks((byProduct.get(variant.id) || []).map((row) => publicStock(row, variant))),
+      ])
+    )
+    const own = sortStocks((byProduct.get(product.id) || []).map((row) => publicStock(row, product)))
+    const all = product.has_variants ? [...variantStocks.values()].flat() : own
+    const view = publicProduct(product, { stocks: own, ...statusOf(all), stock_locations })
+    view.variants = view.variants.map((variant) => {
+      const stocks = variantStocks.get(variant.id) || []
+      return { ...variant, stocks, ...statusOf(stocks) }
+    })
+    return view
   })
 }
 
-export async function listProducts(actor, query = {}) {
+export async function listProducts(actor, query = {}, { parentsOnly = false } = {}) {
   const where = { store_id: actor.store_id }
+  if (parentsOnly) where.parent_product_id = null
   // category_id: the category's UUID or its category_number.
   const categoryRef = query.categoryId || query.category_id
   if (categoryRef) {
@@ -425,6 +577,18 @@ export async function listProducts(actor, query = {}) {
       { sku: { [Op.like]: q } },
       { barcode: { [Op.like]: q } },
     ]
+    if (parentsOnly) {
+      // A variant's barcode / SKU finds its product.
+      const matches = await Product.findAll({
+        where: {
+          store_id: actor.store_id,
+          parent_product_id: { [Op.ne]: null },
+          [Op.or]: [{ sku: { [Op.like]: q } }, { barcode: { [Op.like]: q } }, { variant_name: { [Op.like]: q } }],
+        },
+        attributes: ["parent_product_id"],
+      })
+      if (matches.length) where[Op.or].push({ id: { [Op.in]: [...new Set(matches.map((row) => row.parent_product_id))] } })
+    }
   }
 
   const products = await Product.findAll({
@@ -495,12 +659,12 @@ function productSummary(store, product, stocks) {
 
 /** One product with its stock; summary (the detail figures) is added for the dashboard only. */
 export async function getProductView(actor, id, query = {}, { withSummary = true } = {}) {
-  const product = await getProduct(actor.store_id, id)
+  // id: the product's UUID or its number (as the POS sends it).
+  const product = /^\d+$/.test(String(id)) ? await getProductByNumber(actor.store_id, Number(id)) : await getProduct(actor.store_id, id)
   if (BRANCH_ROLES.has(actor?.role) && !productSoldAt(product, actor.location_id)) {
     throw new NotFoundError("Product not found")
   }
   const [view] = await attachStocks([product], actor, query.locationId || query.location_id)
-  view.stocks.sort((a, b) => Number(a.location_number || 0) - Number(b.location_number || 0))
   if (!withSummary) {
     // The POS reply stays as it was.
     delete view.total_qty
@@ -508,7 +672,9 @@ export async function getProductView(actor, id, query = {}, { withSummary = true
     return view
   }
   const store = await getStoreForManager(actor.store_id)
-  return { ...view, summary: productSummary(store, product, view.stocks) }
+  // A product with variants: its figures cover every variant's stock.
+  const stocks = product.has_variants ? view.variants.flatMap((variant) => variant.stocks) : view.stocks
+  return { ...view, summary: productSummary(store, product, stocks) }
 }
 
 /**
@@ -520,7 +686,7 @@ export async function getCategoryDetail(actor, idOrNumber, query = {}) {
   if (BRANCH_ROLES.has(actor?.role) && !categorySoldAt(category, actor.location_id)) {
     throw new NotFoundError("Category not found")
   }
-  const products = await listProducts(actor, { ...query, category_id: category.id })
+  const products = await listProducts(actor, { ...query, category_id: category.id }, { parentsOnly: true })
   let totalQty = 0
   let costValue = 0
   let sellingValue = 0
@@ -558,13 +724,14 @@ async function assertVariantsFree(storeId, variants, excludeIds = []) {
 const variantTaxList = (parentTaxes, own) => [...(parentTaxes || []), ...(own || [])]
 
 /** One variant of a parent: a product of its own (the parent's category, taxes, unit, scope…). */
-async function createVariant(store, parent, variant, actor, stockLocationRef) {
+async function createVariant(store, parent, variant, variantNumber) {
   const json = parent.toJSON ? parent.toJSON() : parent
-  const view = await createProduct(
+  return createProduct(
     store,
     {
       title: `${json.title} - ${variant.name}`,
       variant_name: variant.name,
+      variant_number: variantNumber,
       parent_product_id: json.id,
       sku: variant.sku,
       barcode: variant.barcode,
@@ -593,38 +760,26 @@ async function createVariant(store, parent, variant, actor, stockLocationRef) {
     },
     null
   )
-  if (Number(variant.stock) > 0) {
-    const ref = variant.location_id || stockLocationRef || actor?.location_id || store.default_location_id
-    if (!ref) throw new AppError("Name the location for the variants' stock (location_id)", 400)
-    const location = await loadLocation(store.id, ref)
-    await sequelize.transaction((transaction) =>
-      applyStockDelta(
-        {
-          storeId: store.id,
-          storeIdInt: store.store_id_int,
-          location,
-          productId: view.id,
-          delta: Number(variant.stock),
-          movement_type: "stock_in",
-          reason: "opening_balance",
-          reason_note: `Opening stock of ${view.title}`,
-          staff_id: actor?.id || null,
-        },
-        { transaction }
-      )
-    )
-  }
-  return view
+}
+
+/** The next variant number of a product: 1 for the first, then max + 1 (never reused). */
+async function nextVariantNumber(parentId) {
+  const max = await Product.max("variant_number", { where: { parent_product_id: parentId } })
+  return Number(max || 0) + 1
 }
 
 export async function createProduct(store, input, actor = null) {
-  const { location_ids, variants, stock_location_id, ...fields } = scopeForActor(actor, input, { creating: true })
+  const { location_ids, variants, stock_location_id, stock, stock_scope, stock_location_ids, ...fields } =
+    productScopeForActor(actor, input, { creating: true })
   const scope = fields.location_scope || "all"
+  const warnings = []
   if (variants?.length) {
     await assertVariantsFree(store.id, variants)
     // The parent's own prices (not sold itself): the first variant's when none were sent.
-    if (fields.cost_price == null && !fields.is_pack_product) fields.cost_price = variants[0].cost_price
-    if (fields.selling_price == null && !fields.is_pack_product) fields.selling_price = variants[0].selling_price
+    // (A pack variant's unit prices = pack price ÷ pack size.)
+    const first = variants[0].is_pack_product ? unitPricesFromPack(variants[0]) : variants[0]
+    if (fields.cost_price == null && !fields.is_pack_product) fields.cost_price = first.cost_price ?? 0
+    if (fields.selling_price == null && !fields.is_pack_product) fields.selling_price = first.selling_price ?? 0
   }
   assertPackRules(fields)
   const slug = await ensureUniqueSlug(fields.title, async (candidate) => {
@@ -654,6 +809,14 @@ export async function createProduct(store, input, actor = null) {
         scope === "selected" ? location_ids : [],
         transaction
       )
+      const stockColumns = await stockScopeColumns(
+        store.id,
+        stock_scope,
+        stock_location_ids,
+        scope === "selected" ? locationIds : null,
+        warnings,
+        transaction
+      )
       const created = await Product.create(
         {
           store_id: store.id,
@@ -662,6 +825,7 @@ export async function createProduct(store, input, actor = null) {
           category_id: category.id,
           parent_product_id: fields.parent_product_id || null,
           variant_name: fields.variant_name || null,
+          variant_number: fields.variant_number ?? null,
           has_variants: Boolean(variants?.length),
           variant_taxes: fields.variant_taxes || null,
           title: fields.title,
@@ -700,6 +864,7 @@ export async function createProduct(store, input, actor = null) {
           channel: fields.channel,
           is_active: fields.is_active,
           location_scope: scope,
+          ...stockColumns,
         },
         { transaction }
       )
@@ -707,14 +872,32 @@ export async function createProduct(store, input, actor = null) {
       await replaceLocationLinks(ProductLocation, "product_id", created, locationIds, transaction)
       return created.id
     })
-    if (variants?.length) {
+    // Opening stock: every variant (or the product itself) at each location holding its stock.
+    if (!fields.parent_product_id) {
       const parent = await getProduct(store.id, id)
-      for (const variant of variants) await createVariant(store, parent, variant, actor, stock_location_id)
+      const { held } = await stockPlaces(parent, actor)
+      if (variants?.length) {
+        let number = 0
+        for (const variant of variants) {
+          const view = await createVariant(store, parent, variant, ++number)
+          await applyProductStock({
+            store, target: view, rows: variant.stock, held, actor, mode: "opening", warnings,
+            label: `variant ${variant.name}`, fallbackRef: stock_location_id,
+          })
+        }
+      } else {
+        await applyProductStock({
+          store, target: parent, rows: stock, held, actor, mode: "opening", warnings, label: "stock", fallbackRef: stock_location_id,
+        })
+      }
     }
-    return publicProduct(await getProduct(store.id, id), {
-      stocks: [],
+    if (fields.parent_product_id) return publicProduct(await getProduct(store.id, id))
+    const [view] = await attachStocks([await getProduct(store.id, id)], actor)
+    return {
+      ...view,
       ...(barcodePick.replaced ? { barcode_replaced: { requested: input.barcode, used: barcodePick.barcode } } : {}),
-    })
+      ...(warnings.length ? { stock_warnings: warnings } : {}),
+    }
   } catch (err) {
     if (err instanceof UniqueConstraintError) {
       throw new ConflictError("Product slug, SKU, or barcode already exists")
@@ -724,10 +907,11 @@ export async function createProduct(store, input, actor = null) {
 }
 
 /** PATCH variants[]: an id changes that variant of this product; no id adds a new variant. */
-async function saveVariants(storeId, product, variants, actor, stockLocationRef) {
+async function saveVariants(storeId, product, variants, actor, { held, warnings, stockLocationRef }) {
   const store = await getStoreForManager(storeId)
   const own = await Product.findAll({ where: { store_id: storeId, parent_product_id: product.id } })
-  const findOwn = (ref) => own.find((row) => row.id === ref || String(row.product_number) === String(ref))
+  // id = the variant's number inside this product (1, 2, 3…) or its UUID.
+  const findOwn = (ref) => own.find((row) => row.id === ref || String(row.variant_number) === String(ref))
   const changing = variants.filter((v) => v.ref).map((v) => findOwn(v.ref)?.id).filter(Boolean)
   await assertVariantsFree(storeId, variants.filter((v) => !v.ref))
   for (const variant of variants.filter((v) => v.ref)) {
@@ -738,7 +922,11 @@ async function saveVariants(storeId, product, variants, actor, stockLocationRef)
   const parentTaxes = productTaxList(product)
   for (const variant of variants) {
     if (!variant.ref) {
-      await createVariant(store, await getProduct(storeId, product.id), variant, actor, stockLocationRef)
+      const view = await createVariant(store, await getProduct(storeId, product.id), variant, await nextVariantNumber(product.id))
+      await applyProductStock({
+        store, target: view, rows: variant.stock, held, actor, mode: "opening", warnings,
+        label: `variant ${variant.name}`, fallbackRef: stockLocationRef,
+      })
       continue
     }
     const row = findOwn(variant.ref)
@@ -772,6 +960,12 @@ async function saveVariants(storeId, product, variants, actor, stockLocationRef)
       await row.update(patch)
       await row.update(productTotals(row))
     }
+    if (variant.stock !== undefined) {
+      await applyProductStock({
+        store, target: row, rows: variant.stock, held, actor, mode: "count", warnings,
+        label: `variant ${row.variant_number}`, fallbackRef: stockLocationRef,
+      })
+    }
   }
   if (!product.has_variants) await product.update({ has_variants: true })
   return changing
@@ -782,9 +976,12 @@ export async function updateProduct(storeId, id, input, actor = null) {
   if (BRANCH_ROLES.has(actor?.role) && !productSoldAt(product, actor.location_id)) {
     throw new NotFoundError("Product not found")
   }
-  const { location_ids, variants, stock_location_id, ...fields } = scopeForActor(actor, input, { creating: false })
+  const { location_ids, variants, stock_location_id, stock, stock_scope, stock_location_ids, ...fields } =
+    productScopeForActor(actor, input, { creating: false })
   assertPackRules(fields, product)
   const patch = { ...fields }
+  const warnings = []
+  const placesChange = fields.location_scope !== undefined || stock_scope !== undefined
 
   if (fields.title !== undefined) {
     const slug = await ensureUniqueSlug(fields.title, async (candidate) => {
@@ -843,6 +1040,23 @@ export async function updateProduct(storeId, id, input, actor = null) {
           transaction
         )
         await replaceLocationLinks(ProductLocation, "product_id", product, ids, transaction)
+        // Variants are sold where their product is.
+        const children = await Product.findAll({ where: { store_id: storeId, parent_product_id: product.id }, transaction })
+        for (const child of children) {
+          await child.update({ location_scope: fields.location_scope }, { transaction })
+          await replaceLocationLinks(ProductLocation, "product_id", child, ids, transaction)
+        }
+      }
+      if (stock_scope !== undefined || fields.location_scope !== undefined) {
+        const sold =
+          (fields.location_scope ?? product.location_scope) === "selected"
+            ? (await ProductLocation.findAll({ where: { product_id: product.id }, attributes: ["location_id"], transaction })).map(
+                (row) => row.location_id
+              )
+            : null
+        const scopeNow = stock_scope ?? product.stock_scope
+        const idsNow = stock_scope !== undefined ? stock_location_ids : jsonList(product.stock_location_ids)
+        Object.assign(patch, await stockScopeColumns(storeId, scopeNow, idsNow, sold, warnings, transaction))
       }
       await product.update(patch, { transaction })
       if (TOTAL_FIELDS.some((key) => patch[key] !== undefined)) {
@@ -863,8 +1077,28 @@ export async function updateProduct(storeId, id, input, actor = null) {
       await child.update(productTotals(child))
     }
   }
-  if (variants?.length) await saveVariants(storeId, product, variants, actor, stock_location_id)
-  return publicProduct(await getProduct(storeId, product.id))
+  const fresh = await getProduct(storeId, product.id)
+  const { held } = await stockPlaces(fresh, actor)
+  const store = await getStoreForManager(storeId)
+  // A location newly holding the stock gets a stock row (qty 0) for each variant / the product.
+  if (placesChange) {
+    for (const target of fresh.has_variants ? fresh.variants : [fresh]) {
+      await applyProductStock({ store, target, rows: [], held, actor, mode: "opening", warnings, label: "stock" })
+    }
+  }
+  if (variants?.length) {
+    await saveVariants(storeId, fresh, variants, actor, { held, warnings, stockLocationRef: stock_location_id })
+  }
+  if (stock !== undefined) {
+    if (fresh.has_variants || variants?.length) warnings.push("stock: a product with variants keeps its stock on each variant")
+    else {
+      await applyProductStock({
+        store, target: fresh, rows: stock, held, actor, mode: "count", warnings, label: "stock", fallbackRef: stock_location_id,
+      })
+    }
+  }
+  const [view] = await attachStocks([await getProduct(storeId, product.id)], actor)
+  return warnings.length ? { ...view, stock_warnings: warnings } : view
 }
 
 // ---- Product image: one image per product ----

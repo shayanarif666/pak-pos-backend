@@ -207,6 +207,56 @@ function resolveProductImages(body, { allowMissingImages = false } = {}) {
 const REF_RE = /^([1-9][0-9]*|[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i
 
 /**
+ * Stock per location: stock: [{ location_id, qty, expiry_date? }] (location number or UUID), or
+ * one number (older clients) for the request's location. Returns [{ location, qty, expiry_date }]
+ * (location null = the request's location), or undefined when nothing was sent. A location sent
+ * twice keeps its last row.
+ */
+function parseStockRows(row, label) {
+  const raw = row.stock ?? row.opening_stock
+  const fallbackLocation = row.location_id ?? row.locationId ?? null
+  if (raw === undefined || raw === null || raw === "") return undefined
+  if (typeof raw === "number" || (typeof raw === "string" && /^\s*\d+(\.\d+)?\s*$/.test(raw))) {
+    return [{ location: fallbackLocation == null ? null : String(fallbackLocation).trim(), qty: Number(raw) }]
+  }
+  let list = raw
+  if (typeof list === "string") {
+    try {
+      list = JSON.parse(list)
+    } catch {
+      throw new AppError(`${label} must be an array of { location_id, qty }`, 400)
+    }
+  }
+  if (!Array.isArray(list)) throw new AppError(`${label} must be an array of { location_id, qty }`, 400)
+  const byLocation = new Map()
+  list.forEach((entry, index) => {
+    const at = `${label}[${index}]`
+    if (!entry || typeof entry !== "object") throw new AppError(`${at} is invalid`, 400)
+    const location = entry.location_id ?? entry.locationId
+    if (location == null || location === "") throw new AppError(`${at}.location_id is required`, 400)
+    if (!REF_RE.test(String(location).trim())) throw new AppError(`${at}.location_id must be a location number or UUID`, 400)
+    const qty = Number(entry.qty)
+    if (entry.qty == null || entry.qty === "" || Number.isNaN(qty) || qty < 0) {
+      throw new AppError(`${at}.qty must be a number >= 0`, 400)
+    }
+    let expiry_date
+    if (entry.expiry_date != null && entry.expiry_date !== "") {
+      if (Number.isNaN(new Date(entry.expiry_date).getTime())) throw new AppError(`${at}.expiry_date is invalid`, 400)
+      expiry_date = String(entry.expiry_date).slice(0, 10)
+    }
+    byLocation.set(String(location).trim(), { location: String(location).trim(), qty, expiry_date })
+  })
+  return [...byLocation.values()]
+}
+
+/** stock_scope: all (every location the product is sold at) or selected + stock_location_ids. */
+function parseStockScope(body) {
+  if ((body.stock_scope == null || body.stock_scope === "") && body.stock_location_ids == null) return {}
+  const scope = parseLocationScope({ location_scope: body.stock_scope ?? undefined, location_ids: body.stock_location_ids })
+  return { stock_scope: scope.location_scope, stock_location_ids: scope.location_ids }
+}
+
+/**
  * variants: [{ name, sku?, barcode, cost, price, stock?, location_id?, id? }] — each one becomes a
  * product of its own (same category, taxes, unit… as the parent). id (PATCH only) = an existing
  * variant's product number or UUID, to change it instead of adding one.
@@ -221,7 +271,7 @@ function parseVariants(body, { patch = false } = {}) {
     const row = withPriceAliases(raw)
     const ref = row.id ?? row.product_id
     const existing = patch && ref != null && ref !== ""
-    if (existing && !REF_RE.test(String(ref).trim())) throw new AppError(`${label}.id must be a product number or UUID`, 400)
+    if (existing && !REF_RE.test(String(ref).trim())) throw new AppError(`${label}.id must be the variant number (1, 2, 3…) or its UUID`, 400)
     const name = existing ? optionalString(row, "name") : requireString(row, "name")
     const barcode = existing
       ? row.barcode === undefined ? undefined : optionalString({ barcode: row.barcode == null ? null : String(row.barcode) }, "barcode")
@@ -254,8 +304,8 @@ function parseVariants(body, { patch = false } = {}) {
       sell_loose: optionalBool(row, "sell_loose"),
       // This variant's own taxes, added to the product's taxes. undefined = not sent.
       taxes: parseTaxes(row),
-      stock: optionalNumber(row, "stock") ?? optionalNumber(row, "qty"),
-      location_id: row.location_id ?? row.locationId ?? null,
+      // Opening stock (create / a new variant) or the counted stock (an existing variant), per location.
+      stock: parseStockRows(row.stock === undefined && row.qty !== undefined ? { ...row, stock: row.qty } : row, `${label}.stock`),
       is_active: optionalBool(row, "is_active"),
     }
   })
@@ -276,6 +326,8 @@ export function parseCreateProduct(rawBody) {
 
   const fields = {
     title: requireString(body, "title"),
+    // Left out = made from the title.
+    sku: body.sku == null || body.sku === "" ? undefined : String(body.sku).trim(),
     barcode: hasVariants ? optionalString({ barcode: body.barcode == null ? null : String(body.barcode) }, "barcode") ?? null : requireStringOrNumber(body, "barcode"),
     ...(hasVariants ? { variants } : {}),
     // Where a variant's opening stock goes when it does not name a location.
@@ -314,6 +366,9 @@ export function parseCreateProduct(rawBody) {
     ...parseCatalogVisibility(body),
     // Where the product is sold: all locations (default) or selected ones.
     ...parseLocationScope(body),
+    // Which of those hold its stock, and the opening stock per location (no variants).
+    ...parseStockScope(body),
+    ...(hasVariants ? {} : { stock: parseStockRows(body, "stock") }),
     // optionalBool: a multipart form sends "false" as text.
     is_active: optionalBool(body, "is_active") ?? true,
   }
@@ -398,6 +453,13 @@ export function parsePatchProduct(rawBody) {
   }
   Object.assign(fields, parseCatalogVisibility(body, { patch: true }))
   Object.assign(fields, parseLocationScope(body))
+  Object.assign(fields, parseStockScope(body))
+  // The counted stock per location: the server writes the difference as an adjustment.
+  const stock = parseStockRows(body, "stock")
+  if (stock !== undefined) {
+    fields.stock = stock
+    fields.stock_location_id = body.stock_location_id ?? body.location_id ?? null
+  }
   if (body.is_active !== undefined) fields.is_active = optionalBool(body, "is_active")
   const variants = parseVariants(body, { patch: true })
   if (variants) {

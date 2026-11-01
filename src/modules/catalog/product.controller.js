@@ -21,15 +21,27 @@ import * as posHistory from "../pos/posHistory.service.js"
 
 export const list = asyncHandler(async (req, res) => {
   if (req.auth?.channel === "pos") return posHistory.sendPage(res, await posHistory.products(req))
-  const data = await productService.listProducts(req.user, req.query)
+  // A variant is listed inside its product (variants[] with their own stock).
+  const data = await productService.listProducts(req.user, req.query, { parentsOnly: true })
   return apiResponse(res, 200, "OK", data)
 })
 
 export const getOne = asyncHandler(async (req, res) => {
-  const data = await productService.getProductView(req.user, req.params.id, req.query, {
-    withSummary: req.auth?.channel !== "pos",
+  const pos = req.auth?.channel === "pos"
+  const data = await productService.getProductView(req.user, req.params.id, req.query, { withSummary: !pos })
+  if (!pos) return apiResponse(res, 200, "OK", data)
+  // The POS shape, with the stock per location (each variant's inside it), as in Products.
+  const [row] = await posProducts([data])
+  const stocks = data.stocks || []
+  return apiResponse(res, 200, "OK", {
+    ...row,
+    qty: Number(stocks.reduce((sum, stock) => sum + Number(stock.qty || 0), 0).toFixed(3)),
+    stocks: stocks.map((stock) => ({
+      location: { id: stock.location_number, name: stock.location_name || null },
+      qty: stock.qty,
+      expiry_date: stock.expiry_date,
+    })),
   })
-  return apiResponse(res, 200, "OK", data)
 })
 
 export const create = asyncHandler(async (req, res) => {

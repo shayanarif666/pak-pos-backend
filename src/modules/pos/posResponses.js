@@ -48,7 +48,10 @@ export async function currencyOf(storeId) {
 const KINDS = {
   user: { model: User, attributes: ["id", "user_number", "name", "role"] },
   location: { model: Location, attributes: ["id", "location_id_int", "name"] },
-  product: { model: Product, attributes: ["id", "product_number", "title", "sku", "unit", "category_id"] },
+  product: {
+    model: Product,
+    attributes: ["id", "product_number", "title", "sku", "unit", "category_id", "parent_product_id", "variant_number", "variant_name"],
+  },
   category: { model: Category, attributes: ["id", "category_number", "name", "tax_name"] },
   supplier: { model: Supplier, attributes: ["id", "supplier_number", "name", "phone"] },
   customer: { model: Customer, attributes: ["id", "customer_number", "name", "phone"] },
@@ -103,6 +106,16 @@ export class Refs {
   product(id) {
     const row = this.get("product", id)
     return row ? { id: row.product_number, title: row.title, sku: row.sku, unit: row.unit } : null
+  }
+  /** { product, variant }: a variant shows its product (load parents first) and its own number. */
+  productAndVariant(id) {
+    const row = this.get("product", id)
+    if (!row) return { product: null, variant: null }
+    if (!row.parent_product_id) return { product: this.product(id), variant: null }
+    return {
+      product: this.product(row.parent_product_id),
+      variant: { id: row.variant_number, name: row.variant_name, sku: row.sku },
+    }
   }
   category(id) {
     const row = this.get("category", id)
@@ -517,10 +530,12 @@ export async function posStockMovements(movements) {
     order: movements.map((row) => row.order_id),
     location: movements.map((row) => row.location_id),
   })
+  // A variant's product.
+  await refs.load("product", movements.map((row) => refs.get("product", row.product_id)?.parent_product_id))
   return movements.map((movement) => ({
     id: movement.movement_number,
     location: refs.location(movement.location_id),
-    product: refs.product(movement.product_id),
+    ...refs.productAndVariant(movement.product_id),
     supplier: refs.supplier(movement.supplier_id),
     staff: refs.staff(movement.staff_id),
     order: refs.order(movement.order_id),
@@ -687,13 +702,31 @@ export async function posProducts(views) {
     has_variants: Boolean(view.has_variants),
     parent: view.parent_product_id ? refs.product(view.parent_product_id) : null,
     variant_name: view.variant_name || null,
+    // id = the variant's number inside this product (1, 2, 3…); product_id = its own product number.
     variants: (view.variants || []).map((row) => ({
-      id: row.product_number,
+      id: row.variant_number,
+      product_id: row.product_number,
       name: row.name,
       sku: row.sku,
       barcode: row.barcode,
       cost_price: row.cost_price,
       selling_price: row.selling_price,
+      is_pack_product: Boolean(row.is_pack_product),
+      pack_size: row.pack_size ?? null,
+      pack_cost_price: num(row.pack_cost_price),
+      pack_selling_price: num(row.pack_selling_price),
+      sell_loose: Boolean(row.sell_loose),
+      taxes: row.taxes || [],
+      ...(row.stocks
+        ? {
+            qty: num(row.total_qty),
+            stocks: row.stocks.map((stock) => ({
+              location: { id: stock.location_number, name: stock.location_name || null },
+              qty: stock.qty,
+              expiry_date: stock.expiry_date,
+            })),
+          }
+        : {}),
       is_active: row.is_active,
     })),
     slug: view.slug,
@@ -722,6 +755,9 @@ export async function posProducts(views) {
     total_price_each_unit: num(view.total_price_each_unit),
     total_pack_price: num(view.total_pack_price),
     ...posLocationScope(view),
+    // The locations holding its stock: all (every one it is sold at) or selected + their numbers.
+    stock_scope: view.stock_scope || "all",
+    stock_location_ids: (view.stock_locations || []).map((row) => row.location_number),
     is_active: Boolean(view.is_active),
     is_pos_visible: view.is_pos_visible !== false,
     is_web_visible: view.is_web_visible !== false,

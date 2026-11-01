@@ -1,6 +1,6 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js"
 import { asyncHandler } from "../../shared/utils/asyncHandler.js"
-import { bulkStatus, posBulkResponse, extractBulkItems, runBulk } from "../../shared/utils/bulk.util.js"
+import { bulkStatus, posBulkResponse, extractBulkItems } from "../../shared/utils/bulk.util.js"
 import { parseCreateMovement } from "./stock.validation.js"
 import * as stockService from "./stock.service.js"
 import { StockMovement } from "./stockMovement.model.js"
@@ -39,12 +39,18 @@ export const list = asyncHandler(async (req, res) => {
 
 export const create = asyncHandler(async (req, res) => {
   const { actor, fields } = await prepare(req, movementActor(req), req.body)
-  const result = await stockService.createMovement(actor, fields)
-  const { summary: _summary, ...data } = result
-  if (req.auth?.channel === "pos") {
-    return apiResponse(res, 201, "Stock Movement Created", await movementSummary(result))
+  const { created, failed } = await stockService.createMovements(actor, fields)
+  if (!created.length) {
+    const first = failed[0]
+    return res.status(first?.status || 400).json({ success: false, message: first?.message || "Failed", failed })
   }
-  return apiResponse(res, 201, "Stock movement recorded", data)
+  if (req.auth?.channel === "pos") {
+    const rows = await Promise.all(created.map((result) => movementSummary(result)))
+    return apiResponse(res, 201, "Stock Movement Created", rows.length === 1 && !failed.length ? rows[0] : rows)
+  }
+  const data = created.map(({ summary: _summary, ...row }) => row)
+  if (data.length === 1 && !failed.length) return apiResponse(res, 201, "Stock movement recorded", data[0])
+  return apiResponse(res, 201, "Stock movements recorded", { created: data, failed })
 })
 
 function movementActor(req) {
@@ -63,24 +69,35 @@ export const createBulk = asyncHandler(async (req, res) => {
     : movementActor(req)
   // staff_id may be sent once next to items[] or on each movement.
   const fallbackStaff = req.body?.staff_id ?? req.body?.staffId ?? null
-  const data = await runBulk(extractBulkItems(req.body), async (item) => {
-    const { actor, fields } = await prepare(
-      req,
-      base,
-      parseCreateMovement(item),
-      fallbackStaff == null ? null : String(fallbackStaff)
-    )
-    return stockService.createMovement(actor, fields)
-  })
+  // Each item is one product; it may move several variants / locations (one movement each).
+  // A failed variant / location is listed in failed[] with the item's index; the rest still save.
+  const items = extractBulkItems(req.body)
+  const moved = []
+  const failed = []
+  for (let index = 0; index < items.length; index += 1) {
+    try {
+      const { actor, fields } = await prepare(
+        req,
+        base,
+        parseCreateMovement(items[index]),
+        fallbackStaff == null ? null : String(fallbackStaff)
+      )
+      const result = await stockService.createMovements(actor, fields)
+      moved.push(...result.created)
+      failed.push(...result.failed.map((row) => ({ index, ...row })))
+    } catch (err) {
+      failed.push({ index, message: err.message || "Failed", status: err.statusCode || err.status || 400 })
+    }
+  }
+  const data = { created: moved, failed, created_count: moved.length, failed_count: failed.length }
   if (req.auth?.channel === "pos") {
-    const created = []
     // Every created movement in one query, shaped together.
-    const ids = data.created.map((row) => row.movement?.id).filter(Boolean)
+    const ids = moved.map((row) => row.movement?.id).filter(Boolean)
     const rows = ids.length ? await StockMovement.findAll({ where: { id: ids } }) : []
     const byId = new Map(rows.map((row) => [row.id, row]))
-    created.push(...(await posStockMovements(ids.map((id) => byId.get(id)).filter(Boolean))))
-    return posBulkResponse(res, data, "Stock Movement Created", created)
+    const shaped = await posStockMovements(ids.map((id) => byId.get(id)).filter(Boolean))
+    return posBulkResponse(res, data, "Stock Movement Created", shaped)
   }
-  const created = data.created.map(({ summary, ...row }) => row)
+  const created = moved.map(({ summary: _summary, ...row }) => row)
   return apiResponse(res, bulkStatus(data), "Bulk stock movements processed", { ...data, created })
 })

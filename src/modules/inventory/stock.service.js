@@ -9,7 +9,11 @@ import {
   getProductByNumber,
   numberOfPacks,
   publicStock,
+  stockPlaces,
 } from "../catalog/product.service.js"
+import { Product } from "../catalog/product.model.js"
+import { NotFoundError } from "../../shared/errors/NotFoundError.js"
+import { AppError } from "../../shared/errors/AppError.js"
 import {
   applyStockDelta,
   loadLocation,
@@ -19,8 +23,31 @@ import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
 
 const movementInclude = [
   { model: Store, attributes: ["id", "name"] },
-  { model: Location, attributes: ["id", "name"] },
+  { model: Location, attributes: ["id", "name", "location_id_int"] },
 ]
+
+/** product / variant of a movement: a variant shows its product and its own number and name. */
+async function productRefs(productIds) {
+  const ids = [...new Set(productIds.filter(Boolean))]
+  if (!ids.length) return new Map()
+  const rows = await Product.findAll({
+    where: { id: { [Op.in]: ids } },
+    attributes: ["id", "product_number", "title", "sku", "unit", "parent_product_id", "variant_number", "variant_name"],
+    include: [{ model: Product, as: "parent", attributes: ["id", "product_number", "title", "sku", "unit"] }],
+  })
+  return new Map(
+    rows.map((row) => {
+      const main = row.parent || row
+      return [
+        row.id,
+        {
+          product: { id: main.id, product_number: main.product_number, title: main.title, sku: main.sku, unit: main.unit },
+          variant: row.parent ? { id: row.id, variant_number: row.variant_number, name: row.variant_name, sku: row.sku } : null,
+        },
+      ]
+    })
+  )
+}
 
 function publicMovement(row, extras = {}) {
   const json = row.toJSON ? row.toJSON() : row
@@ -30,7 +57,10 @@ function publicMovement(row, extras = {}) {
     store_name: extras.store_name ?? json.Store?.name ?? null,
     location_id: json.location_id,
     location_name: extras.location_name ?? json.Location?.name ?? null,
+    location_number: extras.location_number ?? json.Location?.location_id_int ?? null,
     product_id: json.product_id,
+    product: extras.refs?.product ?? null,
+    variant: extras.refs?.variant ?? null,
     movement_type: json.movement_type,
     reason: json.reason,
     reason_note: json.reason_note,
@@ -50,10 +80,21 @@ export async function listMovements(actor, query = {}) {
   else if (query.locationId || query.location_id) {
     where.location_id = query.locationId || query.location_id
   }
-  if (query.productId || query.product_id) {
-    where.product_id = query.productId || query.product_id
+  const productRef = query.productId || query.product_id
+  if (productRef) {
+    // A product's number or UUID: its own movements and its variants'.
+    const product = await Product.findOne({
+      where: /^\d+$/.test(String(productRef))
+        ? { store_id: actor.store_id, product_number: Number(productRef) }
+        : { store_id: actor.store_id, id: productRef },
+      attributes: ["id"],
+    })
+    if (!product) return []
+    const variants = await Product.findAll({ where: { parent_product_id: product.id }, attributes: ["id"] })
+    where.product_id = [product.id, ...variants.map((row) => row.id)]
   }
   if (query.movement_type) where.movement_type = query.movement_type
+  if (query.reason) where.reason = query.reason
   if (query.from || query.to) {
     where.created_at = {}
     if (query.from) where.created_at[Op.gte] = new Date(query.from)
@@ -63,9 +104,94 @@ export async function listMovements(actor, query = {}) {
   const rows = await StockMovement.findAll({
     where,
     include: movementInclude,
-    order: [["created_at", "DESC"]],
+    order: [["created_at", "DESC"], ["movement_number", "DESC"]],
   })
-  return rows.map((row) => publicMovement(row))
+  const refs = await productRefs(rows.map((row) => row.product_id))
+  return rows.map((row) => publicMovement(row, { refs: refs.get(row.product_id) }))
+}
+
+/**
+ * Stock movements of one product: one per variant / location in fields.units. Each location must
+ * be one the product is sold at (a manager / cashier only their own). A product with variants
+ * moves each variant's stock; a unit that fails is listed in failed[] and the others still save.
+ */
+export async function createMovements(actor, fields) {
+  const product = fields.product.product_id
+    ? await getProduct(actor.store_id, fields.product.product_id)
+    : await getProductByNumber(actor.store_id, fields.product.product_number)
+  const { sold } = await stockPlaces(product)
+  const byRef = new Map(sold.flatMap((row) => [[row.id, row], [String(row.location_id_int), row]]))
+  const created = []
+  const failed = []
+  for (const unit of fields.units) {
+    try {
+      let target = product
+      if (unit.variant) {
+        if (!product.has_variants) throw new AppError(`${product.title} has no variants; send stock without variants`, 400)
+        target = (product.variants || []).find(
+          (row) => String(row.variant_number) === unit.variant || row.id === unit.variant
+        )
+        if (!target) throw new NotFoundError(`Variant ${unit.variant} is not a variant of ${product.title}`)
+      } else if (product.has_variants) {
+        throw new AppError(`${product.title} has variants: send variants [{ id, stock }]`, 400)
+      }
+      const requested = unit.location ?? fields.location_id
+      const locationId = resolveLocationId(actor, requested)
+      if (!locationId) throw new ForbiddenError("No location on this account")
+      const location = await loadLocation(actor.store_id, locationId)
+      // A manager / cashier may name their own location (number or UUID), never another one.
+      if (actor.role !== "store_admin" && requested && (await loadLocation(actor.store_id, requested)).id !== location.id) {
+        throw new ForbiddenError("You can only move stock at your location")
+      }
+      if (!byRef.has(location.id)) throw new AppError(`${product.title} is not sold at ${location.name}`, 400)
+      created.push(await moveOne(actor, target, location, { ...fields, qty: unit.qty, expiry_date: unit.expiry_date }))
+    } catch (err) {
+      failed.push({
+        variant_id: unit.variant ? (/^\d+$/.test(unit.variant) ? Number(unit.variant) : unit.variant) : null,
+        location_id: unit.location ?? fields.location_id ?? null,
+        message: err.message || "Failed",
+        status: err.statusCode || err.status || 400,
+      })
+    }
+  }
+  return { created, failed }
+}
+
+/** One movement of a sellable product at a location. */
+async function moveOne(actor, product, location, fields) {
+  const store = await Store.findByPk(actor.store_id)
+  return sequelize.transaction(async (transaction) => {
+    const { stock, movement } = await applyStockDelta(
+      {
+        storeId: actor.store_id,
+        storeIdInt: actor.store_id_int,
+        location,
+        productId: product.id,
+        delta: fields.qty,
+        movement_type: fields.movement_type,
+        reason: fields.reason,
+        reason_note: fields.reason_note,
+        staff_id: actor.id,
+        expiry_date: fields.expiry_date,
+        visibility: fields.visibility,
+        supplier_id: fields.supplier_id || null,
+      },
+      { transaction }
+    )
+    const refs = (await productRefs([product.id])).get(product.id)
+    return {
+      movement: movement
+        ? publicMovement(movement, {
+            store_name: store?.name || null,
+            location_name: location.name,
+            location_number: location.location_id_int,
+            refs,
+          })
+        : null,
+      stock: publicStock(stock, product),
+      summary: stockSummary(product, Number(stock.qty)),
+    }
+  })
 }
 
 export async function createMovement(actor, fields) {

@@ -9,9 +9,52 @@ const UUID_RE =
 const MANUAL_TYPES = ["stock_in", "stock_out", "adjustment"]
 // "sale" is allowed so the POS can post a sale-driven adjustment; refund/transfer/custom_sale
 // movements are only written by their own flows.
+// opening_balance is written by product create only.
 const MANUAL_REASONS = STOCK_MOVEMENT_REASON.filter(
-  (reason) => !["refund", "transfer", "custom_sale"].includes(reason)
+  (reason) => !["refund", "transfer", "custom_sale", "opening_balance"].includes(reason)
 )
+
+const REF_RE = /^([1-9][0-9]*|[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i
+
+function parseExpiry(value, label) {
+  if (value === undefined || value === null || value === "") return undefined
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) throw new AppError(`${label} is invalid`, 400)
+  return date
+}
+
+/**
+ * The qty of one movement. stock_in adds and stock_out takes away whatever the sign sent
+ * (qty 5 or -5 both take 5 away on a stock_out); an adjustment keeps its sign.
+ */
+function signedQty(movement_type, value, label) {
+  const qty = Number(value)
+  if (value === undefined || value === null || value === "" || Number.isNaN(qty) || qty === 0) {
+    throw new AppError(`${label} must be a non-zero number`, 400)
+  }
+  if (movement_type === "stock_in") return Math.abs(qty)
+  if (movement_type === "stock_out") return -Math.abs(qty)
+  return qty
+}
+
+/** stock: [{ location_id, qty, expiry_date? }] → one unit per location. */
+function stockUnits(list, movement_type, label, variant = null) {
+  if (!Array.isArray(list) || !list.length) throw new AppError(`${label} must be a non-empty array of { location_id, qty }`, 400)
+  return list.map((entry, index) => {
+    const at = `${label}[${index}]`
+    if (!entry || typeof entry !== "object") throw new AppError(`${at} is invalid`, 400)
+    const location = entry.location_id ?? entry.locationId
+    if (location != null && location !== "" && !REF_RE.test(String(location).trim())) {
+      throw new AppError(`${at}.location_id must be a location number or UUID`, 400)
+    }
+    return {
+      variant,
+      location: location == null || location === "" ? null : String(location).trim(),
+      qty: signedQty(movement_type, entry.qty, `${at}.qty`),
+      expiry_date: parseExpiry(entry.expiry_date, `${at}.expiry_date`),
+    }
+  })
+}
 
 /** product_id: the product's short product_number (e.g. 1) or its UUID. product_number is the old key. */
 function requireProductRef(body) {
@@ -44,40 +87,42 @@ export function parseCreateMovement(body) {
   }
   const reason = String(body.reason || "")
   if (!MANUAL_REASONS.includes(reason)) {
-    throw new AppError("Invalid stock movement reason", 400)
+    throw new AppError(
+      reason === "opening_balance"
+        ? "opening_balance is written when the product is created; use purchase for new stock"
+        : "Invalid stock movement reason",
+      400
+    )
   }
-  const qty = Number(body.qty)
-  if (Number.isNaN(qty) || qty === 0) {
-    throw new AppError("qty must be a non-zero number", 400)
-  }
-  if (movement_type === "stock_in" && qty < 0) {
-    throw new AppError("stock_in qty must be positive", 400)
-  }
-  if (movement_type === "stock_out" && qty > 0) {
-    throw new AppError("stock_out qty must be negative", 400)
-  }
-
-  // Optional: left out, the location's current expiry date stays as it is.
-  let expiry_date
-  if (body.expiry_date !== undefined && body.expiry_date !== null && body.expiry_date !== "") {
-    expiry_date = new Date(body.expiry_date)
-    if (Number.isNaN(expiry_date.getTime())) {
-      throw new AppError("expiry_date is invalid", 400)
-    }
+  // What moves: variants [{ id (variant number), stock: [{ location_id, qty }] }], or stock [...]
+  // for a product without variants, or (older clients) one qty at location_id / the token's.
+  let units
+  if (Array.isArray(body.variants)) {
+    if (!body.variants.length) throw new AppError("variants must not be empty", 400)
+    units = body.variants.flatMap((row, index) => {
+      const ref = row?.id ?? row?.variant_id ?? row?.variantId
+      if (ref == null || !REF_RE.test(String(ref).trim())) {
+        throw new AppError(`variants[${index}].id must be the variant number (1, 2, 3…) or its UUID`, 400)
+      }
+      return stockUnits(row.stock, movement_type, `variants[${index}].stock`, String(ref).trim())
+    })
+  } else if (Array.isArray(body.stock)) {
+    units = stockUnits(body.stock, movement_type, "stock")
+  } else {
+    units = [{ variant: null, location: null, qty: signedQty(movement_type, body.qty, "qty"), expiry_date: parseExpiry(body.expiry_date, "expiry_date") }]
   }
 
   return {
     product: requireProductRef(body),
-    // The location (number or UUID); without it the token's location is used.
+    units,
+    // The location (number or UUID) of a row that names none; else the token's location.
     location_id: optionalLocationRef(body),
     movement_type,
     reason,
-    qty,
     reason_note:
       body.reason_note === undefined || body.reason_note === null
         ? null
         : String(body.reason_note).trim(),
-    expiry_date,
     visibility: parseCatalogVisibility(body),
     // Who did it (PIN-picked staff) and, for a purchase, which supplier: numbers or UUIDs.
     staff_ref: staffRefFrom(body),

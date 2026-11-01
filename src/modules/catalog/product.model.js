@@ -15,6 +15,8 @@ export const Product = sequelize.define(
     // A variant (e.g. "Size: M") is a product of its own, linked to the parent that groups them.
     parent_product_id: uuidCol(true),
     variant_name: { type: DataTypes.STRING(255), allowNull: true },
+    // The variant's number inside its product: 1, 2, 3… (every product starts again at 1).
+    variant_number: { type: DataTypes.INTEGER, allowNull: true },
     // The parent of variants: listed, but each variant is what is sold.
     has_variants: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     // A variant's own taxes (its taxes column = the parent's taxes + these).
@@ -84,6 +86,10 @@ export const Product = sequelize.define(
     // items. Kept up to date by product.service (productTotals) on every create / update.
     // "all" = sold at every location; "selected" = only at the locations in product_locations.
     location_scope: { type: DataTypes.ENUM(...SUPPLIER_LOCATION_SCOPE), allowNull: false, defaultValue: "all" },
+    // Which of those locations hold its stock: "all" of them, or "selected" = stock_location_ids
+    // (location UUIDs). A variant uses its parent's.
+    stock_scope: { type: DataTypes.ENUM(...SUPPLIER_LOCATION_SCOPE), allowNull: false, defaultValue: "all" },
+    stock_location_ids: { type: DataTypes.JSON, allowNull: true },
     total_price_each_unit: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
     total_pack_price: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
     is_published: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
