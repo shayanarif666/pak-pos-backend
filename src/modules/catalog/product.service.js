@@ -27,6 +27,7 @@ import {
 } from "./category.service.js"
 import { ProductLocation } from "./catalogLocation.model.js"
 import { applyStockDelta, loadLocation } from "./productStock.service.js"
+import { freeBarcode } from "../../shared/utils/barcode.util.js"
 import {
   BRANCH_ROLES,
   locationScopeView,
@@ -67,7 +68,10 @@ const PRODUCT_LOCATIONS_INCLUDE = {
 const VARIANTS_INCLUDE = {
   model: Product,
   as: "variants",
-  attributes: ["id", "product_number", "variant_name", "title", "sku", "barcode", "cost_price", "selling_price", "is_active"],
+  attributes: [
+    "id", "product_number", "variant_name", "title", "sku", "barcode", "cost_price", "selling_price", "is_active",
+    "is_pack_product", "pack_size", "pack_cost_price", "pack_selling_price", "sell_loose", "variant_taxes", "taxes",
+  ],
   separate: true,
   order: [["product_number", "ASC"]],
 }
@@ -260,8 +264,17 @@ function publicProduct(product, extras = {}) {
       barcode: row.barcode,
       cost_price: row.cost_price == null ? null : Number(row.cost_price),
       selling_price: row.selling_price == null ? null : Number(row.selling_price),
+      is_pack_product: Boolean(row.is_pack_product),
+      pack_size: row.pack_size ?? null,
+      pack_cost_price: row.pack_cost_price == null ? null : Number(row.pack_cost_price),
+      pack_selling_price: row.pack_selling_price == null ? null : Number(row.pack_selling_price),
+      sell_loose: Boolean(row.sell_loose),
+      // Its own taxes (on top of the product's); taxes = everything it is charged.
+      variant_taxes: Array.isArray(row.variant_taxes) ? row.variant_taxes : [],
+      taxes: productTaxList(row),
       is_active: row.is_active,
     })),
+    variant_taxes: Array.isArray(json.variant_taxes) ? json.variant_taxes : [],
     slug: json.slug,
     sku: json.sku,
     barcode: json.barcode,
@@ -537,10 +550,12 @@ export async function getCategoryDetail(actor, idOrNumber, query = {}) {
 /** The variant products a parent's variants[] asks for: checks every barcode / SKU first. */
 async function assertVariantsFree(storeId, variants, excludeIds = []) {
   for (const variant of variants) {
-    if (variant.barcode) await assertUnique(storeId, "barcode", variant.barcode, null, excludeIds)
     if (variant.sku) await assertUnique(storeId, "sku", variant.sku, null, excludeIds)
   }
 }
+
+/** A variant's taxes: the parent's, then its own. */
+const variantTaxList = (parentTaxes, own) => [...(parentTaxes || []), ...(own || [])]
 
 /** One variant of a parent: a product of its own (the parent's category, taxes, unit, scope…). */
 async function createVariant(store, parent, variant, actor, stockLocationRef) {
@@ -558,9 +573,13 @@ async function createVariant(store, parent, variant, actor, stockLocationRef) {
       unit: json.unit,
       cost_price: variant.cost_price,
       selling_price: variant.selling_price,
-      taxes: productTaxList(json),
-      is_pack_product: false,
-      sell_loose: false,
+      taxes: variantTaxList(productTaxList(json), variant.taxes),
+      variant_taxes: variant.taxes || [],
+      is_pack_product: Boolean(variant.is_pack_product),
+      pack_size: variant.is_pack_product ? variant.pack_size : null,
+      pack_cost_price: variant.is_pack_product ? variant.pack_cost_price : null,
+      pack_selling_price: variant.is_pack_product ? variant.pack_selling_price : null,
+      sell_loose: Boolean(variant.sell_loose),
       is_weight_based: Boolean(json.is_weight_based),
       has_bulk_discount: false,
       low_stock_threshold: json.low_stock_threshold,
@@ -624,7 +643,9 @@ export async function createProduct(store, input, actor = null) {
   } else {
     sku = await ensureUniqueSku(store.id, fields.title)
   }
-  if (fields.barcode) await assertUnique(store.id, "barcode", fields.barcode)
+  // A barcode already in use is replaced with a new one (the create never fails on it).
+  const barcodePick = fields.barcode ? await freeBarcode(store.id, fields.barcode) : { barcode: null, replaced: false }
+  fields.barcode = barcodePick.barcode
 
   try {
     const id = await sequelize.transaction(async (transaction) => {
@@ -642,6 +663,7 @@ export async function createProduct(store, input, actor = null) {
           parent_product_id: fields.parent_product_id || null,
           variant_name: fields.variant_name || null,
           has_variants: Boolean(variants?.length),
+          variant_taxes: fields.variant_taxes || null,
           title: fields.title,
           slug,
           sku,
@@ -689,7 +711,10 @@ export async function createProduct(store, input, actor = null) {
       const parent = await getProduct(store.id, id)
       for (const variant of variants) await createVariant(store, parent, variant, actor, stock_location_id)
     }
-    return publicProduct(await getProduct(store.id, id), { stocks: [] })
+    return publicProduct(await getProduct(store.id, id), {
+      stocks: [],
+      ...(barcodePick.replaced ? { barcode_replaced: { requested: input.barcode, used: barcodePick.barcode } } : {}),
+    })
   } catch (err) {
     if (err instanceof UniqueConstraintError) {
       throw new ConflictError("Product slug, SKU, or barcode already exists")
@@ -708,9 +733,9 @@ async function saveVariants(storeId, product, variants, actor, stockLocationRef)
   for (const variant of variants.filter((v) => v.ref)) {
     const row = findOwn(variant.ref)
     if (!row) throw new NotFoundError(`Variant ${variant.ref} is not a variant of this product`)
-    if (variant.barcode) await assertUnique(storeId, "barcode", variant.barcode, row.id)
     if (variant.sku) await assertUnique(storeId, "sku", variant.sku, row.id)
   }
+  const parentTaxes = productTaxList(product)
   for (const variant of variants) {
     if (!variant.ref) {
       await createVariant(store, await getProduct(storeId, product.id), variant, actor, stockLocationRef)
@@ -720,13 +745,32 @@ async function saveVariants(storeId, product, variants, actor, stockLocationRef)
     const patch = {}
     if (variant.name) Object.assign(patch, { variant_name: variant.name, title: `${product.title} - ${variant.name}` })
     if (variant.sku) patch.sku = variant.sku
-    if (variant.barcode !== undefined) patch.barcode = variant.barcode
+    if (variant.barcode !== undefined) {
+      patch.barcode = variant.barcode ? (await freeBarcode(storeId, variant.barcode, [row.id])).barcode : null
+    }
     if (variant.cost_price != null) patch.cost_price = variant.cost_price
     if (variant.selling_price != null) patch.selling_price = variant.selling_price
     if (variant.is_active !== undefined) patch.is_active = variant.is_active
+    if (variant.sell_loose !== undefined) patch.sell_loose = variant.sell_loose
+    if (variant.is_pack_product === false) Object.assign(patch, { is_pack_product: false, pack_size: null, pack_cost_price: null, pack_selling_price: null })
+    if (variant.is_pack_product || (row.is_pack_product && variant.is_pack_product !== false)) {
+      const pack = {
+        pack_size: variant.pack_size ?? row.pack_size,
+        pack_cost_price: variant.pack_cost_price ?? row.pack_cost_price,
+        pack_selling_price: variant.pack_selling_price ?? row.pack_selling_price,
+      }
+      if (variant.is_pack_product || variant.pack_size != null || variant.pack_cost_price != null || variant.pack_selling_price != null) {
+        assertPackRules({ is_pack_product: true, ...pack }, row)
+        Object.assign(patch, { is_pack_product: true, ...pack, ...unitPricesFromPack(pack) })
+      }
+    }
+    if (variant.taxes !== undefined) {
+      patch.variant_taxes = variant.taxes
+      patch.taxes = variantTaxList(parentTaxes, variant.taxes)
+    }
     if (Object.keys(patch).length) {
       await row.update(patch)
-      if (patch.cost_price != null || patch.selling_price != null) await row.update(productTotals(row))
+      await row.update(productTotals(row))
     }
   }
   if (!product.has_variants) await product.update({ has_variants: true })
@@ -756,8 +800,8 @@ export async function updateProduct(storeId, id, input, actor = null) {
     }
   }
   if (fields.sku !== undefined) await assertUnique(storeId, "sku", fields.sku, product.id)
-  if (fields.barcode !== undefined) {
-    await assertUnique(storeId, "barcode", fields.barcode, product.id)
+  if (fields.barcode) {
+    patch.barcode = (await freeBarcode(storeId, fields.barcode, [product.id])).barcode
   }
   if (fields.category_id !== undefined) {
     await resolveCategory(storeId, fields.category_id)
@@ -810,6 +854,14 @@ export async function updateProduct(storeId, id, input, actor = null) {
       throw new ConflictError("Product slug, SKU, or barcode already exists")
     }
     throw err
+  }
+  // The product's taxes changed: every variant gets them again, plus its own.
+  if (fields.taxes !== undefined && product.has_variants) {
+    const children = await Product.findAll({ where: { store_id: storeId, parent_product_id: product.id } })
+    for (const child of children) {
+      await child.update({ taxes: variantTaxList(fields.taxes, child.variant_taxes || []) })
+      await child.update(productTotals(child))
+    }
   }
   if (variants?.length) await saveVariants(storeId, product, variants, actor, stock_location_id)
   return publicProduct(await getProduct(storeId, product.id))

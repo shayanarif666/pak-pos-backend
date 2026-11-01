@@ -17,6 +17,8 @@ export const Product = sequelize.define(
     variant_name: { type: DataTypes.STRING(255), allowNull: true },
     // The parent of variants: listed, but each variant is what is sold.
     has_variants: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+    // A variant's own taxes (its taxes column = the parent's taxes + these).
+    variant_taxes: { type: DataTypes.JSON, allowNull: true },
     title: { type: DataTypes.TEXT, allowNull: false },
     slug: { type: DataTypes.STRING(255), allowNull: false },
     sku: { type: DataTypes.STRING(255), allowNull: false },

@@ -226,22 +226,34 @@ function parseVariants(body, { patch = false } = {}) {
     const barcode = existing
       ? row.barcode === undefined ? undefined : optionalString({ barcode: row.barcode == null ? null : String(row.barcode) }, "barcode")
       : requireStringOrNumber(row, "barcode")
-    if (barcode) {
-      if (seen.has(`b:${barcode}`)) throw new AppError(`${label}.barcode is used twice in this product`, 400)
-      seen.add(`b:${barcode}`)
-    }
     const sku = row.sku == null || row.sku === "" ? undefined : String(row.sku).trim()
     if (sku) {
       if (seen.has(`s:${sku}`)) throw new AppError(`${label}.sku is used twice in this product`, 400)
       seen.add(`s:${sku}`)
     }
+    // A pack variant: its own pack size / pack cost / pack price (unit prices = pack ÷ size).
+    const isPack = optionalBool(row, "is_pack_product") ?? (row.pack_size != null && row.pack_size !== "" ? true : undefined)
+    const packSize = optionalInt(row, "pack_size", { min: 2 })
+    if (isPack && !existing) {
+      if (!packSize) throw new AppError(`${label}.pack_size must be 2 or more for a pack variant`, 400)
+      if (!(optionalNumber(row, "pack_cost_price") > 0)) throw new AppError(`${label}.pack_cost is required for a pack variant`, 400)
+      if (!(optionalNumber(row, "pack_selling_price") > 0)) throw new AppError(`${label}.pack_price is required for a pack variant`, 400)
+    }
+    const looseRequired = !existing && !isPack
     return {
       ref: existing ? String(ref).trim() : null,
       name,
       sku,
       barcode,
-      cost_price: existing ? optionalNumber(row, "cost_price") : requireNumber(row, "cost_price", { label: `${label}.cost` }),
-      selling_price: existing ? optionalNumber(row, "selling_price") : requireNumber(row, "selling_price", { label: `${label}.price` }),
+      cost_price: looseRequired ? requireNumber(row, "cost_price", { label: `${label}.cost` }) : optionalNumber(row, "cost_price"),
+      selling_price: looseRequired ? requireNumber(row, "selling_price", { label: `${label}.price` }) : optionalNumber(row, "selling_price"),
+      is_pack_product: isPack,
+      pack_size: packSize,
+      pack_cost_price: optionalNumber(row, "pack_cost_price"),
+      pack_selling_price: optionalNumber(row, "pack_selling_price"),
+      sell_loose: optionalBool(row, "sell_loose"),
+      // This variant's own taxes, added to the product's taxes. undefined = not sent.
+      taxes: parseTaxes(row),
       stock: optionalNumber(row, "stock") ?? optionalNumber(row, "qty"),
       location_id: row.location_id ?? row.locationId ?? null,
       is_active: optionalBool(row, "is_active"),

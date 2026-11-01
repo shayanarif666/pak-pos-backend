@@ -27,6 +27,7 @@ import * as catalogLocations from "./migrations/20261103120000-catalog-locations
 import * as offerApplyMixed from "./migrations/20261104120000-offer-apply-mixed.js"
 import * as stockTransferItems from "./migrations/20261104130000-stock-transfer-items.js"
 import * as productVariants from "./migrations/20261105120000-product-variants.js"
+import * as variantTaxes from "./migrations/20261106120000-variant-taxes.js"
 
 // Migrations the running code cannot work without (e.g. users.token_version is read on every
 // authenticated request). Each one checks before it changes anything, so running it on a
@@ -82,6 +83,8 @@ const REQUIRED = [
   stockTransferItems,
   // products.parent_product_id / variant_name / has_variants (product variants).
   productVariants,
+  // products.variant_taxes (a variant's own taxes on top of its parent's).
+  variantTaxes,
 ]
 
 export async function ensureSchema() {
