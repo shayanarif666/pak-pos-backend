@@ -676,10 +676,26 @@ export async function posCategory(view) {
 
 /** From publicProduct(): every field, with the short numbers and the category's name. */
 export async function posProducts(views) {
-  const refs = await new Refs().load("category", views.map((view) => view.category_id))
+  const refs = await new Refs().loadAll({
+    category: views.map((view) => view.category_id),
+    product: views.map((view) => view.parent_product_id),
+  })
   return views.map((view) => ({
     id: view.product_number,
     title: view.title,
+    // Variants: a parent (has_variants) lists them; a variant names its parent and its own name.
+    has_variants: Boolean(view.has_variants),
+    parent: view.parent_product_id ? refs.product(view.parent_product_id) : null,
+    variant_name: view.variant_name || null,
+    variants: (view.variants || []).map((row) => ({
+      id: row.product_number,
+      name: row.name,
+      sku: row.sku,
+      barcode: row.barcode,
+      cost_price: row.cost_price,
+      selling_price: row.selling_price,
+      is_active: row.is_active,
+    })),
     slug: view.slug,
     category: refs.category(view.category_id),
     sku: view.sku,

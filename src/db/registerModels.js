@@ -125,6 +125,8 @@ export function registerModels() {
 
   Product.belongsTo(Store, { foreignKey: "store_id" })
   Product.belongsTo(Category, { foreignKey: "category_id" })
+  Product.hasMany(Product, { foreignKey: "parent_product_id", as: "variants" })
+  Product.belongsTo(Product, { foreignKey: "parent_product_id", as: "parent" })
   Category.hasMany(Product, { foreignKey: "category_id" })
   Category.hasMany(CategoryLocation, { foreignKey: "category_id", as: "categoryLocations" })
   CategoryLocation.belongsTo(Category, { foreignKey: "category_id" })

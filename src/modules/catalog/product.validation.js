@@ -204,6 +204,51 @@ function resolveProductImages(body, { allowMissingImages = false } = {}) {
   return { images, featured_image }
 }
 
+const REF_RE = /^([1-9][0-9]*|[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i
+
+/**
+ * variants: [{ name, sku?, barcode, cost, price, stock?, location_id?, id? }] — each one becomes a
+ * product of its own (same category, taxes, unit… as the parent). id (PATCH only) = an existing
+ * variant's product number or UUID, to change it instead of adding one.
+ */
+function parseVariants(body, { patch = false } = {}) {
+  if (body.variants === undefined || body.variants === null) return undefined
+  if (!Array.isArray(body.variants)) throw new AppError("variants must be an array", 400)
+  const seen = new Set()
+  return body.variants.map((raw, index) => {
+    const label = `variants[${index}]`
+    if (!raw || typeof raw !== "object") throw new AppError(`${label} is invalid`, 400)
+    const row = withPriceAliases(raw)
+    const ref = row.id ?? row.product_id
+    const existing = patch && ref != null && ref !== ""
+    if (existing && !REF_RE.test(String(ref).trim())) throw new AppError(`${label}.id must be a product number or UUID`, 400)
+    const name = existing ? optionalString(row, "name") : requireString(row, "name")
+    const barcode = existing
+      ? row.barcode === undefined ? undefined : optionalString({ barcode: row.barcode == null ? null : String(row.barcode) }, "barcode")
+      : requireStringOrNumber(row, "barcode")
+    if (barcode) {
+      if (seen.has(`b:${barcode}`)) throw new AppError(`${label}.barcode is used twice in this product`, 400)
+      seen.add(`b:${barcode}`)
+    }
+    const sku = row.sku == null || row.sku === "" ? undefined : String(row.sku).trim()
+    if (sku) {
+      if (seen.has(`s:${sku}`)) throw new AppError(`${label}.sku is used twice in this product`, 400)
+      seen.add(`s:${sku}`)
+    }
+    return {
+      ref: existing ? String(ref).trim() : null,
+      name,
+      sku,
+      barcode,
+      cost_price: existing ? optionalNumber(row, "cost_price") : requireNumber(row, "cost_price", { label: `${label}.cost` }),
+      selling_price: existing ? optionalNumber(row, "selling_price") : requireNumber(row, "selling_price", { label: `${label}.price` }),
+      stock: optionalNumber(row, "stock") ?? optionalNumber(row, "qty"),
+      location_id: row.location_id ?? row.locationId ?? null,
+      is_active: optionalBool(row, "is_active"),
+    }
+  })
+}
+
 export function parseCreateProduct(rawBody) {
   const body = withPriceAliases(rawBody)
   const unit = body.unit === undefined ? "piece" : String(body.unit)
@@ -213,10 +258,16 @@ export function parseCreateProduct(rawBody) {
 
   const imageFields = resolveProductImages(body)
   const isPack = optionalBool(body, "is_pack_product") ?? false
+  const variants = parseVariants(body)
+  // With variants, each variant carries its own barcode and prices; the parent's are optional.
+  const hasVariants = Boolean(variants?.length)
 
   const fields = {
     title: requireString(body, "title"),
-    barcode: requireStringOrNumber(body, "barcode"),
+    barcode: hasVariants ? optionalString({ barcode: body.barcode == null ? null : String(body.barcode) }, "barcode") ?? null : requireStringOrNumber(body, "barcode"),
+    ...(hasVariants ? { variants } : {}),
+    // Where a variant's opening stock goes when it does not name a location.
+    stock_location_id: body.stock_location_id ?? body.location_id ?? null,
     images: imageFields.images ?? [],
     featured_image: imageFields.featured_image ?? null,
     description: optionalString(body, "description") ?? null,
@@ -224,10 +275,10 @@ export function parseCreateProduct(rawBody) {
     unit,
     // Pack products may leave the per-unit prices out — createProduct() derives them from the
     // pack price ÷ pack_size.
-    cost_price: isPack
+    cost_price: isPack || hasVariants
       ? optionalNumber(body, "cost_price") ?? null
       : requireNumber(body, "cost_price", { label: "cost" }),
-    selling_price: isPack
+    selling_price: isPack || hasVariants
       ? optionalNumber(body, "selling_price") ?? null
       : requireNumber(body, "selling_price", { label: "price" }),
     // Left undefined when not sent: createProduct() then derives it from discount_type/value.
@@ -336,6 +387,11 @@ export function parsePatchProduct(rawBody) {
   Object.assign(fields, parseCatalogVisibility(body, { patch: true }))
   Object.assign(fields, parseLocationScope(body))
   if (body.is_active !== undefined) fields.is_active = optionalBool(body, "is_active")
+  const variants = parseVariants(body, { patch: true })
+  if (variants) {
+    fields.variants = variants
+    fields.stock_location_id = body.stock_location_id ?? body.location_id ?? null
+  }
   return fields
 }
 

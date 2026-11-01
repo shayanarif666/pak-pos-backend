@@ -26,6 +26,7 @@ import {
   viewerLocationId,
 } from "./category.service.js"
 import { ProductLocation } from "./catalogLocation.model.js"
+import { applyStockDelta, loadLocation } from "./productStock.service.js"
 import {
   BRANCH_ROLES,
   locationScopeView,
@@ -60,6 +61,15 @@ const PRODUCT_LOCATIONS_INCLUDE = {
   as: "productLocations",
   attributes: ["location_id"],
   include: [{ model: Location, attributes: ["id", "location_id_int", "name"] }],
+}
+
+// A parent's variants (each a product of its own), oldest first.
+const VARIANTS_INCLUDE = {
+  model: Product,
+  as: "variants",
+  attributes: ["id", "product_number", "variant_name", "title", "sku", "barcode", "cost_price", "selling_price", "is_active"],
+  separate: true,
+  order: [["product_number", "ASC"]],
 }
 
 /** Sold at locationId: the product's own locations and its category's both include it. */
@@ -237,6 +247,21 @@ function publicProduct(product, extras = {}) {
         }
       : null,
     title: json.title,
+    // Variants: a parent lists them (has_variants, variants[]); a variant names its parent.
+    parent_product_id: json.parent_product_id || null,
+    variant_name: json.variant_name || null,
+    has_variants: Boolean(json.has_variants),
+    variants: (json.variants || []).map((row) => ({
+      id: row.id,
+      product_number: row.product_number,
+      name: row.variant_name,
+      title: row.title,
+      sku: row.sku,
+      barcode: row.barcode,
+      cost_price: row.cost_price == null ? null : Number(row.cost_price),
+      selling_price: row.selling_price == null ? null : Number(row.selling_price),
+      is_active: row.is_active,
+    })),
     slug: json.slug,
     sku: json.sku,
     barcode: json.barcode,
@@ -282,13 +307,14 @@ function publicWebProduct(product, extras = {}) {
   return row
 }
 
-async function assertUnique(storeId, field, value, excludeId) {
+async function assertUnique(storeId, field, value, excludeId, excludeIds = []) {
   if (value == null || value === "") return
+  const skip = [excludeId, ...excludeIds].filter(Boolean)
   const existing = await Product.findOne({
     where: {
       store_id: storeId,
       [field]: value,
-      ...(excludeId ? { id: { [Op.ne]: excludeId } } : {}),
+      ...(skip.length ? { id: { [Op.notIn]: skip } } : {}),
     },
   })
   if (existing) {
@@ -321,7 +347,7 @@ async function resolveCategoryFlexible(storeId, idOrNumber) {
 export async function getProduct(storeId, id) {
   const product = await Product.findOne({
     where: { id, store_id: storeId },
-    include: [categoryInclude, PRODUCT_LOCATIONS_INCLUDE],
+    include: [categoryInclude, PRODUCT_LOCATIONS_INCLUDE, VARIANTS_INCLUDE],
   })
   if (!product) throw new NotFoundError("Product not found")
   return product
@@ -332,7 +358,7 @@ export async function getProduct(storeId, id) {
 export async function getProductByNumber(storeId, productNumber) {
   const product = await Product.findOne({
     where: { product_number: productNumber, store_id: storeId },
-    include: [categoryInclude, PRODUCT_LOCATIONS_INCLUDE],
+    include: [categoryInclude, PRODUCT_LOCATIONS_INCLUDE, VARIANTS_INCLUDE],
   })
   if (!product) throw new NotFoundError("Product not found")
   return product
@@ -390,7 +416,7 @@ export async function listProducts(actor, query = {}) {
 
   const products = await Product.findAll({
     where,
-    include: [categoryInclude, PRODUCT_LOCATIONS_INCLUDE],
+    include: [categoryInclude, PRODUCT_LOCATIONS_INCLUDE, VARIANTS_INCLUDE],
     order: [["created_at", "DESC"]],
   })
   // Only what is sold at the location read (a store admin without location_id sees every product).
@@ -508,9 +534,79 @@ export async function getCategoryDetail(actor, idOrNumber, query = {}) {
   }
 }
 
+/** The variant products a parent's variants[] asks for: checks every barcode / SKU first. */
+async function assertVariantsFree(storeId, variants, excludeIds = []) {
+  for (const variant of variants) {
+    if (variant.barcode) await assertUnique(storeId, "barcode", variant.barcode, null, excludeIds)
+    if (variant.sku) await assertUnique(storeId, "sku", variant.sku, null, excludeIds)
+  }
+}
+
+/** One variant of a parent: a product of its own (the parent's category, taxes, unit, scope…). */
+async function createVariant(store, parent, variant, actor, stockLocationRef) {
+  const json = parent.toJSON ? parent.toJSON() : parent
+  const view = await createProduct(
+    store,
+    {
+      title: `${json.title} - ${variant.name}`,
+      variant_name: variant.name,
+      parent_product_id: json.id,
+      sku: variant.sku,
+      barcode: variant.barcode,
+      category_id: json.category_id,
+      description: json.description,
+      unit: json.unit,
+      cost_price: variant.cost_price,
+      selling_price: variant.selling_price,
+      taxes: productTaxList(json),
+      is_pack_product: false,
+      sell_loose: false,
+      is_weight_based: Boolean(json.is_weight_based),
+      has_bulk_discount: false,
+      low_stock_threshold: json.low_stock_threshold,
+      is_published: json.is_published,
+      is_pos_visible: json.is_pos_visible,
+      is_web_visible: json.is_web_visible,
+      channel: json.channel,
+      is_active: variant.is_active ?? json.is_active,
+      location_scope: json.location_scope || "all",
+      location_ids: (json.productLocations || []).map((link) => link.location_id),
+    },
+    null
+  )
+  if (Number(variant.stock) > 0) {
+    const ref = variant.location_id || stockLocationRef || actor?.location_id || store.default_location_id
+    if (!ref) throw new AppError("Name the location for the variants' stock (location_id)", 400)
+    const location = await loadLocation(store.id, ref)
+    await sequelize.transaction((transaction) =>
+      applyStockDelta(
+        {
+          storeId: store.id,
+          storeIdInt: store.store_id_int,
+          location,
+          productId: view.id,
+          delta: Number(variant.stock),
+          movement_type: "stock_in",
+          reason: "opening_balance",
+          reason_note: `Opening stock of ${view.title}`,
+          staff_id: actor?.id || null,
+        },
+        { transaction }
+      )
+    )
+  }
+  return view
+}
+
 export async function createProduct(store, input, actor = null) {
-  const { location_ids, ...fields } = scopeForActor(actor, input, { creating: true })
+  const { location_ids, variants, stock_location_id, ...fields } = scopeForActor(actor, input, { creating: true })
   const scope = fields.location_scope || "all"
+  if (variants?.length) {
+    await assertVariantsFree(store.id, variants)
+    // The parent's own prices (not sold itself): the first variant's when none were sent.
+    if (fields.cost_price == null && !fields.is_pack_product) fields.cost_price = variants[0].cost_price
+    if (fields.selling_price == null && !fields.is_pack_product) fields.selling_price = variants[0].selling_price
+  }
   assertPackRules(fields)
   const slug = await ensureUniqueSlug(fields.title, async (candidate) => {
     const existing = await Product.findOne({
@@ -521,8 +617,14 @@ export async function createProduct(store, input, actor = null) {
   if (!slug) throw new AppError("title must contain letters or numbers for a slug", 400)
 
   const category = await resolveCategoryFlexible(store.id, fields.category_id)
-  const sku = await ensureUniqueSku(store.id, fields.title)
-  await assertUnique(store.id, "barcode", fields.barcode)
+  let sku
+  if (fields.sku) {
+    await assertUnique(store.id, "sku", fields.sku)
+    sku = fields.sku
+  } else {
+    sku = await ensureUniqueSku(store.id, fields.title)
+  }
+  if (fields.barcode) await assertUnique(store.id, "barcode", fields.barcode)
 
   try {
     const id = await sequelize.transaction(async (transaction) => {
@@ -537,6 +639,9 @@ export async function createProduct(store, input, actor = null) {
           store_id_int: store.store_id_int,
           product_number: await nextProductNumber(store.id, transaction),
           category_id: category.id,
+          parent_product_id: fields.parent_product_id || null,
+          variant_name: fields.variant_name || null,
+          has_variants: Boolean(variants?.length),
           title: fields.title,
           slug,
           sku,
@@ -580,6 +685,10 @@ export async function createProduct(store, input, actor = null) {
       await replaceLocationLinks(ProductLocation, "product_id", created, locationIds, transaction)
       return created.id
     })
+    if (variants?.length) {
+      const parent = await getProduct(store.id, id)
+      for (const variant of variants) await createVariant(store, parent, variant, actor, stock_location_id)
+    }
     return publicProduct(await getProduct(store.id, id), { stocks: [] })
   } catch (err) {
     if (err instanceof UniqueConstraintError) {
@@ -589,12 +698,47 @@ export async function createProduct(store, input, actor = null) {
   }
 }
 
+/** PATCH variants[]: an id changes that variant of this product; no id adds a new variant. */
+async function saveVariants(storeId, product, variants, actor, stockLocationRef) {
+  const store = await getStoreForManager(storeId)
+  const own = await Product.findAll({ where: { store_id: storeId, parent_product_id: product.id } })
+  const findOwn = (ref) => own.find((row) => row.id === ref || String(row.product_number) === String(ref))
+  const changing = variants.filter((v) => v.ref).map((v) => findOwn(v.ref)?.id).filter(Boolean)
+  await assertVariantsFree(storeId, variants.filter((v) => !v.ref))
+  for (const variant of variants.filter((v) => v.ref)) {
+    const row = findOwn(variant.ref)
+    if (!row) throw new NotFoundError(`Variant ${variant.ref} is not a variant of this product`)
+    if (variant.barcode) await assertUnique(storeId, "barcode", variant.barcode, row.id)
+    if (variant.sku) await assertUnique(storeId, "sku", variant.sku, row.id)
+  }
+  for (const variant of variants) {
+    if (!variant.ref) {
+      await createVariant(store, await getProduct(storeId, product.id), variant, actor, stockLocationRef)
+      continue
+    }
+    const row = findOwn(variant.ref)
+    const patch = {}
+    if (variant.name) Object.assign(patch, { variant_name: variant.name, title: `${product.title} - ${variant.name}` })
+    if (variant.sku) patch.sku = variant.sku
+    if (variant.barcode !== undefined) patch.barcode = variant.barcode
+    if (variant.cost_price != null) patch.cost_price = variant.cost_price
+    if (variant.selling_price != null) patch.selling_price = variant.selling_price
+    if (variant.is_active !== undefined) patch.is_active = variant.is_active
+    if (Object.keys(patch).length) {
+      await row.update(patch)
+      if (patch.cost_price != null || patch.selling_price != null) await row.update(productTotals(row))
+    }
+  }
+  if (!product.has_variants) await product.update({ has_variants: true })
+  return changing
+}
+
 export async function updateProduct(storeId, id, input, actor = null) {
   const product = await getProduct(storeId, id)
   if (BRANCH_ROLES.has(actor?.role) && !productSoldAt(product, actor.location_id)) {
     throw new NotFoundError("Product not found")
   }
-  const { location_ids, ...fields } = scopeForActor(actor, input, { creating: false })
+  const { location_ids, variants, stock_location_id, ...fields } = scopeForActor(actor, input, { creating: false })
   assertPackRules(fields, product)
   const patch = { ...fields }
 
@@ -667,6 +811,7 @@ export async function updateProduct(storeId, id, input, actor = null) {
     }
     throw err
   }
+  if (variants?.length) await saveVariants(storeId, product, variants, actor, stock_location_id)
   return publicProduct(await getProduct(storeId, product.id))
 }
 

@@ -411,6 +411,7 @@ export async function createOrder(actor, input) {
           const product = productMap.get(item.product_id)
           if (!product) throw new NotFoundError("Product not found")
           if (!product.is_active) throw new AppError("Product is not active", 400)
+          if (product.has_variants) throw new AppError(`${product.title} has variants: sell one of them`, 400)
           return posPricedLine(item, product, offersById)
         })
       : items.map((item) => {
@@ -432,6 +433,7 @@ export async function createOrder(actor, input) {
       const product = productMap.get(item.product_id)
       if (!product) throw new NotFoundError("Product not found")
       if (!product.is_active) throw new AppError("Product is not active", 400)
+      if (product.has_variants) throw new AppError(`${product.title} has variants: sell one of them`, 400)
       const line = priceCatalogLine({
         product,
         quantity: item.quantity,

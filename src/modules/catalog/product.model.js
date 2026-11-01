@@ -12,6 +12,11 @@ export const Product = sequelize.define(
     store_id_int: { type: DataTypes.INTEGER, allowNull: false },
     product_number: { type: DataTypes.INTEGER, allowNull: false },
     category_id: uuidCol(false),
+    // A variant (e.g. "Size: M") is a product of its own, linked to the parent that groups them.
+    parent_product_id: uuidCol(true),
+    variant_name: { type: DataTypes.STRING(255), allowNull: true },
+    // The parent of variants: listed, but each variant is what is sold.
+    has_variants: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     title: { type: DataTypes.TEXT, allowNull: false },
     slug: { type: DataTypes.STRING(255), allowNull: false },
     sku: { type: DataTypes.STRING(255), allowNull: false },
