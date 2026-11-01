@@ -1,7 +1,6 @@
 import { AppError } from "../../shared/errors/AppError.js"
 import {
   DISCOUNT_TYPE,
-  OFFER_APPLY_TO,
   OFFER_TYPE,
   SUPPLIER_LOCATION_SCOPE,
 } from "../../db/enums.js"
@@ -140,6 +139,84 @@ export function assertOfferRules(fields) {
   }
 }
 
+/** A products[] entry: a number / UUID, or { product_id, promo_price?, free_product_id? }. */
+function parseProductTarget(entry, index) {
+  const row = entry && typeof entry === "object" ? entry : { product_id: entry }
+  const product_ref = optionalRef(row, "product_id") || optionalRef(row, "productId")
+  if (!product_ref) throw new AppError(`products[${index}] needs a product number or UUID`, 400)
+  return {
+    product_ref,
+    category_ref: null,
+    free_product_ref: optionalRef(row, "free_product_id") || optionalRef(row, "freeProductId"),
+    promo_price: optionalNumber(row, "promo_price"),
+  }
+}
+
+/** A categories[] entry: a number / UUID, or { category_id }. */
+function parseCategoryTarget(entry, index) {
+  const row = entry && typeof entry === "object" ? entry : { category_id: entry }
+  const category_ref = optionalRef(row, "category_id") || optionalRef(row, "categoryId")
+  if (!category_ref) throw new AppError(`categories[${index}] needs a category number or UUID`, 400)
+  return { product_ref: null, category_ref, free_product_ref: null, promo_price: null }
+}
+
+/**
+ * What the offer applies to: products[] and categories[] (several of each, both together), or the
+ * older flat product_id / category_id or targets[]. Returns undefined when none is sent (PATCH).
+ */
+function parseOfferTargets(body) {
+  const hasLists = body.products !== undefined || body.categories !== undefined
+  let targets
+  if (hasLists) {
+    for (const key of ["products", "categories"]) {
+      if (body[key] !== undefined && body[key] !== null && !Array.isArray(body[key])) {
+        throw new AppError(`${key} must be an array`, 400)
+      }
+    }
+    targets = [
+      ...(body.products || []).map(parseProductTarget),
+      ...(body.categories || []).map(parseCategoryTarget),
+    ]
+  } else if (Array.isArray(body.targets)) {
+    targets = body.targets.map(parseTargetRow)
+  } else if (body.product_id != null || body.productId != null || body.category_id != null || body.categoryId != null) {
+    targets = [parseTargetRow(body)]
+  } else {
+    return undefined
+  }
+  // The same product / category twice is one target (the first one sent wins).
+  const seen = new Set()
+  targets = targets.filter((target) => {
+    const key = target.product_ref ? `p:${target.product_ref}` : `c:${target.category_ref}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+  if (!targets.length) throw new AppError("Send at least one product or category", 400)
+  return targets
+}
+
+/** product | category | mixed, from the targets. */
+export function applyToOf(targets) {
+  const products = targets.some((target) => target.product_ref || target.product_id)
+  const categories = targets.some((target) => target.category_ref || target.category_id)
+  return products && categories ? "mixed" : products ? "product" : "category"
+}
+
+function assertTargetsFit(type, targets, fields) {
+  if (type === "flash_sale") {
+    const hasDiscount = fields.discount_type && fields.discount_value != null
+    for (const target of targets) {
+      if (target.category_ref && !hasDiscount) {
+        throw new AppError("flash_sale on a category needs discount_type and discount_value (a category has no single promo_price)", 400)
+      }
+      if (target.product_ref && target.promo_price == null && !hasDiscount) {
+        throw new AppError("flash_sale needs a promo_price on each product, or discount_type and discount_value", 400)
+      }
+    }
+  }
+}
+
 export function parseCreateOffer(body) {
   const type = String(body.type || "")
   if (!OFFER_TYPE.includes(type)) {
@@ -148,24 +225,10 @@ export function parseCreateOffer(body) {
       400
     )
   }
-  const apply_to = String(body.apply_to || "")
-  if (!OFFER_APPLY_TO.includes(apply_to)) {
-    throw new AppError("apply_to must be product or category", 400)
-  }
-
-  // The target sits in the same flat payload (category_id / product_id, promo_price,
-  // free_product_id); a `targets` array is still accepted for several targets at once.
-  const targets = Array.isArray(body.targets)
-    ? body.targets.map(parseTargetRow)
-    : [parseTargetRow(body)]
-  for (const target of targets) {
-    if (apply_to === "category" && !target.category_ref) {
-      throw new AppError("category_id is required when apply_to is category", 400)
-    }
-    if (apply_to === "product" && !target.product_ref) {
-      throw new AppError("product_id is required when apply_to is product", 400)
-    }
-  }
+  // products[] + categories[] (any mix); apply_to is set from them, any sent value is ignored.
+  const targets = parseOfferTargets(body)
+  if (!targets) throw new AppError("Send products and / or categories the offer applies to", 400)
+  const apply_to = applyToOf(targets)
 
   const fields = {
     // Who added it (PIN-picked staff); defaults to the signed-in user.
@@ -186,6 +249,7 @@ export function parseCreateOffer(body) {
   }
   assertWindow(fields.start_at, fields.end_at)
   assertOfferRules(fields)
+  assertTargetsFit(type, targets, fields)
   return fields
 }
 
@@ -197,12 +261,11 @@ export function parsePatchOffer(body) {
     if (!OFFER_TYPE.includes(type)) throw new AppError("Invalid offer type", 400)
     patch.type = type
   }
-  if (body.apply_to !== undefined) {
-    const apply_to = String(body.apply_to)
-    if (!OFFER_APPLY_TO.includes(apply_to)) {
-      throw new AppError("apply_to must be product or category", 400)
-    }
-    patch.apply_to = apply_to
+  // products[] / categories[] on a PATCH replace what the offer applies to (apply_to follows).
+  const targets = parseOfferTargets(body)
+  if (targets) {
+    patch.targets = targets
+    patch.apply_to = applyToOf(targets)
   }
   Object.assign(patch, parseLocationScope(body))
   if (body.discount_type !== undefined) patch.discount_type = optionalDiscountType(body)

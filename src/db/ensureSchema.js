@@ -24,6 +24,8 @@ import * as orderItemOffers from "./migrations/20261031120000-order-item-offers.
 import * as orderStatusV2 from "./migrations/20261101120000-order-status-v2.js"
 import * as numberColumns from "./migrations/20261102120000-number-columns.js"
 import * as catalogLocations from "./migrations/20261103120000-catalog-locations.js"
+import * as offerApplyMixed from "./migrations/20261104120000-offer-apply-mixed.js"
+import * as stockTransferItems from "./migrations/20261104130000-stock-transfer-items.js"
 
 // Migrations the running code cannot work without (e.g. users.token_version is read on every
 // authenticated request). Each one checks before it changes anything, so running it on a
@@ -73,6 +75,10 @@ const REQUIRED = [
   orderStatusV2,
   // categories / products location_scope and their category_locations / product_locations.
   catalogLocations,
+  // offers.apply_to "mixed" (products and categories in one offer).
+  offerApplyMixed,
+  // stock_transfer_items: several products to several locations in one transfer.
+  stockTransferItems,
 ]
 
 export async function ensureSchema() {

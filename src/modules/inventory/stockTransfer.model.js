@@ -10,9 +10,11 @@ export const StockTransfer = sequelize.define(
     store_id: uuidCol(false),
     transfer_number: { type: DataTypes.INTEGER, allowNull: false },
     from_location_id: uuidCol(false),
-    to_location_id: uuidCol(false),
-    product_id: uuidCol(false),
-    qty: { type: DataTypes.DECIMAL(12, 4), allowNull: false },
+    // Transfers made before stock_transfer_items keep their one product / destination here; new
+    // transfers leave these empty and list every product per destination in their items.
+    to_location_id: uuidCol(true),
+    product_id: uuidCol(true),
+    qty: { type: DataTypes.DECIMAL(12, 4), allowNull: true },
     // What arrived at the destination (null until received; less than qty = short on the way).
     received_qty: { type: DataTypes.DECIMAL(12, 4), allowNull: true },
     status: {

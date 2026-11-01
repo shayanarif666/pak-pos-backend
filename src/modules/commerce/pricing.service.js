@@ -77,9 +77,9 @@ export function offerIsLive(offer, { locationId, now = new Date() } = {}) {
 }
 
 function matchingTargets(offer, product) {
-  return (offer.OfferTargets || offer.targets || []).filter((target) =>
-    targetMatches(target, product)
-  )
+  return (offer.OfferTargets || offer.targets || [])
+    .filter((target) => targetMatches(target, product))
+    .sort((a, b) => (b.product_id === product.id) - (a.product_id === product.id))
 }
 
 function offerUnitAfterDiscount(base, offer, target) {

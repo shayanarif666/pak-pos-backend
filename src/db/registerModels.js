@@ -24,6 +24,7 @@ import { ProductBulkTier } from "../modules/catalog/productBulkTier.model.js"
 import { Supplier } from "../modules/inventory/supplier.model.js"
 import { SupplierLedger } from "../modules/inventory/supplierLedger.model.js"
 import { SupplierLocation } from "../modules/inventory/supplierLocation.model.js"
+import { StockTransferItem } from "../modules/inventory/stockTransferItem.model.js"
 import { StockMovement } from "../modules/inventory/stockMovement.model.js"
 import { StockTransfer } from "../modules/inventory/stockTransfer.model.js"
 import { Customer } from "../modules/customers/customer.model.js"
@@ -236,6 +237,10 @@ export function registerModels() {
   StockTransfer.belongsTo(Location, { foreignKey: "to_location_id", as: "toLocation" })
   StockTransfer.belongsTo(Product, { foreignKey: "product_id" })
   StockTransfer.belongsTo(User, { foreignKey: "created_by", as: "createdBy" })
+  StockTransfer.hasMany(StockTransferItem, { foreignKey: "transfer_id", as: "items" })
+  StockTransferItem.belongsTo(StockTransfer, { foreignKey: "transfer_id" })
+  StockTransferItem.belongsTo(Location, { foreignKey: "to_location_id", as: "toLocation" })
+  StockTransferItem.belongsTo(Product, { foreignKey: "product_id" })
 
   AuditLog.belongsTo(Store, { foreignKey: "store_id" })
   AuditLog.belongsTo(Location, { foreignKey: "location_id" })
@@ -275,6 +280,7 @@ export {
   SupplierLocation,
   StockMovement,
   StockTransfer,
+  StockTransferItem,
   Customer,
   CustomerCreditEntry,
   Cart,

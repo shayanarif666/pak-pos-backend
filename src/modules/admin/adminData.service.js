@@ -49,7 +49,10 @@ export const DATA_MODULES = {
     ],
   },
   stock_movements: { table: "stock_movements", cascade: [] },
-  stock_transfers: { table: "stock_transfers", cascade: [] },
+  stock_transfers: {
+    table: "stock_transfers",
+    cascade: [{ table: "stock_transfer_items", fk: "transfer_id" }],
+  },
   offers: {
     table: "offers",
     cascade: [{ table: "offer_targets", fk: "offer_id" }],

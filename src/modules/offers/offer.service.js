@@ -64,6 +64,9 @@ function publicOffer(row) {
     created_at: json.created_at,
     updated_at: json.updated_at,
     targets: (json.OfferTargets || []).map(publicTarget),
+    // Every product / category the offer applies to (their UUIDs; the POS reply gives numbers).
+    product_ids: (json.OfferTargets || []).filter((t) => t.product_id).map((t) => t.product_id),
+    category_ids: (json.OfferTargets || []).filter((t) => t.category_id).map((t) => t.category_id),
   }
 }
 
@@ -177,12 +180,6 @@ async function findByRef(model, numberColumn, storeId, ref, label) {
 
 /** Turns a parsed target's refs into the UUID columns offer_targets stores. */
 async function resolveTarget(storeId, offer, target) {
-  if (offer.apply_to === "product" && !target.product_ref) {
-    throw new AppError("This offer applies to products", 400)
-  }
-  if (offer.apply_to === "category" && !target.category_ref) {
-    throw new AppError("This offer applies to categories", 400)
-  }
   const product = target.product_ref
     ? await findByRef(Product, "product_number", storeId, target.product_ref, "Product")
     : null
@@ -253,14 +250,12 @@ export async function createOffer(store, input, actor) {
     return offer
   })
 
-  const first = targets[0] || {}
   const summary = {
     id: row.offer_number,
     type: row.type,
     name: row.name,
-    ...(row.apply_to === "product"
-      ? { product_id: first.product_number ?? null }
-      : { category_id: first.category_number ?? null }),
+    products: targets.filter((target) => target.product_number != null).map((target) => target.product_number),
+    categories: targets.filter((target) => target.category_number != null).map((target) => target.category_number),
   }
   return { ...publicOffer(await getOffer(store.id, row.id)), summary }
 }
@@ -268,8 +263,10 @@ export async function createOffer(store, input, actor) {
 export async function updateOffer(actor, id, input) {
   const row = await getOffer(actor.store_id, id)
   assertCanSee(actor, row)
-  const { location_ids, ...fields } = resolveScopeForActor(actor, input, { creating: false })
+  const { location_ids, targets: newTargets, ...fields } = resolveScopeForActor(actor, input, { creating: false })
   const patch = { ...fields }
+  const resolvedTargets = []
+  for (const target of newTargets || []) resolvedTargets.push(await resolveTarget(actor.store_id, row, target))
   assertOfferRules({
     type: patch.type ?? row.type,
     apply_to: patch.apply_to ?? row.apply_to,
@@ -304,6 +301,13 @@ export async function updateOffer(actor, id, input) {
       const ids = await resolveStoreLocations(actor.store_id, requested, transaction)
       await replaceOfferLocations(row, ids, transaction)
     }
+    if (newTargets) {
+      await OfferTarget.destroy({ where: { offer_id: row.id }, transaction })
+      await OfferTarget.bulkCreate(
+        resolvedTargets.map((target) => targetRow(row.id, target)),
+        { transaction }
+      )
+    }
     await row.update(patch, { transaction })
   })
   return publicOffer(await getOffer(actor.store_id, id))
@@ -335,6 +339,7 @@ export async function replaceTargets(actor, offerId, targets) {
         resolved.map((target) => targetRow(offer.id, target)),
         { transaction }
       )
+      await offer.update({ apply_to: applyToOf(resolved) }, { transaction })
     }
   })
   return listTargets(actor, offerId)

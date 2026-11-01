@@ -43,6 +43,7 @@ import {
   posTransfers,
 } from "./posResponses.js"
 import { AppError } from "../../shared/errors/AppError.js"
+import { StockTransferItem } from "../inventory/stockTransferItem.model.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 
 const isNumber = (ref) => /^\d+$/.test(String(ref ?? "").trim())
@@ -355,12 +356,22 @@ export async function stockTransfers(req) {
   const pageInfo = pageOf(req.query)
   const where = { store_id: scope.store_id, ...dateRange(req.query, "created_at") }
   if (scope.location_id) {
-    where[Op.or] = [{ from_location_id: scope.location_id }, { to_location_id: scope.location_id }]
+    // Sent from this location, or with a line going to it.
+    const incoming = await StockTransferItem.findAll({
+      where: { store_id: scope.store_id, to_location_id: scope.location_id },
+      attributes: ["transfer_id"],
+    })
+    where[Op.or] = [
+      { from_location_id: scope.location_id },
+      { id: [...new Set(incoming.map((row) => row.transfer_id))] },
+    ]
   }
   const status = queryRef(req.query, "status")
   if (status) where.status = status
   const { rows, count } = await StockTransfer.findAndCountAll({
     where,
+    include: [{ model: StockTransferItem, as: "items" }],
+    distinct: true,
     order: [["created_at", "DESC"]],
     limit: pageInfo.limit,
     offset: pageInfo.offset,

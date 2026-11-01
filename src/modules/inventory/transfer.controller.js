@@ -4,11 +4,18 @@ import * as transferService from "./transfer.service.js"
 import { resolveStaff } from "../../shared/utils/staff.util.js"
 import { posTransfer, posTransfers } from "../pos/posResponses.js"
 import { bulkStatus, posBulkResponse, extractBulkItems, runBulk } from "../../shared/utils/bulk.util.js"
-import { parseCreateTransfer } from "./transfer.validation.js"
+import { parseCreateTransfer, parseReceive } from "./transfer.validation.js"
 import * as posHistory from "../pos/posHistory.service.js"
 import { StockTransfer } from "./stockTransfer.model.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { bulkUpdateResponse, runBulkUpdate } from "../../shared/utils/bulkUpdate.util.js"
+
+// The acting user with the request's location (a manager / cashier: their own).
+const actorOf = (req, staff = req.user) => ({
+  id: staff.id,
+  role: req.user.role,
+  location_id: req.auth?.location_id || req.user.location_id || null,
+})
 
 export const list = asyncHandler(async (req, res) => {
   if (req.auth?.channel === "pos") return posHistory.sendPage(res, await posHistory.stockTransfers(req))
@@ -27,17 +34,15 @@ export const create = asyncHandler(async (req, res) => {
   return apiResponse(res, 201, "Transfer created", data)
 })
 
+/** Everything still on the way arrives in full (a manager: what comes to their location). */
 export const complete = asyncHandler(async (req, res) => {
-  const data = await transferService.completeTransfer(
-    req.storeId,
-    req.params.id,
-    req.user
-  )
+  const data = await transferService.receiveTransfer(req.storeId, req.params.id, actorOf(req), parseReceive(req.body || {}))
   return apiResponse(res, 200, "Transfer completed", data)
 })
 
 export const cancel = asyncHandler(async (req, res) => {
-  const data = await transferService.cancelTransfer(req.storeId, req.params.id)
+  const { to_location_id, products } = parseReceive(req.body || {})
+  const data = await transferService.cancelTransfer(req.storeId, req.params.id, { to_location_id, products }, actorOf(req))
   return apiResponse(res, 200, "Transfer cancelled", data)
 })
 
@@ -51,9 +56,7 @@ export const createBulk = asyncHandler(async (req, res) => {
     return transferService.createTransfer(req.storeId, fields, staff)
   })
   if (req.auth?.channel === "pos") {
-    const created = []
-    created.push(...(await posTransfers(data.created)))
-    return posBulkResponse(res, data, "Stock Transfer Created", created)
+    return posBulkResponse(res, data, "Stock Transfer Created", await posTransfers(data.created))
   }
   return apiResponse(res, bulkStatus(data), "Bulk stock transfers processed", data)
 })
@@ -71,7 +74,7 @@ function bulkTransferUpdate(message, handler) {
       handler: async (uuid, fields) => {
         const ref = fields.staff_id ?? fields.staffId ?? fallbackStaff
         const staff = await resolveStaff(req.storeId, ref == null ? null : String(ref), req.user)
-        return handler(req, uuid, fields, staff)
+        return handler(req, uuid, fields, actorOf(req, staff))
       },
     })
     const rows = req.auth?.channel === "pos" ? await posTransfers(data.created) : data.created
@@ -79,33 +82,35 @@ function bulkTransferUpdate(message, handler) {
   })
 }
 
-/** PATCH /stock-transfers/bulk — a transfer still on the way: qty, to_location_id, note. */
+/** PATCH /stock-transfers/bulk — what is still on the way: products [{ product_id, to_location_id?, qty }], note. */
 export const patchBulk = bulkTransferUpdate("Stock Transfers Updated", (req, uuid, fields) =>
   transferService.updateTransfer(req.storeId, uuid, {
+    products: fields.products,
     qty: fields.qty,
     to_location_id: fields.to_location_id ?? fields.toLocationId,
     note: fields.note,
   })
 )
 
-/** PATCH /stock-transfers/bulk/qty — { id, qty } of transfers still on the way. */
+/** PATCH /stock-transfers/bulk/qty — { id, products: [{ product_id, to_location_id?, qty }] } (or qty for one product). */
 export const patchBulkQty = bulkTransferUpdate("Stock Transfer Qty Updated", (req, uuid, fields) => {
-  if (fields.qty === undefined) throw new AppError("qty is required", 400)
-  return transferService.updateTransfer(req.storeId, uuid, { qty: fields.qty })
+  if (fields.qty === undefined && !Array.isArray(fields.products)) throw new AppError("products or qty is required", 400)
+  return transferService.updateTransfer(req.storeId, uuid, { products: fields.products, qty: fields.qty })
 })
 
-/** PATCH /stock-transfers/bulk/status — { id, status: completed | cancelled }. */
-export const patchBulkStatus = bulkTransferUpdate("Stock Transfer Status Updated", (req, uuid, fields, staff) => {
-  if (fields.status === "completed") return transferService.completeTransfer(req.storeId, uuid, staff)
-  if (fields.status === "cancelled") return transferService.cancelTransfer(req.storeId, uuid)
+/** PATCH /stock-transfers/bulk/status — { id, status: completed | cancelled, to_location_id? }. */
+export const patchBulkStatus = bulkTransferUpdate("Stock Transfer Status Updated", (req, uuid, fields, actor) => {
+  const scope = parseReceive(fields)
+  if (fields.status === "completed") return transferService.receiveTransfer(req.storeId, uuid, actor, scope)
+  if (fields.status === "cancelled") return transferService.cancelTransfer(req.storeId, uuid, scope, actor)
   throw new AppError("status must be completed or cancelled", 400)
 })
 
-/** PATCH /stock-transfers/bulk/receive — { id, received_qty, note? }: what actually arrived. */
-export const patchBulkReceive = bulkTransferUpdate("Stock Transfers Received", (req, uuid, fields, staff) => {
-  if (fields.received_qty === undefined) throw new AppError("received_qty is required", 400)
-  return transferService.receiveTransfer(req.storeId, uuid, staff, {
-    received_qty: fields.received_qty,
-    note: fields.note,
-  })
+/** PATCH /stock-transfers/bulk/receive — { id, to_location_id?, products: [{ product_id, received_qty }], note? }. */
+export const patchBulkReceive = bulkTransferUpdate("Stock Transfers Received", (req, uuid, fields, actor) => {
+  const scope = parseReceive(fields)
+  if (!scope.products && scope.received_qty === undefined) {
+    throw new AppError("products [{ product_id, received_qty }] (or received_qty) is required", 400)
+  }
+  return transferService.receiveTransfer(req.storeId, uuid, actor, scope)
 })

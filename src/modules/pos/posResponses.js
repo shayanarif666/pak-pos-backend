@@ -23,6 +23,7 @@ import { Product } from "../catalog/product.model.js"
 import { Category } from "../catalog/category.model.js"
 import { Supplier } from "../inventory/supplier.model.js"
 import { RegisterSession } from "./registerSession.model.js"
+import { publicTransfer } from "../inventory/transfer.service.js"
 import { buildReceiptView, buildRefundReceiptView, remainingAmountOf } from "./receiptView.js"
 
 export const num = (value) => (value == null ? null : Number(value))
@@ -537,23 +538,43 @@ export async function posStockMovement(movement) {
   return (await posStockMovements([movement]))[0]
 }
 
+/**
+ * Transfers (from publicTransfer(), or rows loaded with their items): the source, and per
+ * destination its products with qty / received_qty / status. A transfer with one product also keeps
+ * the older flat to_location / product / qty / received_qty.
+ */
 export async function posTransfers(transfers) {
+  const views = transfers.map((row) => (row.destinations ? row : publicTransfer(row)))
   const refs = await new Refs().loadAll({
-    location: transfers.flatMap((row) => [row.from_location_id, row.to_location_id]),
-    product: transfers.map((row) => row.product_id),
-    user: transfers.map((row) => row.created_by),
+    location: views.flatMap((view) => [view.from_location_id, ...view.destinations.map((d) => d.to_location_id)]),
+    product: views.flatMap((view) => view.destinations.flatMap((d) => d.products.map((p) => p.product_id))),
+    user: views.map((view) => view.created_by),
   })
-  return transfers.map((transfer) => ({
-    id: transfer.transfer_number,
-    from_location: refs.location(transfer.from_location_id),
-    to_location: refs.location(transfer.to_location_id),
-    product: refs.product(transfer.product_id),
-    qty: num(transfer.qty),
-    received_qty: num(transfer.received_qty),
-    status: transfer.status,
-    note: transfer.note || null,
-    staff: refs.staff(transfer.created_by),
-    created_at: transfer.created_at,
+  return views.map((view) => ({
+    id: view.transfer_number,
+    from_location: refs.location(view.from_location_id),
+    status: view.status,
+    destinations: view.destinations.map((dest) => ({
+      to_location: refs.location(dest.to_location_id),
+      status: dest.status,
+      products: dest.products.map((line) => ({
+        product: refs.product(line.product_id),
+        qty: line.qty,
+        received_qty: line.received_qty,
+        status: line.status,
+      })),
+    })),
+    ...(view.product_id
+      ? {
+          to_location: refs.location(view.to_location_id),
+          product: refs.product(view.product_id),
+          qty: view.qty,
+          received_qty: view.received_qty,
+        }
+      : {}),
+    note: view.note || null,
+    staff: refs.staff(view.created_by),
+    created_at: view.created_at,
   }))
 }
 
@@ -581,26 +602,28 @@ export function posSupplier(view) {
 
 /** Offers (from publicOffer()) with what each one applies to and who added it. */
 export async function posOffers(views) {
-  const target = (view) => view.targets?.[0] || {}
+  const targets = (view) => view.targets || []
   const refs = await new Refs().loadAll({
-    product: views.flatMap((view) => [target(view).product_id, target(view).free_product_id]),
-    category: views.map((view) => target(view).category_id),
+    product: views.flatMap((view) => targets(view).flatMap((t) => [t.product_id, t.free_product_id])),
+    category: views.flatMap((view) => targets(view).map((t) => t.category_id)),
     user: views.map((view) => view.created_by),
   })
   return views.map((view) => {
-    const t = target(view)
+    const productRows = targets(view).filter((t) => t.product_id)
     return {
       id: view.offer_number,
       type: view.type,
       name: view.name,
       apply_to: view.apply_to,
-      ...(view.apply_to === "product"
-        ? { product: refs.product(t.product_id) }
-        : { category: refs.category(t.category_id) }),
+      // Every product (with its own promo_price / free_product) and every category it applies to.
+      products: productRows.map((t) => ({
+        ...refs.product(t.product_id),
+        promo_price: num(t.promo_price),
+        free_product: refs.product(t.free_product_id),
+      })),
+      categories: targets(view).filter((t) => t.category_id).map((t) => refs.category(t.category_id)),
       discount_type: view.discount_type,
       discount_value: view.discount_value,
-      promo_price: num(t.promo_price),
-      free_product: refs.product(t.free_product_id),
       start_at: view.start_at,
       end_at: view.end_at,
       min_qty: view.min_qty,

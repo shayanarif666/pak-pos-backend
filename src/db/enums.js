@@ -90,7 +90,8 @@ export const PRODUCT_UNIT = [
   "can",
 ]
 export const OFFER_TYPE = ["flash_sale", "bulk_discount", "bogo", "promotional"]
-export const OFFER_APPLY_TO = ["product", "category"]
+/** offers.apply_to: what the offer's targets are — set from them (mixed = products and categories). */
+export const OFFER_APPLY_TO = ["product", "category", "mixed"]
 export const STOCK_MOVEMENT_TYPE = [
   "stock_in",
   "stock_out",

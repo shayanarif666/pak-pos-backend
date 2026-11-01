@@ -4,34 +4,106 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 // A location / product reference: its short number (e.g. 1) or its UUID.
-function requireRef(body, key) {
-  const value = String(body[key] ?? "").trim()
+function requireRef(body, key, label = key) {
+  const value = String(body?.[key] ?? "").trim()
   if (!(/^[1-9][0-9]*$/.test(value) || UUID_RE.test(value))) {
-    throw new AppError(key + " must be a number or a UUID", 400)
+    throw new AppError(label + " must be a number or a UUID", 400)
   }
   return value
 }
 
+function requireQty(value, label) {
+  const qty = Number(value)
+  if (Number.isNaN(qty) || qty <= 0) throw new AppError(`${label} must be a number > 0`, 400)
+  return qty
+}
+
+const refOf = (row, keys) => keys.map((key) => row?.[key]).find((value) => value != null && value !== "")
+
+/**
+ * One transfer: from one location to one or more destinations, each with its own products and qty:
+ *   { from_location_id, note?, destinations: [{ to_location_id, products: [{ product_id, qty }] }] }
+ * The older single form { from_location_id, to_location_id, product_id, qty } is one destination
+ * with one product. The same product twice for one destination is one line (qty added up).
+ */
 export function parseCreateTransfer(body) {
-  const qty = Number(body.qty)
-  if (Number.isNaN(qty) || qty <= 0) {
-    throw new AppError("qty must be a number > 0", 400)
+  const from_location_id = requireRef({ from: refOf(body, ["from_location_id", "fromLocationId"]) }, "from", "from_location_id")
+
+  let destinations
+  if (Array.isArray(body.destinations)) {
+    if (!body.destinations.length) throw new AppError("destinations needs at least one location", 400)
+    destinations = body.destinations.map((dest, d) => {
+      const label = `destinations[${d}]`
+      if (!dest || typeof dest !== "object") throw new AppError(`${label} is invalid`, 400)
+      const to_location_id = requireRef({ to: refOf(dest, ["to_location_id", "toLocationId"]) }, "to", `${label}.to_location_id`)
+      if (!Array.isArray(dest.products) || !dest.products.length) {
+        throw new AppError(`${label}.products needs at least one product`, 400)
+      }
+      const products = dest.products.map((row, p) => ({
+        product_id: requireRef({ id: refOf(row, ["product_id", "productId"]) }, "id", `${label}.products[${p}].product_id`),
+        qty: requireQty(row?.qty, `${label}.products[${p}].qty`),
+      }))
+      return { to_location_id, products }
+    })
+  } else {
+    destinations = [
+      {
+        to_location_id: requireRef({ to: refOf(body, ["to_location_id", "toLocationId"]) }, "to", "to_location_id"),
+        products: [
+          {
+            product_id: requireRef({ id: refOf(body, ["product_id", "productId"]) }, "id", "product_id"),
+            qty: requireQty(body.qty, "qty"),
+          },
+        ],
+      },
+    ]
   }
-  const from_location_id = requireRef(body, "from_location_id")
-  const to_location_id = requireRef(body, "to_location_id")
-  if (from_location_id === to_location_id) {
-    throw new AppError("from and to locations must be different", 400)
+
+  // One destination named twice is merged; a product twice for one destination adds up.
+  const byDestination = new Map()
+  for (const dest of destinations) {
+    if (dest.to_location_id === from_location_id) {
+      throw new AppError("A destination cannot be the location the stock leaves from", 400)
+    }
+    const products = byDestination.get(dest.to_location_id) || new Map()
+    for (const row of dest.products) {
+      products.set(row.product_id, (products.get(row.product_id) || 0) + row.qty)
+    }
+    byDestination.set(dest.to_location_id, products)
   }
+
   return {
     // The staff member who sent it (PIN-picked); defaults to the signed-in user.
     staff_ref: body.staff_id ?? body.staffId ?? null,
     from_location_id,
-    to_location_id,
-    product_id: requireRef(body, "product_id"),
-    qty,
-    note:
-      body.note === undefined || body.note === null
-        ? null
-        : String(body.note).trim(),
+    destinations: [...byDestination].map(([to_location_id, products]) => ({
+      to_location_id,
+      products: [...products].map(([product_id, qty]) => ({ product_id, qty })),
+    })),
+    note: body.note === undefined || body.note === null ? null : String(body.note).trim(),
+  }
+}
+
+/**
+ * Receiving at a destination: { to_location_id?, products?: [{ product_id, received_qty }],
+ * received_qty?, note? }. No products = everything still on the way there arrived in full;
+ * received_qty alone is for a transfer with one product.
+ */
+export function parseReceive(fields = {}) {
+  const toRef = refOf(fields, ["to_location_id", "toLocationId", "location_id", "locationId"])
+  const products = Array.isArray(fields.products)
+    ? fields.products.map((row, p) => {
+        const received = Number(row?.received_qty ?? row?.qty)
+        if (Number.isNaN(received) || received < 0) {
+          throw new AppError(`products[${p}].received_qty must be a number >= 0`, 400)
+        }
+        return { product_id: requireRef({ id: refOf(row, ["product_id", "productId"]) }, "id", `products[${p}].product_id`), received_qty: received }
+      })
+    : null
+  return {
+    to_location_id: toRef == null ? null : String(toRef).trim(),
+    products,
+    received_qty: fields.received_qty === undefined || fields.received_qty === null ? undefined : Number(fields.received_qty),
+    note: fields.note === undefined || fields.note === null ? null : String(fields.note).trim(),
   }
 }
