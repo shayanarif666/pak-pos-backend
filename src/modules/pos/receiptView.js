@@ -91,6 +91,8 @@ export function receiptItemView(item, lookups = {}, { salesTaxRate = null } = {}
     ...base,
     product: {
       id: productRef?.id ?? null,
+      // A variant: { id (its number inside the product), name }; null otherwise.
+      variant: productRef?.variant ?? null,
       title: item.title,
       sku: item.sku || productRef?.sku || null,
       barcode: item.barcode || null,

@@ -73,6 +73,8 @@ export class Refs {
     if (!missing.length) return this
     const rows = await model.findAll({ where: { id: { [Op.in]: missing } }, attributes })
     for (const row of rows) this.rows[kind].set(row.id, row)
+    // A variant's product too (its reply shows the product and the variant).
+    if (kind === "product") await this.load("product", rows.map((row) => row.parent_product_id))
     return this
   }
 
@@ -103,9 +105,22 @@ export class Refs {
     const row = this.get("location", id)
     return row ? { id: row.location_id_int, name: row.name } : null
   }
+  /**
+   * A product { id, title, sku, unit }. A variant: its product's number and title, its own sku,
+   * and variant { id (number inside the product), name } — as the POS sends product_id + variant_id.
+   */
   product(id) {
     const row = this.get("product", id)
-    return row ? { id: row.product_number, title: row.title, sku: row.sku, unit: row.unit } : null
+    if (!row) return null
+    const parent = row.parent_product_id ? this.get("product", row.parent_product_id) : null
+    if (!parent) return { id: row.product_number, title: row.title, sku: row.sku, unit: row.unit }
+    return {
+      id: parent.product_number,
+      title: parent.title,
+      sku: row.sku,
+      unit: row.unit,
+      variant: { id: row.variant_number, name: row.variant_name },
+    }
   }
   /** { product, variant }: a variant shows its product (load parents first) and its own number. */
   productAndVariant(id) {

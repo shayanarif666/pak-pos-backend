@@ -40,6 +40,8 @@ function parseItem(row) {
   const price = row.unit_price ?? row.price
   return {
     product_id: optionalRef(row, ["product_id", "productId"]),
+    // A product with variants: the variant's number inside it (1, 2, 3…) or its UUID.
+    variant_id: optionalRef(row, ["variant_id", "variantId"]),
     title: optionalString(row, "title"),
     custom_category: optionalString(row, "category") || optionalString(row, "custom_category"),
     quantity,
@@ -110,6 +112,8 @@ function parsePricedLine(row, index) {
 
   return {
     product_id,
+    // A product with variants: the variant's number inside it (1, 2, 3…) or its UUID.
+    variant_id: optionalRef(row, ["variant_id", "variantId"]),
     title,
     custom_category: optionalString(row, "category") || optionalString(row, "custom_category"),
     quantity,
