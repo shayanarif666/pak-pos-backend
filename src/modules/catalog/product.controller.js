@@ -26,12 +26,23 @@ export const list = asyncHandler(async (req, res) => {
   return apiResponse(res, 200, "OK", data)
 })
 
+// Fields a product with variants leaves out of its POS detail (each variant carries its own).
+const PARENT_ONLY_VARIANT_FIELDS = [
+  "cost_price", "selling_price", "is_pack_product", "pack_size", "pack_cost_price", "pack_selling_price",
+  "sell_loose", "is_weight_based", "has_bulk_discount", "total_price_each_unit", "total_pack_price",
+]
+
 export const getOne = asyncHandler(async (req, res) => {
   const pos = req.auth?.channel === "pos"
   const data = await productService.getProductView(req.user, req.params.id, req.query, { withSummary: !pos })
   if (!pos) return apiResponse(res, 200, "OK", data)
   // The POS shape, with the stock per location (each variant's inside it), as in Products.
   const [row] = await posProducts([data])
+  if (data.has_variants) {
+    // Prices, pack and stock belong to each variant: the product itself is not sold.
+    for (const key of PARENT_ONLY_VARIANT_FIELDS) delete row[key]
+    return apiResponse(res, 200, "OK", row)
+  }
   const stocks = data.stocks || []
   return apiResponse(res, 200, "OK", {
     ...row,
