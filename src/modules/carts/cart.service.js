@@ -13,6 +13,7 @@ import {
   lineTaxAmount,
   loadBulkTiers,
   loadPricingContext,
+  pricingStore,
   money,
   priceCatalogLine,
   quoteOrderTotals,
@@ -100,6 +101,8 @@ export function cartItemsAsOrderLines(items) {
 }
 
 async function quoteCart(store, actor, items, couponCode) {
+  // The same rules as a sale: Taxes page taxes and payment surcharges.
+  store = pricingStore(store)
   if (!items.length) {
     return {
       subtotal: 0,

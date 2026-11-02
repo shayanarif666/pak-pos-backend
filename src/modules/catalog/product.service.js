@@ -15,6 +15,7 @@ import { Location } from "../locations/location.model.js"
 import {
   lineTaxBreakdown,
   money,
+  pricingStore,
   productTaxList,
   taxOn,
   unitDiscountParts,
@@ -680,9 +681,10 @@ export async function getProductView(actor, id, query = {}, { withSummary = true
     delete view.stock_status
     return view
   }
-  const store = await getStoreForManager(actor.store_id)
+  const store = pricingStore(await getStoreForManager(actor.store_id))
   // A product with variants: its figures cover every variant's stock.
   const stocks = product.has_variants ? view.variants.flatMap((variant) => variant.stocks) : view.stocks
+  product.store_taxes = view.store_taxes
   return { ...view, summary: productSummary(store, product, stocks) }
 }
 

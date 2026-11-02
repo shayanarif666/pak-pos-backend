@@ -165,7 +165,14 @@ function parsePayment(row) {
   // POS-priced order: this method's payment tax as the till worked it out.
   const tax_rate = moneyAtLeastZero(row, "tax_rate", "payment")
   const tax_amount = moneyAtLeastZero(row, "tax_amount", "payment")
-  return { method, amount, bill_share, paid, transaction_id, tax_rate, tax_amount }
+  // The payment method surcharge the till added: { surcharge_type, surcharge_value, surcharge_amount }.
+  const surcharge_type = row.surcharge_type == null || row.surcharge_type === "" ? null : String(row.surcharge_type)
+  if (surcharge_type && !["percentage", "fixed"].includes(surcharge_type)) {
+    throw new AppError("payment surcharge_type must be percentage or fixed", 400)
+  }
+  const surcharge_value = moneyAtLeastZero(row, "surcharge_value", "payment")
+  const surcharge_amount = moneyAtLeastZero(row, "surcharge_amount", "payment")
+  return { method, amount, bill_share, paid, transaction_id, tax_rate, tax_amount, surcharge_type, surcharge_value, surcharge_amount }
 }
 
 function optionalMoney(body, key) {

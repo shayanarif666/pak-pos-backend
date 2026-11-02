@@ -3,8 +3,8 @@ import { Offer } from "../offers/offer.model.js"
 import { OfferTarget } from "../offers/offerTarget.model.js"
 import { OfferLocation } from "../offers/offerLocation.model.js"
 import { ProductBulkTier } from "../catalog/productBulkTier.model.js"
-import { PaymentMethodTaxRate } from "../stores/paymentMethodTaxRate.model.js"
 import { getShipping } from "../stores/store.service.js"
+import { surchargeRates } from "../surcharges/surcharge.service.js"
 import { AppError } from "../../shared/errors/AppError.js"
 
 export function money(value) {
@@ -363,6 +363,16 @@ function safeParse(text) {
   }
 }
 
+/**
+ * The store as pricing reads it: taxes always worked out (each tax has its own on / off), no
+ * store-wide sales tax (Taxes page taxes replace it) and payment surcharges instead of the old
+ * payment-method GST. The store's old settings stay in the database.
+ */
+export function pricingStore(store) {
+  const json = store?.toJSON ? store.toJSON() : store
+  return { ...json, charge_tax_on_sales: true, sales_tax_enabled: false, payment_tax_enabled: true }
+}
+
 /** One tax on a base: a percentage of it, or a fixed amount per unit. */
 export function taxOn(base, type, value, units = 1) {
   const amount = Number(value || 0)
@@ -379,7 +389,8 @@ export function taxOn(base, type, value, units = 1) {
  * A fixed tax is per unit (× qty). Nothing applies while the store's charge_tax_on_sales is off.
  */
 export function lineTaxBreakdown(store, product, category, taxable, qty = 1) {
-  const taxes = productTaxList(product)
+  // The product's own taxes, then the Taxes page taxes that apply to it (product.store_taxes).
+  const taxes = [...productTaxList(product), ...productTaxList({ taxes: product?.store_taxes || [] })]
   const breakdown = {
     product_taxes: taxes.map((tax) => ({ ...tax, amount: 0 })),
     category_tax_type: category?.tax_type || null,
@@ -424,13 +435,14 @@ export function quoteShipping(channel, rule, afterDiscounts) {
   return flat
 }
 
-// Payment-method GST: only while the store has charge_tax_on_sales and payment_tax_enabled on.
+// Payment surcharge (stored as the payment's gst): a percentage of its share, plus a fixed amount.
 export function paymentGst(store, rates, method, taxableShare) {
   if (!store.charge_tax_on_sales || store.payment_tax_enabled === false) return 0
   if (!method || method === "mixed") return 0
   const row = (rates || []).find((rate) => rate.payment_method === method)
   if (!row) return 0
-  return applyDiscount(taxableShare, "percentage", row.gst_percent)
+  const fixed = Number(taxableShare) > 0 ? Number(row.fixed_amount || 0) : 0
+  return money(applyDiscount(taxableShare, "percentage", row.gst_percent) + fixed)
 }
 
 /**
@@ -446,6 +458,12 @@ export function splitPaymentTax({ store, taxRates, preGst, payments, paymentMeth
   const enabled = !taxExempt && Boolean(store.charge_tax_on_sales) && store.payment_tax_enabled !== false
   const percentOf = (method) =>
     enabled ? Number((taxRates || []).find((rate) => rate.payment_method === method)?.gst_percent || 0) : 0
+  // A fixed surcharge: once per payment that pays part of the bill.
+  const fixedOf = (method) =>
+    enabled ? Number((taxRates || []).find((rate) => rate.payment_method === method)?.fixed_amount || 0) : 0
+  const chargeOn = (share, method) => (share > 0 ? money((share * percentOf(method)) / 100 + fixedOf(method)) : 0)
+  // The share inside an amount that already includes its surcharge.
+  const shareIn = (amount, method) => money(Math.max(0, amount - fixedOf(method)) / (1 + percentOf(method) / 100))
   const rows = payments?.length
     ? payments
     : paymentMethod && paymentMethod !== "mixed"
@@ -461,10 +479,10 @@ export function splitPaymentTax({ store, taxRates, preGst, payments, paymentMeth
     if (index === rest) return { row, gst_percent, bill_share: null, gst_amount: null }
     if (row.bill_share != null) {
       const bill_share = money(row.bill_share)
-      return { row, gst_percent, bill_share, gst_amount: money((bill_share * gst_percent) / 100) }
+      return { row, gst_percent, bill_share, gst_amount: chargeOn(bill_share, row.method) }
     }
     const amount = money(row.amount)
-    const bill_share = money(amount / (1 + gst_percent / 100))
+    const bill_share = shareIn(amount, row.method)
     return { row, gst_percent, bill_share, gst_amount: money(amount - bill_share) }
   })
   const fixed = money(splits.reduce((sum, split) => sum + (split.bill_share ?? 0), 0))
@@ -474,7 +492,7 @@ export function splitPaymentTax({ store, taxRates, preGst, payments, paymentMeth
   if (rest >= 0) {
     const bill_share = money(Math.max(0, preGst - fixed))
     splits[rest].bill_share = bill_share
-    splits[rest].gst_amount = money((bill_share * splits[rest].gst_percent) / 100)
+    splits[rest].gst_amount = chargeOn(bill_share, splits[rest].row.method)
   }
 
   const result = splits.map((split, index) => {
@@ -485,7 +503,7 @@ export function splitPaymentTax({ store, taxRates, preGst, payments, paymentMeth
     const handed = row.paid ?? row.amount
     if (index === rest && handed != null && Number(handed) + 0.01 < amount) {
       amount = money(handed)
-      bill_share = money(amount / (1 + gst_percent / 100))
+      bill_share = shareIn(amount, row.method)
       gst_amount = money(amount - bill_share)
     }
     // A cash row without paid: its amount is what was handed over (older tills send it that way).
@@ -648,7 +666,8 @@ export async function loadPricingContext(storeId, { locationId, now } = {}) {
         { model: OfferLocation, as: "offerLocations", attributes: ["location_id"] },
       ],
     }),
-    PaymentMethodTaxRate.findAll({ where: { store_id: storeId } }),
+    // Payment surcharges are the rates of the payment charge (the old GST rates are not used).
+    surchargeRates(storeId),
     getShipping(storeId),
   ])
   return {

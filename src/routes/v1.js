@@ -24,6 +24,7 @@ import stockMovementRoutes from "../modules/inventory/stock.routes.js"
 import stockTransferRoutes from "../modules/inventory/transfer.routes.js"
 import offerRoutes from "../modules/offers/offer.routes.js"
 import taxRoutes from "../modules/taxes/tax.routes.js"
+import surchargeRoutes from "../modules/surcharges/surcharge.routes.js"
 import couponRoutes from "../modules/coupons/coupon.routes.js"
 import registerSessionRoutes from "../modules/pos/registerSession.routes.js"
 import staffSessionRoutes from "../modules/pos/staffSession.routes.js"
@@ -68,6 +69,8 @@ router.use("/stock-transfers", stockTransferRoutes)
 router.use("/offers", offerRoutes)
 // Store taxes: one tax for every product or the selected ones.
 router.use("/taxes", taxRoutes)
+// Payment method surcharges: what paying by a method adds to the bill.
+router.use("/payment-surcharges", surchargeRoutes)
 router.use("/coupons", couponRoutes)
 router.use("/register-sessions", registerSessionRoutes)
 router.use("/batches", registerSessionRoutes)

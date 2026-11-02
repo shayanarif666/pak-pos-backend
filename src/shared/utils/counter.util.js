@@ -105,6 +105,11 @@ export const nextOfferNumber = (storeId, transaction) =>
     restartWhenEmpty: { table: "offers", storeId },
   })
 
+export const nextSurchargeNumber = (storeId, transaction) =>
+  getNextSequence(`surcharge:${storeId}`, transaction, {
+    restartWhenEmpty: { table: "payment_method_surcharges", storeId },
+  })
+
 export const nextTaxNumber = (storeId, transaction) =>
   getNextSequence(`tax:${storeId}`, transaction, {
     restartWhenEmpty: { table: "store_taxes", storeId },

@@ -31,10 +31,12 @@ import {
 } from "../pos/registerSession.service.js"
 import { requireApprovedAction } from "../pos/approval.service.js"
 import { deductSaleStock } from "./stock.service.js"
+import { storeTaxMatcher } from "../taxes/tax.service.js"
 import {
   lineTaxBreakdown,
   loadBulkTiers,
   loadPricingContext,
+  pricingStore,
   money,
   priceCatalogLine,
   priceCustomLine,
@@ -281,12 +283,13 @@ function posPricedLine(item, product, offersById) {
 /** The order's totals and payment rows from the till's figures (sums of what it sent). */
 function posPricedTotals({ lines, store, input, orderDiscount, couponDiscount }) {
   const splits = (input.payments || []).map((row) => {
-    const gst_amount = money(row.tax_amount || 0)
+    // The payment's surcharge (surcharge_amount; tax_amount from older tills).
+    const gst_amount = money(row.surcharge_amount ?? row.tax_amount ?? 0)
     const amount = money(row.amount ?? (row.bill_share != null ? Number(row.bill_share) + gst_amount : row.paid || 0))
     return {
       method: row.method,
       bill_share: money(amount - gst_amount),
-      gst_percent: row.tax_rate ?? 0,
+      gst_percent: row.surcharge_type === "fixed" ? 0 : row.surcharge_value ?? row.tax_rate ?? 0,
       gst_amount,
       amount,
       paid: money(row.paid ?? amount),
@@ -360,7 +363,8 @@ export async function createOrder(actor, input) {
 
   const is_custom = Boolean(input.is_custom)
   const client_local_id = normalizeClientLocalId(input.client_local_id)
-  const store = await getStoreForManager(actor.store_id)
+  // Priced with the Taxes page taxes and payment surcharges (not the store's old tax settings).
+  const store = pricingStore(await getStoreForManager(actor.store_id))
   const syncedAt = new Date()
   const placedAt = resolvePlacedAt({ ...input, client_local_id }, syncedAt)
   const offline =
@@ -418,6 +422,9 @@ export async function createOrder(actor, input) {
           transaction,
         })
       : []
+    // The Taxes page taxes of each product (a variant: its own and its parent's).
+    const taxesFor = await storeTaxMatcher(store.id)
+    for (const product of products) product.store_taxes = taxesFor(product, product.parent_product_id)
     const productMap = new Map(products.map((row) => [row.id, row]))
     const bulkTiers = await loadBulkTiers(store.id, productIds)
     const tiersByProduct = new Map()
