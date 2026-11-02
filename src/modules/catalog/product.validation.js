@@ -302,6 +302,8 @@ function parseVariants(body, { patch = false } = {}) {
       pack_cost_price: optionalNumber(row, "pack_cost_price"),
       pack_selling_price: optionalNumber(row, "pack_selling_price"),
       sell_loose: optionalBool(row, "sell_loose"),
+      // Sold by weight (kg) on the scale. Left out = as its product.
+      is_weight_based: optionalBool(row, "is_weight_based"),
       // This variant's own taxes, added to the product's taxes. undefined = not sent.
       taxes: parseTaxes(row),
       // Opening stock (create / a new variant) or the counted stock (an existing variant), per location.

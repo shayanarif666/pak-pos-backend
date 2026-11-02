@@ -71,7 +71,7 @@ const VARIANTS_INCLUDE = {
   attributes: [
     "id", "product_number", "variant_number", "variant_name", "title", "sku", "barcode", "cost_price", "selling_price", "is_active",
     "is_pack_product", "pack_size", "pack_cost_price", "pack_selling_price", "sell_loose", "variant_taxes", "taxes",
-    "low_stock_threshold",
+    "low_stock_threshold", "is_weight_based",
   ],
   separate: true,
   order: [["variant_number", "ASC"], ["product_number", "ASC"]],
@@ -395,6 +395,7 @@ function publicProduct(product, extras = {}) {
       pack_cost_price: row.pack_cost_price == null ? null : Number(row.pack_cost_price),
       pack_selling_price: row.pack_selling_price == null ? null : Number(row.pack_selling_price),
       sell_loose: Boolean(row.sell_loose),
+      is_weight_based: Boolean(row.is_weight_based),
       // Its own taxes (on top of the product's); taxes = everything it is charged.
       variant_taxes: Array.isArray(row.variant_taxes) ? row.variant_taxes : [],
       taxes: productTaxList(row),
@@ -747,7 +748,7 @@ async function createVariant(store, parent, variant, variantNumber) {
       pack_cost_price: variant.is_pack_product ? variant.pack_cost_price : null,
       pack_selling_price: variant.is_pack_product ? variant.pack_selling_price : null,
       sell_loose: Boolean(variant.sell_loose),
-      is_weight_based: Boolean(json.is_weight_based),
+      is_weight_based: variant.is_weight_based ?? Boolean(json.is_weight_based),
       has_bulk_discount: false,
       low_stock_threshold: json.low_stock_threshold,
       is_published: json.is_published,
@@ -940,6 +941,7 @@ async function saveVariants(storeId, product, variants, actor, { held, warnings,
     if (variant.selling_price != null) patch.selling_price = variant.selling_price
     if (variant.is_active !== undefined) patch.is_active = variant.is_active
     if (variant.sell_loose !== undefined) patch.sell_loose = variant.sell_loose
+    if (variant.is_weight_based !== undefined) patch.is_weight_based = variant.is_weight_based
     if (variant.is_pack_product === false) Object.assign(patch, { is_pack_product: false, pack_size: null, pack_cost_price: null, pack_selling_price: null })
     if (variant.is_pack_product || (row.is_pack_product && variant.is_pack_product !== false)) {
       const pack = {

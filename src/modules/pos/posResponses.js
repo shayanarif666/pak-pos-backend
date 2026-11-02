@@ -731,6 +731,7 @@ export async function posProducts(views) {
       pack_cost_price: num(row.pack_cost_price),
       pack_selling_price: num(row.pack_selling_price),
       sell_loose: Boolean(row.sell_loose),
+      is_weight_based: Boolean(row.is_weight_based),
       taxes: row.taxes || [],
       ...(row.stocks
         ? {
