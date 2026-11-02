@@ -121,6 +121,10 @@ export function publicOrderItem(item) {
     is_weight_based: json.is_weight_based,
     weight: json.weight == null ? null : Number(json.weight),
     qty_packs: json.qty_packs == null ? null : Number(json.qty_packs),
+    // unit | pack; a pack line: pack_size and pack_price (quantity stays in units).
+    sale_unit: json.sale_unit || "unit",
+    pack_size: json.pack_size ?? null,
+    pack_price: json.pack_price == null ? null : Number(json.pack_price),
     quantity,
     unit_price,
     cost_price: Number(json.cost_price || 0),
@@ -200,16 +204,33 @@ function requestedLocationId(actor, store, input) {
 
 const sumOf = (rows, pick) => money(rows.reduce((sum, row) => sum + Number(pick(row) || 0), 0))
 
-/** One line as the till priced it, in the shape the order line is saved in. */
+/** The pack size of a line sold by the pack (a pack product only). */
+function packSaleSize(product, saleUnit) {
+  if (saleUnit !== "pack") return null
+  const size = Number(product?.pack_size)
+  if (!product?.is_pack_product || !(size >= 2)) {
+    throw new AppError(`${product?.title || "This product"} is not sold by the pack: send sale_unit unit`, 400)
+  }
+  return size
+}
+
+/**
+ * One line as the till priced it, in the shape the order line is saved in. Sold by the pack: the
+ * till's qty is packs and its prices one pack's; the line is saved in units (qty × pack size) with
+ * the packs, pack size and pack price kept, and the same total.
+ */
 function posPricedLine(item, product, offersById) {
-  const qty = Number(item.quantity)
+  const packSize = product ? packSaleSize(product, item.sale_unit) : null
+  const packs = packSize ? Number(item.quantity) : null
+  const qty = packSize ? packs * packSize : Number(item.quantity)
   const { discount, taxes } = item.priced
   const discount_amount = money(discount?.amount || 0)
   const source = discount?.source || (discount_amount > 0 ? "custom" : product ? "none" : "custom")
   const offer = discount?.offer_id ? offersById.get(discount.offer_id) : null
   const ofLevel = (level) => taxes.filter((tax) => tax.level === level)
   const categoryTax = ofLevel("category")[0] || null
-  const unit_price = money(item.unit_price)
+  const salePrice = money(item.unit_price)
+  const unit_price = packSize ? money(salePrice / packSize) : salePrice
   const snapshot = (amount) => ({ name: null, type: null, value: null, amount })
   return {
     product_id: product?.id || null,
@@ -222,12 +243,19 @@ function posPricedLine(item, product, offersById) {
     barcode: product?.barcode || null,
     unit: product?.unit || null,
     is_weight_based: Boolean(product?.is_weight_based),
-    weight: product?.is_weight_based ? qty : item.weight ?? null,
-    qty_packs:
-      product?.is_pack_product && product.pack_size ? Math.floor(qty / Number(product.pack_size)) : null,
+    weight: product?.is_weight_based && !packSize ? qty : item.weight ?? null,
+    qty_packs: packSize
+      ? packs
+      : product?.is_pack_product && product.pack_size ? Math.floor(qty / Number(product.pack_size)) : null,
+    sale_unit: packSize ? "pack" : "unit",
+    pack_size: packSize,
+    pack_price: packSize ? salePrice : null,
     quantity: qty,
     unit_price,
-    cost_price: money(item.cost_price ?? product?.cost_price ?? 0),
+    // A pack line's cost_price is one pack's.
+    cost_price: money(
+      item.cost_price != null ? (packSize ? Number(item.cost_price) / packSize : item.cost_price) : product?.cost_price ?? 0
+    ),
     discount_amount,
     discount_source: source,
     offer_id: offer?.id || null,
@@ -235,7 +263,8 @@ function posPricedLine(item, product, offersById) {
     product_discount: source === "product" ? snapshot(discount_amount) : null,
     category_discount: source === "category" ? snapshot(discount_amount) : null,
     free_qty: discount?.free_qty || 0,
-    subtotal: money(unit_price * qty - discount_amount),
+    // The till's own figures: price × qty as it sold them (per pack on a pack line).
+    subtotal: money(salePrice * Number(item.quantity) - discount_amount),
     tax_amount: sumOf(taxes, (tax) => tax.amount),
     product_tax_amount: sumOf(ofLevel("product"), (tax) => tax.amount),
     category_tax_amount: sumOf(ofLevel("category"), (tax) => tax.amount),
@@ -434,10 +463,13 @@ export async function createOrder(actor, input) {
       if (!product) throw new NotFoundError("Product not found")
       if (!product.is_active) throw new AppError("Product is not active", 400)
       if (product.has_variants) throw new AppError(`${product.title} has variants: sell one of them`, 400)
+      packSaleSize(product, item.sale_unit)
       const line = priceCatalogLine({
         product,
         quantity: item.quantity,
         weight: item.weight,
+        // pack: quantity is packs, priced by the pack.
+        saleUnit: item.sale_unit || "unit",
         // offer_exempt (order or line): no offer; product / category discounts still apply.
         offers: input.offer_exempt || item.offer_exempt ? [] : offers,
         bulkTiers: tiersByProduct.get(product.id) || [],
@@ -686,6 +718,9 @@ export async function createOrder(actor, input) {
         is_weight_based: line.is_weight_based,
         weight: line.weight,
         qty_packs: line.qty_packs,
+        sale_unit: line.sale_unit || "unit",
+        pack_size: line.pack_size ?? null,
+        pack_price: line.pack_price ?? null,
         unit_price: line.unit_price,
         cost_price: line.cost_price,
         quantity: line.quantity,

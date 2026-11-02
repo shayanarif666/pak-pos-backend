@@ -82,9 +82,23 @@ function matchingTargets(offer, product) {
     .sort((a, b) => (b.product_id === product.id) - (a.product_id === product.id))
 }
 
-function offerUnitAfterDiscount(base, offer, target) {
-  if (offer.type === "flash_sale" && target?.promo_price != null) {
-    return money(Math.min(base, Number(target.promo_price)))
+/**
+ * Whether an offer covers this sale: on a pack product its sale_unit (the target's own, else the
+ * offer's) must be both or the way the line is sold (unit / pack). Other products: always.
+ */
+function coversSaleUnit(offer, target, product, saleUnit) {
+  if (!product.is_pack_product) return true
+  const unit = target?.sale_unit || offer.sale_unit || "both"
+  return unit === "both" || unit === saleUnit
+}
+
+function offerUnitAfterDiscount(base, offer, target, { byPack = false, packSize = 1 } = {}) {
+  if (offer.type === "flash_sale") {
+    // The pack's own promo price, else the unit's promo price × pack size.
+    const promo = byPack
+      ? target?.promo_pack_price ?? (target?.promo_price != null ? Number(target.promo_price) * packSize : null)
+      : target?.promo_price
+    if (promo != null) return money(Math.min(base, Number(promo)))
   }
   if (offer.discount_type && offer.discount_value != null) {
     return money(base - applyDiscount(base, offer.discount_type, offer.discount_value))
@@ -92,12 +106,16 @@ function offerUnitAfterDiscount(base, offer, target) {
   return base
 }
 
-function bestBulkUnit(base, qty, productTiers, bulkOffers, product) {
+function bestBulkUnit(base, qty, productTiers, bulkOffers, product, sale = {}) {
   let best = { unit: base, source: null, savings: 0 }
+  // Quantities counted in units and in full packs, whichever way the line is sold.
+  const size = Number(sale.packSize) || 1
+  const units = sale.byPack ? Number(qty) * size : Number(qty)
+  const packs = sale.byPack ? Number(qty) : size > 1 ? Math.floor(Number(qty) / size) : 0
 
   if (productTiers?.length) {
     const eligible = productTiers
-      .filter((tier) => Number(qty) >= Number(tier.min_qty))
+      .filter((tier) => units >= Number(tier.min_qty))
       .sort((a, b) => Number(b.min_qty) - Number(a.min_qty))
     if (eligible[0]) {
       const unit = money(
@@ -111,9 +129,10 @@ function bestBulkUnit(base, qty, productTiers, bulkOffers, product) {
   }
 
   for (const offer of bulkOffers || []) {
-    if (offer.min_qty != null && Number(qty) < Number(offer.min_qty)) continue
+    const counted = offer.min_qty_unit === "pack" ? packs : units
+    if (offer.min_qty != null && counted < Number(offer.min_qty)) continue
     const target = matchingTargets(offer, product)[0]
-    const unit = offerUnitAfterDiscount(base, offer, target)
+    const unit = offerUnitAfterDiscount(base, offer, target, sale)
     const savings = money((base - unit) * Number(qty))
     if (savings > best.savings) {
       best = { unit, source: "offer_bulk", savings, offer }
@@ -123,6 +142,10 @@ function bestBulkUnit(base, qty, productTiers, bulkOffers, product) {
   return best
 }
 
+/**
+ * saleUnit "pack": quantity = packs and the line is priced by the pack (pack price, the offer's pack
+ * promo price, a fixed discount per pack); the saved line keeps quantity in units.
+ */
 export function priceCatalogLine({
   product,
   quantity,
@@ -131,17 +154,26 @@ export function priceCatalogLine({
   bulkTiers = [],
   locationId,
   now = new Date(),
+  saleUnit = "unit",
 }) {
+  const packSize = Number(product.pack_size)
+  const byPack = saleUnit === "pack" && Boolean(product.is_pack_product) && packSize >= 2
+  const sale = { byPack, packSize: byPack ? packSize : 1 }
   const qty =
-    product.is_weight_based && weight != null ? Number(weight) : Number(quantity)
+    product.is_weight_based && weight != null && !byPack ? Number(weight) : Number(quantity)
   if (!qty || qty <= 0) {
     throw new Error("quantity must be > 0")
   }
 
-  const list = money(product.selling_price)
-  const afterProduct = priceAfterProductDiscount(product, product.Category || product.category)
+  const unitList = money(product.selling_price)
+  const list = byPack ? money(product.pack_selling_price ?? unitList * packSize) : unitList
+  const unitAfterProduct = priceAfterProductDiscount(product, product.Category || product.category)
+  // The catalog discount per unit, on every unit of the pack.
+  const afterProduct = byPack ? money(list - (unitList - unitAfterProduct) * packSize) : unitAfterProduct
   const live = offers.filter((offer) => offerIsLive(offer, { locationId, now }))
-  const matching = live.filter((offer) => matchingTargets(offer, product).length)
+  const matching = live.filter((offer) =>
+    matchingTargets(offer, product).some((target) => coversSaleUnit(offer, target, product, saleUnit))
+  )
   // Where the catalog discount comes from — by the amounts actually taken off (a 0% discount
   // is no discount).
   const parts = unitDiscountParts(product, product.Category || product.category)
@@ -166,7 +198,7 @@ export function priceCatalogLine({
     ["flash_sale", "promotional"].includes(row.type)
   )) {
     const target = matchingTargets(offer, product)[0]
-    const unit = offerUnitAfterDiscount(list, offer, target)
+    const unit = offerUnitAfterDiscount(list, offer, target, sale)
     candidates.push({
       unit,
       discount: money((list - unit) * qty),
@@ -179,7 +211,7 @@ export function priceCatalogLine({
 
   const bulkOffers = matching.filter((row) => row.type === "bulk_discount")
   const tiers = product.has_bulk_discount ? bulkTiers : []
-  const bulk = bestBulkUnit(list, qty, tiers, bulkOffers, product)
+  const bulk = bestBulkUnit(list, qty, tiers, bulkOffers, product, sale)
   if (bulk.source) {
     candidates.push({
       unit: bulk.unit,
@@ -191,6 +223,10 @@ export function priceCatalogLine({
   }
 
   for (const offer of matching.filter((row) => row.type === "bogo")) {
+    // Priced here when what is bought and what is free are both counted the way the line is sold
+    // (a buy-a-pack-get-a-unit offer is priced by the POS).
+    const lineUnit = byPack ? "pack" : "unit"
+    if ((offer.buy_unit || "unit") !== lineUnit || (offer.get_unit || "unit") !== lineUnit) continue
     const free = bogoFreeQty(qty, offer.buy_qty, offer.get_qty)
     const paidQty = qty - free
     const line = money(list * paidQty)
@@ -208,6 +244,8 @@ export function priceCatalogLine({
   candidates.sort((a, b) => b.discount - a.discount || a.unit - b.unit)
   const best = candidates[0]
   const line_subtotal = money(list * qty - best.discount)
+  // Saved in units: a pack line keeps the packs, the pack size and the pack price as well.
+  const units = byPack ? qty * packSize : qty
 
   return {
     product_id: product.id,
@@ -216,13 +254,17 @@ export function priceCatalogLine({
     barcode: product.barcode,
     unit: product.unit,
     is_weight_based: Boolean(product.is_weight_based),
-    weight: product.is_weight_based ? qty : null,
-    qty_packs:
-      product.is_pack_product && product.pack_size
+    weight: product.is_weight_based && !byPack ? qty : null,
+    qty_packs: byPack
+      ? qty
+      : product.is_pack_product && product.pack_size
         ? Math.floor(qty / Number(product.pack_size))
         : null,
-    quantity: qty,
-    unit_price: list,
+    sale_unit: byPack ? "pack" : "unit",
+    pack_size: byPack ? packSize : null,
+    pack_price: byPack ? list : null,
+    quantity: units,
+    unit_price: byPack ? money(list / packSize) : list,
     cost_price: money(product.cost_price),
     discount_amount: best.discount,
     subtotal: line_subtotal,
@@ -231,11 +273,11 @@ export function priceCatalogLine({
     discount_source: discountSource(best.source),
     // The offer that priced this line, as it was at the sale (kept on the order line).
     offers: best.offer ? [offerSnapshot(best.offer, best.target, best.discount)] : [],
-    free_qty: best.free_qty || 0,
+    free_qty: (best.free_qty || 0) * (byPack ? packSize : 1),
     // The product / category discount, when it (and not an offer) priced the line.
     product_discount:
       CATALOG_SOURCES.includes(best.source) && parts.own > 0
-        ? discountSnapshot(product.discount_name, product.discount_type, product.discount_value, parts.own * qty)
+        ? discountSnapshot(product.discount_name, product.discount_type, product.discount_value, parts.own * units)
         : null,
     category_discount:
       CATALOG_SOURCES.includes(best.source) && parts.fromCategory > 0
@@ -243,7 +285,7 @@ export function priceCatalogLine({
             parts.category?.discount_name,
             parts.category?.discount_type,
             parts.category?.discount_value,
-            parts.fromCategory * qty
+            parts.fromCategory * units
           )
         : null,
   }

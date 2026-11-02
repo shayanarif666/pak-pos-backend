@@ -17,6 +17,14 @@ function optionalString(body, key) {
   return String(body[key]).trim()
 }
 
+/** unit (default) or pack: how a line is sold; with pack, qty is the number of packs. */
+function saleUnitOf(row, label) {
+  const value = row.sale_unit ?? row.saleUnit
+  if (value === undefined || value === null || value === "") return "unit"
+  if (value !== "unit" && value !== "pack") throw new AppError(`${label}.sale_unit must be unit or pack`, 400)
+  return value
+}
+
 /** A product / batch / customer reference: its short number (e.g. 1) or its UUID. */
 function optionalRef(body, keys) {
   for (const key of keys) {
@@ -42,6 +50,7 @@ function parseItem(row) {
     product_id: optionalRef(row, ["product_id", "productId"]),
     // A product with variants: the variant's number inside it (1, 2, 3…) or its UUID.
     variant_id: optionalRef(row, ["variant_id", "variantId"]),
+    sale_unit: saleUnitOf(row, "item"),
     title: optionalString(row, "title"),
     custom_category: optionalString(row, "category") || optionalString(row, "custom_category"),
     quantity,
@@ -114,6 +123,8 @@ function parsePricedLine(row, index) {
     product_id,
     // A product with variants: the variant's number inside it (1, 2, 3…) or its UUID.
     variant_id: optionalRef(row, ["variant_id", "variantId"]),
+    // pack: qty = packs, unit_price / cost_price = one pack's.
+    sale_unit: saleUnitOf(row, label),
     title,
     custom_category: optionalString(row, "category") || optionalString(row, "custom_category"),
     quantity,

@@ -1,7 +1,9 @@
 import { AppError } from "../../shared/errors/AppError.js"
 import {
   DISCOUNT_TYPE,
+  OFFER_SALE_UNIT,
   OFFER_TYPE,
+  SALE_UNIT,
   SUPPLIER_LOCATION_SCOPE,
 } from "../../db/enums.js"
 import { staffRefFrom } from "../../shared/utils/staff.util.js"
@@ -42,6 +44,14 @@ function optionalInt(body, key, { min = 1 } = {}) {
     throw new AppError(`${key} must be an integer >= ${min}`, 400)
   }
   return n
+}
+
+/** unit | pack (| both) — null when not sent. */
+function optionalChoice(body, key, choices) {
+  if (body[key] === undefined || body[key] === null || body[key] === "") return null
+  const value = String(body[key])
+  if (!choices.includes(value)) throw new AppError(`${key} must be ${choices.join(", ")}`, 400)
+  return value
 }
 
 function optionalDiscountType(body) {
@@ -139,16 +149,24 @@ export function assertOfferRules(fields) {
   }
 }
 
-/** A products[] entry: a number / UUID, or { product_id, promo_price?, free_product_id? }. */
+/**
+ * A products[] entry: a number / UUID, or { product_id, variant_id?, sale_unit?, promo_price?,
+ * promo_pack_price?, free_product_id?, free_variant_id? }. variant_id = the variant's number inside
+ * the product (1, 2, 3…); sale_unit = unit | pack | both on a pack product (left out = the offer's).
+ */
 function parseProductTarget(entry, index) {
   const row = entry && typeof entry === "object" ? entry : { product_id: entry }
   const product_ref = optionalRef(row, "product_id") || optionalRef(row, "productId")
   if (!product_ref) throw new AppError(`products[${index}] needs a product number or UUID`, 400)
   return {
     product_ref,
+    variant_ref: optionalRef(row, "variant_id") || optionalRef(row, "variantId"),
     category_ref: null,
     free_product_ref: optionalRef(row, "free_product_id") || optionalRef(row, "freeProductId"),
+    free_variant_ref: optionalRef(row, "free_variant_id") || optionalRef(row, "freeVariantId"),
     promo_price: optionalNumber(row, "promo_price"),
+    promo_pack_price: optionalNumber(row, "promo_pack_price"),
+    sale_unit: optionalChoice(row, "sale_unit", OFFER_SALE_UNIT),
   }
 }
 
@@ -157,7 +175,7 @@ function parseCategoryTarget(entry, index) {
   const row = entry && typeof entry === "object" ? entry : { category_id: entry }
   const category_ref = optionalRef(row, "category_id") || optionalRef(row, "categoryId")
   if (!category_ref) throw new AppError(`categories[${index}] needs a category number or UUID`, 400)
-  return { product_ref: null, category_ref, free_product_ref: null, promo_price: null }
+  return { product_ref: null, category_ref, free_product_ref: null, promo_price: null, promo_pack_price: null, sale_unit: null }
 }
 
 /**
@@ -187,7 +205,7 @@ function parseOfferTargets(body) {
   // The same product / category twice is one target (the first one sent wins).
   const seen = new Set()
   targets = targets.filter((target) => {
-    const key = target.product_ref ? `p:${target.product_ref}` : `c:${target.category_ref}`
+    const key = target.product_ref ? `p:${target.product_ref}:${target.variant_ref || ""}` : `c:${target.category_ref}`
     if (seen.has(key)) return false
     seen.add(key)
     return true
@@ -210,8 +228,8 @@ function assertTargetsFit(type, targets, fields) {
       if (target.category_ref && !hasDiscount) {
         throw new AppError("flash_sale on a category needs discount_type and discount_value (a category has no single promo_price)", 400)
       }
-      if (target.product_ref && target.promo_price == null && !hasDiscount) {
-        throw new AppError("flash_sale needs a promo_price on each product, or discount_type and discount_value", 400)
+      if (target.product_ref && target.promo_price == null && target.promo_pack_price == null && !hasDiscount) {
+        throw new AppError("flash_sale needs a promo_price (or promo_pack_price) on each product, or discount_type and discount_value", 400)
       }
     }
   }
@@ -240,9 +258,14 @@ export function parseCreateOffer(body) {
     ...parseLocationScope(body),
     discount_type: optionalDiscountType(body),
     discount_value: optionalNumber(body, "discount_value"),
+    // On pack products: single items, the whole pack, or both (default).
+    sale_unit: optionalChoice(body, "sale_unit", OFFER_SALE_UNIT) ?? "both",
     min_qty: optionalNumber(body, "min_qty"),
+    min_qty_unit: optionalChoice(body, "min_qty_unit", SALE_UNIT) ?? "unit",
     buy_qty: optionalInt(body, "buy_qty"),
+    buy_unit: optionalChoice(body, "buy_unit", SALE_UNIT) ?? "unit",
     get_qty: optionalInt(body, "get_qty"),
+    get_unit: optionalChoice(body, "get_unit", SALE_UNIT) ?? "unit",
     start_at: optionalDate(body, "start_at"),
     end_at: optionalDate(body, "end_at"),
     is_active: offerActive(body) ?? true,
@@ -275,6 +298,10 @@ export function parsePatchOffer(body) {
   if (body.min_qty !== undefined) patch.min_qty = optionalNumber(body, "min_qty")
   if (body.buy_qty !== undefined) patch.buy_qty = optionalInt(body, "buy_qty")
   if (body.get_qty !== undefined) patch.get_qty = optionalInt(body, "get_qty")
+  if (body.sale_unit !== undefined) patch.sale_unit = optionalChoice(body, "sale_unit", OFFER_SALE_UNIT) ?? "both"
+  for (const key of ["min_qty_unit", "buy_unit", "get_unit"]) {
+    if (body[key] !== undefined) patch[key] = optionalChoice(body, key, SALE_UNIT) ?? "unit"
+  }
   if (body.start_at !== undefined) patch.start_at = optionalDate(body, "start_at")
   if (body.end_at !== undefined) patch.end_at = optionalDate(body, "end_at")
   const active = offerActive(body)
@@ -304,9 +331,13 @@ function parseTargetRow(row) {
   }
   return {
     product_ref,
+    variant_ref: optionalRef(row, "variant_id"),
     category_ref,
     free_product_ref: optionalRef(row, "free_product_id"),
+    free_variant_ref: optionalRef(row, "free_variant_id"),
     promo_price: optionalNumber(row, "promo_price"),
+    promo_pack_price: optionalNumber(row, "promo_pack_price"),
+    sale_unit: optionalChoice(row, "sale_unit", OFFER_SALE_UNIT),
   }
 }
 

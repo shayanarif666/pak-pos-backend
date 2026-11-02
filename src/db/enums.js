@@ -92,6 +92,10 @@ export const PRODUCT_UNIT = [
 export const OFFER_TYPE = ["flash_sale", "bulk_discount", "bogo", "promotional"]
 /** offers.apply_to: what the offer's targets are — set from them (mixed = products and categories). */
 export const OFFER_APPLY_TO = ["product", "category", "mixed"]
+/** What an offer applies to on a pack product: single items, the whole pack, or both. */
+export const OFFER_SALE_UNIT = ["unit", "pack", "both"]
+/** How a line was sold / an offer quantity is counted: single units or whole packs. */
+export const SALE_UNIT = ["unit", "pack"]
 export const STOCK_MOVEMENT_TYPE = [
   "stock_in",
   "stock_out",

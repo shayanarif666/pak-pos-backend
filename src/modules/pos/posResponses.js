@@ -217,6 +217,12 @@ function parseList(value) {
   return []
 }
 
+/** unit | pack; a pack line: packs sold, pack size and the price of one pack (qty is in units). */
+function saleUnitView(item) {
+  if (item.sale_unit !== "pack") return { sale_unit: "unit" }
+  return { sale_unit: "pack", packs: num(item.qty_packs), pack_size: item.pack_size ?? null, pack_price: num(item.pack_price) }
+}
+
 function orderItemView(item, refs) {
   const lineTotal = Number(item.subtotal || 0) + Number(item.tax_amount || 0)
   const prices = {
@@ -235,6 +241,7 @@ function orderItemView(item, refs) {
       product: { ...(refs.product(item.product_id) || { id: null, sku: null, unit: null }), title: item.title },
       category: category ? { ...category, name: item.category_name || category.name } : null,
       qty: num(item.quantity),
+      ...saleUnitView(item),
       ...prices,
       // Where the discount came from (none | product | category | product+category | bulk_tier |
       // offer) and the offer(s) applied, as they were at the sale. null on lines sold before this was kept.
@@ -648,17 +655,25 @@ export async function posOffers(views) {
       // Every product (with its own promo_price / free_product) and every category it applies to.
       products: productRows.map((t) => ({
         ...refs.product(t.product_id),
+        // unit | pack | both on this product (the offer's sale_unit when not set on it).
+        sale_unit: t.sale_unit || view.sale_unit || "both",
         promo_price: num(t.promo_price),
+        promo_pack_price: num(t.promo_pack_price),
         free_product: refs.product(t.free_product_id),
       })),
       categories: targets(view).filter((t) => t.category_id).map((t) => refs.category(t.category_id)),
       discount_type: view.discount_type,
       discount_value: view.discount_value,
+      // On pack products (categories too): unit | pack | both.
+      sale_unit: view.sale_unit || "both",
       start_at: view.start_at,
       end_at: view.end_at,
       min_qty: view.min_qty,
+      min_qty_unit: view.min_qty_unit || "unit",
       buy_qty: view.buy_qty,
+      buy_unit: view.buy_unit || "unit",
       get_qty: view.get_qty,
+      get_unit: view.get_unit || "unit",
       location_scope: view.location_scope || "all",
       locations: (view.locations || []).map((row) => ({ id: row.location_number ?? row.id ?? null, name: row.name || null })),
       is_active: view.is_active,

@@ -51,6 +51,10 @@ export function receiptItemView(item, lookups = {}, { salesTaxRate = null } = {}
   const base = {
     id: item.item_number,
     qty: num(item.quantity),
+    // Sold by the pack: packs × pack_price (qty stays in units).
+    ...(item.sale_unit === "pack"
+      ? { sale_unit: "pack", packs: num(item.qty_packs), pack_size: item.pack_size ?? null, pack_price: num(item.pack_price) }
+      : { sale_unit: "unit" }),
     unit_price: num(item.unit_price),
     gross_amount: money(Number(item.unit_price || 0) * Number(item.quantity || 0)),
   }

@@ -29,6 +29,7 @@ import * as stockTransferItems from "./migrations/20261104130000-stock-transfer-
 import * as productVariants from "./migrations/20261105120000-product-variants.js"
 import * as variantTaxes from "./migrations/20261106120000-variant-taxes.js"
 import * as variantNumberStockScope from "./migrations/20261107120000-variant-number-stock-scope.js"
+import * as offerSaleUnits from "./migrations/20261108120000-offer-sale-units.js"
 
 // Migrations the running code cannot work without (e.g. users.token_version is read on every
 // authenticated request). Each one checks before it changes anything, so running it on a
@@ -88,6 +89,8 @@ const REQUIRED = [
   variantTaxes,
   // products.variant_number (1, 2, 3… per product) and stock_scope / stock_location_ids.
   variantNumberStockScope,
+  // Offers / sales of pack products: unit, pack or both (offers, offer_targets, order_items).
+  offerSaleUnits,
 ]
 
 export async function ensureSchema() {

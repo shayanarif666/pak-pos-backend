@@ -6,7 +6,7 @@ import { OfferLocation } from "./offerLocation.model.js"
 import { Product } from "../catalog/product.model.js"
 import { Category } from "../catalog/category.model.js"
 import { Location } from "../locations/location.model.js"
-import { assertOfferRules } from "./offer.validation.js"
+import { applyToOf, assertOfferRules } from "./offer.validation.js"
 import { nextOfferNumber } from "../../shared/utils/counter.util.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { scopeForActor } from "../../shared/utils/locationScope.util.js"
@@ -31,6 +31,9 @@ function publicTarget(row) {
     category_id: json.category_id,
     free_product_id: json.free_product_id,
     promo_price: json.promo_price == null ? null : Number(json.promo_price),
+    promo_pack_price: json.promo_pack_price == null ? null : Number(json.promo_pack_price),
+    // null = the offer's sale_unit.
+    sale_unit: json.sale_unit || null,
   }
 }
 
@@ -54,9 +57,14 @@ function publicOffer(row) {
     discount_type: json.discount_type,
     discount_value:
       json.discount_value == null ? null : Number(json.discount_value),
+    // On pack products: unit (single items) | pack | both.
+    sale_unit: json.sale_unit || "both",
     min_qty: json.min_qty == null ? null : Number(json.min_qty),
+    min_qty_unit: json.min_qty_unit || "unit",
     buy_qty: json.buy_qty,
+    buy_unit: json.buy_unit || "unit",
     get_qty: json.get_qty,
+    get_unit: json.get_unit || "unit",
     start_at: json.start_at,
     end_at: json.end_at,
     is_active: json.is_active,
@@ -178,22 +186,36 @@ async function findByRef(model, numberColumn, storeId, ref, label) {
   return row
 }
 
+/** product_id + variant_id → the variant (a product of its own); without variant_id, the product. */
+async function findProductOrVariant(storeId, productRef, variantRef, label) {
+  const product = await findByRef(Product, "product_number", storeId, productRef, label)
+  if (!variantRef) return product
+  const where = /^\d+$/.test(variantRef)
+    ? { store_id: storeId, parent_product_id: product.id, variant_number: Number(variantRef) }
+    : { store_id: storeId, parent_product_id: product.id, id: variantRef }
+  const variant = await Product.findOne({ where, attributes: ["id", "product_number"] })
+  if (!variant) throw new NotFoundError(`${label} ${productRef}: variant ${variantRef} not found`)
+  return variant
+}
+
 /** Turns a parsed target's refs into the UUID columns offer_targets stores. */
 async function resolveTarget(storeId, offer, target) {
   const product = target.product_ref
-    ? await findByRef(Product, "product_number", storeId, target.product_ref, "Product")
+    ? await findProductOrVariant(storeId, target.product_ref, target.variant_ref, "Product")
     : null
   const category = target.category_ref
     ? await findByRef(Category, "category_number", storeId, target.category_ref, "Category")
     : null
   const free = target.free_product_ref
-    ? await findByRef(Product, "product_number", storeId, target.free_product_ref, "Free product")
+    ? await findProductOrVariant(storeId, target.free_product_ref, target.free_variant_ref, "Free product")
     : null
   return {
     product_id: product?.id || null,
     category_id: category?.id || null,
     free_product_id: free?.id || null,
     promo_price: target.promo_price,
+    promo_pack_price: target.promo_pack_price ?? null,
+    sale_unit: target.sale_unit ?? null,
     // Not stored — only for the POS create response.
     product_number: product?.product_number ?? null,
     category_number: category?.category_number ?? null,
@@ -230,9 +252,13 @@ export async function createOffer(store, input, actor) {
         location_scope: scope,
         discount_type: fields.discount_type,
         discount_value: fields.discount_value,
+        sale_unit: fields.sale_unit || "both",
         min_qty: fields.min_qty,
+        min_qty_unit: fields.min_qty_unit || "unit",
         buy_qty: fields.buy_qty,
+        buy_unit: fields.buy_unit || "unit",
         get_qty: fields.get_qty,
+        get_unit: fields.get_unit || "unit",
         start_at: fields.start_at,
         end_at: fields.end_at,
         is_active: fields.is_active,

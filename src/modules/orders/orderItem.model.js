@@ -25,6 +25,11 @@ export const OrderItem = sequelize.define(
     is_weight_based: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     weight: { type: DataTypes.DECIMAL(12, 4), allowNull: true },
     qty_packs: { type: DataTypes.DECIMAL(12, 4), allowNull: true },
+    // Sold as single units or by the pack. quantity is always in units; a pack line also keeps the
+    // pack size and the price of one pack as sold.
+    sale_unit: { type: DataTypes.ENUM("unit", "pack"), allowNull: false, defaultValue: "unit" },
+    pack_size: { type: DataTypes.INTEGER, allowNull: true },
+    pack_price: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
     unit_price: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
     cost_price: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
     quantity: { type: DataTypes.DECIMAL(12, 4), allowNull: false },
