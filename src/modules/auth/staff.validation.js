@@ -55,7 +55,11 @@ export function parseCreateStaff(body) {
   return {
     name: requireString(body, "name"),
     email: requireString(body, "email").toLowerCase(),
-    password: requireString(body, "password", { min: 6, max: 128 }),
+    // A cashier signs in on the POS with the PIN; their password is optional (a manager needs one).
+    password:
+      role === "cashier" && (body.password === undefined || body.password === null || body.password === "")
+        ? null
+        : requireString(body, "password", { min: 6, max: 128 }),
     pin: requirePin(body, "pin"),
     role,
     phone: optionalString(body, "phone"),

@@ -1071,6 +1071,10 @@ export async function updateProduct(storeId, id, input, actor = null) {
     }
     throw err
   }
+  // A product with variants switched back on (after a delete): its variants come back too.
+  if (fields.is_active === true && product.has_variants) {
+    await Product.update({ is_active: true }, { where: { store_id: storeId, parent_product_id: product.id } })
+  }
   // The product's taxes changed: every variant gets them again, plus its own.
   if (fields.taxes !== undefined && product.has_variants) {
     const children = await Product.findAll({ where: { store_id: storeId, parent_product_id: product.id } })
@@ -1132,7 +1136,10 @@ export async function setProductImage(storeId, ref, url) {
 export async function deleteProduct(storeId, id) {
   const product = await getProduct(storeId, id)
   await product.update({ is_active: false, is_published: false, is_pos_visible: false })
-  return publicProduct(product)
+  if (product.has_variants) {
+    await Product.update({ is_active: false }, { where: { store_id: storeId, parent_product_id: product.id } })
+  }
+  return publicProduct(await getProduct(storeId, id))
 }
 
 export async function listWeightProducts(storeId) {

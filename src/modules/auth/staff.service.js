@@ -1,4 +1,5 @@
 import { Op, UniqueConstraintError } from "sequelize"
+import { randomBytes } from "node:crypto"
 import { User } from "./user.model.js"
 import { Location } from "../locations/location.model.js"
 import { Order } from "../orders/order.model.js"
@@ -106,7 +107,8 @@ export async function createStaff(actor, input) {
       location_id_int: location.location_id_int,
       name: input.name,
       email: input.email,
-      password: await hashPassword(input.password),
+      // No password (a cashier): a random one nobody knows, so the account cannot sign in with one.
+      password: await hashPassword(input.password || randomBytes(24).toString("hex")),
       pin: input.pin,
       phone: input.phone,
       role: input.role,
