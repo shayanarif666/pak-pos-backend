@@ -20,9 +20,15 @@ function requireQty(value, label) {
 
 const refOf = (row, keys) => keys.map((key) => row?.[key]).find((value) => value != null && value !== "")
 
+/** A product with variants: variant_id = the variant's number inside it (1, 2, 3…) or its UUID. */
+function optionalVariant(row, label) {
+  const value = refOf(row, ["variant_id", "variantId"])
+  return value == null ? null : requireRef({ v: value }, "v", `${label}.variant_id`)
+}
+
 /**
  * One transfer: from one location to one or more destinations, each with its own products and qty:
- *   { from_location_id, note?, destinations: [{ to_location_id, products: [{ product_id, qty }] }] }
+ *   { from_location_id, note?, destinations: [{ to_location_id, products: [{ product_id, variant_id?, qty }] }] }
  * The older single form { from_location_id, to_location_id, product_id, qty } is one destination
  * with one product. The same product twice for one destination is one line (qty added up).
  */
@@ -41,6 +47,7 @@ export function parseCreateTransfer(body) {
       }
       const products = dest.products.map((row, p) => ({
         product_id: requireRef({ id: refOf(row, ["product_id", "productId"]) }, "id", `${label}.products[${p}].product_id`),
+        variant_id: optionalVariant(row, `${label}.products[${p}]`),
         qty: requireQty(row?.qty, `${label}.products[${p}].qty`),
       }))
       return { to_location_id, products }
@@ -52,6 +59,7 @@ export function parseCreateTransfer(body) {
         products: [
           {
             product_id: requireRef({ id: refOf(body, ["product_id", "productId"]) }, "id", "product_id"),
+            variant_id: optionalVariant(body, "body"),
             qty: requireQty(body.qty, "qty"),
           },
         ],
@@ -67,7 +75,11 @@ export function parseCreateTransfer(body) {
     }
     const products = byDestination.get(dest.to_location_id) || new Map()
     for (const row of dest.products) {
-      products.set(row.product_id, (products.get(row.product_id) || 0) + row.qty)
+      // One line per product / variant.
+      const key = `${row.product_id}|${row.variant_id || ""}`
+      const line = products.get(key) || { product_id: row.product_id, variant_id: row.variant_id, qty: 0 }
+      line.qty += row.qty
+      products.set(key, line)
     }
     byDestination.set(dest.to_location_id, products)
   }
@@ -78,7 +90,7 @@ export function parseCreateTransfer(body) {
     from_location_id,
     destinations: [...byDestination].map(([to_location_id, products]) => ({
       to_location_id,
-      products: [...products].map(([product_id, qty]) => ({ product_id, qty })),
+      products: [...products.values()],
     })),
     note: body.note === undefined || body.note === null ? null : String(body.note).trim(),
   }
@@ -97,7 +109,11 @@ export function parseReceive(fields = {}) {
         if (Number.isNaN(received) || received < 0) {
           throw new AppError(`products[${p}].received_qty must be a number >= 0`, 400)
         }
-        return { product_id: requireRef({ id: refOf(row, ["product_id", "productId"]) }, "id", `products[${p}].product_id`), received_qty: received }
+        return {
+          product_id: requireRef({ id: refOf(row, ["product_id", "productId"]) }, "id", `products[${p}].product_id`),
+          variant_id: optionalVariant(row, `products[${p}]`),
+          received_qty: received,
+        }
       })
     : null
   return {

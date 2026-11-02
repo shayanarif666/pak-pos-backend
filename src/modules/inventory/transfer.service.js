@@ -101,8 +101,23 @@ export async function getTransferView(storeId, id) {
   return publicTransfer(await getTransfer(storeId, id))
 }
 
-const productOf = (storeId, ref) =>
-  /^\d+$/.test(String(ref)) ? getProductByNumber(storeId, Number(ref)) : getProduct(storeId, ref)
+/**
+ * The product a line moves: product_id (number or UUID), and for a product with variants the
+ * variant_id (its number inside the product, or UUID) — the variant is what is stocked.
+ */
+async function productOf(storeId, ref, variantRef = null) {
+  const product = /^\d+$/.test(String(ref)) ? await getProductByNumber(storeId, Number(ref)) : await getProduct(storeId, ref)
+  if (!variantRef) {
+    if (product.has_variants) throw new AppError(`${product.title} has variants: send variant_id`, 400)
+    return product
+  }
+  if (!product.has_variants) throw new AppError(`${product.title} has no variants: leave variant_id out`, 400)
+  const variant = (product.variants || []).find(
+    (row) => String(row.variant_number) === String(variantRef) || row.id === variantRef
+  )
+  if (!variant) throw new NotFoundError(`Variant ${variantRef} of ${product.title} not found`)
+  return { ...variant.toJSON(), title: variant.title }
+}
 
 async function available(locationId, productId, transaction) {
   const stock = await ProductStock.findOne({ where: { location_id: locationId, product_id: productId }, transaction })
@@ -122,7 +137,7 @@ export async function createTransfer(storeId, fields, actor) {
     const to = await loadLocation(storeId, dest.to_location_id)
     if (to.id === from.id) throw new ConflictError("A destination cannot be the location the stock leaves from")
     for (const row of dest.products) {
-      const product = await productOf(storeId, row.product_id)
+      const product = await productOf(storeId, row.product_id, row.variant_id)
       const existing = lines.find((line) => line.to_location_id === to.id && line.product_id === product.id)
       if (existing) existing.qty += row.qty
       else lines.push({ to_location_id: to.id, product_id: product.id, title: product.title, qty: row.qty })
@@ -181,7 +196,7 @@ async function pickLines(storeId, row, { to_location_id, products }, actor) {
   if (products?.length) {
     const wanted = []
     for (const entry of products) {
-      const product = await productOf(storeId, entry.product_id)
+      const product = await productOf(storeId, entry.product_id, entry.variant_id)
       const line = lines.find((item) => item.product_id === product.id)
       if (!line) throw new NotFoundError(`${product.title} is not on the way${toId ? " to this location" : ""}`)
       wanted.push({ line, entry })
