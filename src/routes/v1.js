@@ -23,6 +23,7 @@ import supplierRoutes from "../modules/inventory/supplier.routes.js"
 import stockMovementRoutes from "../modules/inventory/stock.routes.js"
 import stockTransferRoutes from "../modules/inventory/transfer.routes.js"
 import offerRoutes from "../modules/offers/offer.routes.js"
+import taxRoutes from "../modules/taxes/tax.routes.js"
 import couponRoutes from "../modules/coupons/coupon.routes.js"
 import registerSessionRoutes from "../modules/pos/registerSession.routes.js"
 import staffSessionRoutes from "../modules/pos/staffSession.routes.js"
@@ -65,6 +66,8 @@ router.use("/suppliers", supplierRoutes)
 router.use("/stock-movements", stockMovementRoutes)
 router.use("/stock-transfers", stockTransferRoutes)
 router.use("/offers", offerRoutes)
+// Store taxes: one tax for every product or the selected ones.
+router.use("/taxes", taxRoutes)
 router.use("/coupons", couponRoutes)
 router.use("/register-sessions", registerSessionRoutes)
 router.use("/batches", registerSessionRoutes)

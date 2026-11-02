@@ -68,7 +68,8 @@ function parseItem(row) {
 // ---- POS-priced order: the till sends every figure; the server saves them as they are ----
 
 const DISCOUNT_SOURCES = ["none", "product", "category", "product+category", "bulk_tier", "offer", "custom"]
-const TAX_LEVELS = ["product", "category", "sales"]
+// store = a tax from the Taxes page (kept with the product's own taxes on the line).
+const TAX_LEVELS = ["product", "store", "category", "sales"]
 
 function moneyAtLeastZero(row, key, label) {
   if (row[key] === undefined || row[key] === null || row[key] === "") return null
@@ -107,7 +108,7 @@ function parsePricedLine(row, index) {
     const taxLabel = `${label}.taxes[${t}]`
     if (!tax || typeof tax !== "object") throw new AppError(`${taxLabel} is invalid`, 400)
     const level = String(tax.level || "product")
-    if (!TAX_LEVELS.includes(level)) throw new AppError(`${taxLabel}.level must be product, category or sales`, 400)
+    if (!TAX_LEVELS.includes(level)) throw new AppError(`${taxLabel}.level must be product, store, category or sales`, 400)
     const amount = moneyAtLeastZero(tax, "amount", taxLabel)
     if (amount == null) throw new AppError(`${taxLabel}.amount is required`, 400)
     return {

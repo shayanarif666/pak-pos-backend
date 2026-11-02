@@ -29,6 +29,7 @@ import {
 import { ProductLocation } from "./catalogLocation.model.js"
 import { applyStockDelta, loadLocation } from "./productStock.service.js"
 import { freeBarcode } from "../../shared/utils/barcode.util.js"
+import { storeTaxMatcher } from "../taxes/tax.service.js"
 import {
   BRANCH_ROLES,
   locationScopeView,
@@ -512,6 +513,8 @@ async function attachStocks(products, actor, locationId) {
   if (!ids.length) return products.map((p) => publicProduct(p, { stocks: [] }))
   const locations = await storeLocations(actor.store_id)
   const locationById = new Map(locations.map((row) => [row.id, row]))
+  // Store taxes (Taxes page): every product, or the ones they list.
+  const taxesFor = await storeTaxMatcher(actor.store_id)
 
   const where = { store_id: actor.store_id, product_id: { [Op.in]: ids } }
   if (actor.role !== "store_admin") {
@@ -551,10 +554,15 @@ async function attachStocks(products, actor, locationId) {
     )
     const own = sortStocks((byProduct.get(product.id) || []).map((row) => publicStock(row, product)))
     const all = product.has_variants ? [...variantStocks.values()].flat() : own
-    const view = publicProduct(product, { stocks: own, ...statusOf(all), stock_locations })
+    const view = publicProduct(product, {
+      stocks: own,
+      ...statusOf(all),
+      stock_locations,
+      store_taxes: taxesFor(json, json.parent_product_id),
+    })
     view.variants = view.variants.map((variant) => {
       const stocks = variantStocks.get(variant.id) || []
-      return { ...variant, stocks, ...statusOf(stocks) }
+      return { ...variant, stocks, ...statusOf(stocks), store_taxes: taxesFor(variant, product.id) }
     })
     return view
   })

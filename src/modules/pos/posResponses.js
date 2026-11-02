@@ -748,6 +748,8 @@ export async function posProducts(views) {
       sell_loose: Boolean(row.sell_loose),
       is_weight_based: Boolean(row.is_weight_based),
       taxes: row.taxes || [],
+      // Taxes page taxes that apply to this variant: [{ id (tax number), name, type, value }].
+      store_taxes: row.store_taxes || [],
       ...(row.stocks
         ? {
             qty: num(row.total_qty),
@@ -775,6 +777,8 @@ export async function posProducts(views) {
     discount_name: view.discount_name || null,
     has_product_tax: (view.taxes || []).length > 0,
     taxes: view.taxes || [],
+    // Taxes page taxes that apply to this product: [{ id (tax number), name, type, value }].
+    store_taxes: view.store_taxes || [],
     is_pack_product: Boolean(view.is_pack_product),
     pack_size: view.pack_size ?? null,
     pack_cost_price: num(view.pack_cost_price),

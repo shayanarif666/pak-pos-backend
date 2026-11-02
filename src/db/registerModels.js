@@ -34,6 +34,7 @@ import { CartItem } from "../modules/carts/cartItem.model.js"
 import { Address } from "../modules/addresses/address.model.js"
 import { Offer } from "../modules/offers/offer.model.js"
 import { OfferTarget } from "../modules/offers/offerTarget.model.js"
+import { StoreTax, StoreTaxProduct } from "../modules/taxes/storeTax.model.js"
 import { OfferLocation } from "../modules/offers/offerLocation.model.js"
 import { Coupon } from "../modules/coupons/coupon.model.js"
 import { CouponRedemption } from "../modules/coupons/couponRedemption.model.js"
@@ -207,6 +208,11 @@ export function registerModels() {
   OfferLocation.belongsTo(Offer, { foreignKey: "offer_id" })
   OfferLocation.belongsTo(Location, { foreignKey: "location_id" })
   Offer.belongsTo(User, { foreignKey: "created_by", as: "createdBy" })
+  // Store taxes: a "selected" tax lists its products.
+  StoreTax.hasMany(StoreTaxProduct, { foreignKey: "tax_id", as: "taxProducts" })
+  StoreTaxProduct.belongsTo(StoreTax, { foreignKey: "tax_id" })
+  StoreTaxProduct.belongsTo(Product, { foreignKey: "product_id" })
+
   Offer.hasMany(OfferTarget, { foreignKey: "offer_id" })
   OfferTarget.belongsTo(Offer, { foreignKey: "offer_id" })
   OfferTarget.belongsTo(Product, { foreignKey: "product_id", as: "product" })

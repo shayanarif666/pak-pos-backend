@@ -227,7 +227,9 @@ function posPricedLine(item, product, offersById) {
   const discount_amount = money(discount?.amount || 0)
   const source = discount?.source || (discount_amount > 0 ? "custom" : product ? "none" : "custom")
   const offer = discount?.offer_id ? offersById.get(discount.offer_id) : null
-  const ofLevel = (level) => taxes.filter((tax) => tax.level === level)
+  // A store tax (Taxes page) is saved with the product's own taxes.
+  const ofLevel = (level) =>
+    taxes.filter((tax) => tax.level === level || (level === "product" && tax.level === "store"))
   const categoryTax = ofLevel("category")[0] || null
   const salePrice = money(item.unit_price)
   const unit_price = packSize ? money(salePrice / packSize) : salePrice
