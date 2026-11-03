@@ -31,7 +31,7 @@ export async function up(queryInterface) {
       store_id CHAR(36) NOT NULL,
       store_id_int INT NOT NULL,
       surcharge_number INT NOT NULL,
-      method ENUM('cash','card','jazzcash','easypaisa','cod') NOT NULL,
+      method ENUM('cash','card','jazzcash','easypaisa','cod','bank_transfer','raast','sadapay','nayapay','upaisa','digital_wallet','cheque','online','other') NOT NULL,
       type ENUM('percentage','fixed') NOT NULL DEFAULT 'percentage',
       charges DECIMAL(12,2) NOT NULL,
       is_active TINYINT(1) NOT NULL DEFAULT 1,

@@ -19,7 +19,7 @@ export function parsePutTaxRates(body) {
     const payment_method = String(row?.payment_method || "").trim()
     if (!TAX_METHODS.includes(payment_method)) {
       throw new AppError(
-        `rates[${index}].payment_method must be cash, card, jazzcash, easypaisa, or cod`,
+        `rates[${index}].payment_method must be one of ${TAX_METHODS.join(", ")}`,
         400
       )
     }

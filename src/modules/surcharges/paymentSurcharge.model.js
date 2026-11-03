@@ -1,10 +1,10 @@
 import { DataTypes } from "sequelize"
 import { sequelize } from "../../db/sequelize.js"
 import { modelOptions, uuidCol, uuidPk } from "../../db/columnTypes.js"
-import { TAX_AMOUNT_TYPE } from "../../db/enums.js"
+import { PAYMENT_METHOD, TAX_AMOUNT_TYPE } from "../../db/enums.js"
 
-/** The methods a surcharge can be set for (a mixed payment uses each part's own). */
-export const SURCHARGE_METHODS = ["cash", "card", "jazzcash", "easypaisa", "cod"]
+/** The methods a surcharge can be set for: every payment method (a mixed payment uses each part's own). */
+export const SURCHARGE_METHODS = PAYMENT_METHOD.filter((method) => method !== "mixed")
 
 /**
  * What paying by a method adds to the bill: a percentage of that payment's share, or a fixed amount

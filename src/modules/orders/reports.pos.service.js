@@ -19,6 +19,7 @@ import { getStoreForManager } from "../stores/store.service.js"
 import { loadLocation } from "../catalog/productStock.service.js"
 import { money } from "../commerce/pricing.service.js"
 import { AppError } from "../../shared/errors/AppError.js"
+import { PAYMENT_METHOD, PAYMENT_METHOD_LABEL } from "../../db/enums.js"
 import {
   addMoney,
   applyDateRange,
@@ -31,15 +32,15 @@ import {
   resolvePeriod,
 } from "./reports.service.js"
 
-const PAYMENT_METHODS = ["cash", "card", "jazzcash", "easypaisa"]
-const METHOD_LABEL = { cash: "Cash", card: "Card", jazzcash: "JazzCash", easypaisa: "EasyPaisa" }
+const PAYMENT_METHODS = PAYMENT_METHOD.filter((method) => method !== "mixed")
+const METHOD_LABEL = PAYMENT_METHOD_LABEL
 
 function emptyTaxes() {
   return {
     sales_tax: 0,
     product_tax: 0,
     category_tax: 0,
-    payment_method_tax: { cash: 0, card: 0, jazzcash: 0, easypaisa: 0, total: 0 },
+    payment_method_tax: { ...Object.fromEntries(PAYMENT_METHODS.map((method) => [method, 0])), total: 0 },
     total: 0,
   }
 }
@@ -555,7 +556,8 @@ function taxBreakdown(completed) {
     { id: "sales_tax", tax_rule: "Sales Tax", tax_collected: taxes.sales_tax },
     { id: "product_tax", tax_rule: "Product Level Tax", tax_collected: taxes.product_tax },
     { id: "category_tax", tax_rule: "Category Level Tax", tax_collected: taxes.category_tax },
-    ...PAYMENT_METHODS.map((method) => ({
+    // The four usual methods always; any other method once something was charged on it.
+    ...PAYMENT_METHODS.filter((method) => ["cash", "card", "jazzcash", "easypaisa"].includes(method) || taxes.payment_method_tax[method] > 0).map((method) => ({
       id: `payment_tax_${method}`,
       tax_rule: `Payment Method Tax (${METHOD_LABEL[method]})`,
       tax_collected: taxes.payment_method_tax[method],

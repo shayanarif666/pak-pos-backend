@@ -32,6 +32,7 @@ import * as variantNumberStockScope from "./migrations/20261107120000-variant-nu
 import * as offerSaleUnits from "./migrations/20261108120000-offer-sale-units.js"
 import * as storeTaxes from "./migrations/20261109120000-store-taxes.js"
 import * as paymentSurcharges from "./migrations/20261110120000-payment-surcharges.js"
+import * as morePaymentMethods from "./migrations/20261111120000-more-payment-methods.js"
 
 // Migrations the running code cannot work without (e.g. users.token_version is read on every
 // authenticated request). Each one checks before it changes anything, so running it on a
@@ -97,6 +98,8 @@ const REQUIRED = [
   storeTaxes,
   // payment_method_surcharges (replace the payment-method GST rates).
   paymentSurcharges,
+  // Every payment method (bank transfer, Raast, the wallets, cheque…) on orders, payments and settings.
+  morePaymentMethods,
 ]
 
 export async function ensureSchema() {

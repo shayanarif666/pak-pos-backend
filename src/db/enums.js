@@ -65,8 +65,36 @@ export const PAYMENT_METHOD = [
   "jazzcash",
   "easypaisa",
   "cod",
+  "bank_transfer",
+  "raast",
+  "sadapay",
+  "nayapay",
+  "upaisa",
+  "digital_wallet",
+  "cheque",
+  "online",
+  "other",
+  // A split payment (each part has its own method).
   "mixed",
 ]
+/** How each payment method is shown (receipts, reports, the dashboard). */
+export const PAYMENT_METHOD_LABEL = {
+  cash: "Cash",
+  card: "Card",
+  jazzcash: "JazzCash",
+  easypaisa: "EasyPaisa",
+  cod: "Cash on delivery",
+  bank_transfer: "Bank transfer",
+  raast: "Raast",
+  sadapay: "SadaPay",
+  nayapay: "NayaPay",
+  upaisa: "UPaisa",
+  digital_wallet: "Other digital wallet",
+  cheque: "Cheque",
+  online: "Online payment",
+  other: "Other",
+  mixed: "Mixed",
+}
 export const PAYMENT_ROW_STATUS = ["initiated", "success", "failed"]
 export const DISCOUNT_TYPE = ["percentage", "fixed"]
 export const TAX_AMOUNT_TYPE = ["percentage", "fixed"]
