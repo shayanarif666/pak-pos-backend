@@ -9,6 +9,9 @@ import { ProductStock } from "../catalog/productStock.model.js"
 import { StockMovement } from "../inventory/stockMovement.model.js"
 import { StockTransfer } from "../inventory/stockTransfer.model.js"
 import { StockTransferItem } from "../inventory/stockTransferItem.model.js"
+import { Offer } from "../offers/offer.model.js"
+import { OfferTarget } from "../offers/offerTarget.model.js"
+import { Coupon } from "../coupons/coupon.model.js"
 import { RegisterSession } from "../pos/registerSession.model.js"
 import { Location } from "../locations/location.model.js"
 import { User } from "../auth/user.model.js"
@@ -1005,13 +1008,157 @@ function discountName(item) {
   return parse(item.product_discount)?.name || parse(item.category_discount)?.name || null
 }
 
+const parseJson = (value) => {
+  if (!value) return null
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value)
+    } catch {
+      return null
+    }
+  }
+  return value
+}
+
+/** Running now, not yet started, ended, or switched off. */
+function windowStatus(isActive, start, end, now = new Date()) {
+  if (!isActive) return "inactive"
+  if (start && new Date(start) > now) return "scheduled"
+  if (end && new Date(end) < now) return "expired"
+  return "running"
+}
+
+const amountText = (type, value) =>
+  type == null || value == null ? null : type === "percentage" ? `${Number(value)}%` : `Rs ${Number(value)}`
+
+/**
+ * Every discount entered in the system — offers, product discounts, category discounts and
+ * coupons, running or not — with what each gave on the sales in the range.
+ */
+async function discountCatalog(actor, completed) {
+  const storeId = actor.store_id
+  const [offers, products, categories, coupons] = await Promise.all([
+    Offer.findAll({ where: { store_id: storeId }, include: [{ model: OfferTarget }], order: [["offer_number", "ASC"]] }),
+    Product.findAll({
+      where: { store_id: storeId, discount_type: { [Op.ne]: null }, discount_value: { [Op.ne]: null } },
+      attributes: ["id", "product_number", "title", "discount_type", "discount_value", "discount_name", "is_active"],
+      order: [["product_number", "ASC"]],
+    }),
+    Category.findAll({
+      where: { store_id: storeId, discount_type: { [Op.ne]: null }, discount_value: { [Op.ne]: null } },
+      attributes: ["id", "category_number", "name", "discount_type", "discount_value", "discount_name", "is_active"],
+      order: [["category_number", "ASC"]],
+    }),
+    Coupon.findAll({ where: { store_id: storeId }, order: [["created_at", "ASC"]] }),
+  ])
+
+  // What each discount gave in the range (orders, lines, amount).
+  const use = new Map()
+  const used = (key, orderId, amount) => {
+    if (!(amount > 0)) return
+    const row = use.get(key) || { orders: new Set(), lines: 0, amount: 0 }
+    row.orders.add(orderId)
+    row.lines += 1
+    addMoney(row, "amount", amount)
+    use.set(key, row)
+  }
+  for (const { order, figures } of completed) {
+    for (const line of figures.lines) {
+      const amount = Number(line.line_discount || 0)
+      if (!(amount > 0)) continue
+      const item = line.item
+      const qty = Number(item.quantity || 0)
+      const share = qty > 0 ? line.units / qty : 0
+      const source = item.discount_source
+      if (source === "offer" || offersOf(item).length) {
+        used(`offer:${item.offer_id || offersOf(item)[0]?.id}`, order.id, amount)
+      } else if (source === "product") {
+        used(`product:${item.product_id}`, order.id, amount)
+      } else if (source === "category") {
+        used(`category:${item.category_id || item.Product?.category_id}`, order.id, amount)
+      } else if (source === "product+category") {
+        const own = money(Number(parseJson(item.product_discount)?.amount || 0) * share)
+        used(`product:${item.product_id}`, order.id, own)
+        used(`category:${item.category_id || item.Product?.category_id}`, order.id, money(amount - own))
+      }
+    }
+    const coupon = Number(order.coupon_discount_amount || 0)
+    if (coupon > 0 && order.coupon_code) used(`coupon:${String(order.coupon_code).toLowerCase()}`, order.id, coupon)
+  }
+  const usage = (key) => {
+    const row = use.get(key)
+    return row ? { used_orders: row.orders.size, used_lines: row.lines, discount_given: money(row.amount) } : { used_orders: 0, used_lines: 0, discount_given: 0 }
+  }
+
+  const rows = [
+    ...offers.map((offer) => {
+      const targets = offer.OfferTargets || []
+      const products = targets.filter((t) => t.product_id).length
+      const cats = targets.filter((t) => t.category_id).length
+      return {
+        kind: "offer",
+        id: offer.offer_number,
+        name: offer.name,
+        type: offer.type,
+        amount: offer.type === "bogo" ? `Buy ${offer.buy_qty} get ${offer.get_qty}` : amountText(offer.discount_type, offer.discount_value) || "Sale prices",
+        applies_to: [products ? `${products} product${products === 1 ? "" : "s"}` : null, cats ? `${cats} categor${cats === 1 ? "y" : "ies"}` : null].filter(Boolean).join(", ") || "—",
+        start_at: offer.start_at,
+        end_at: offer.end_at,
+        status: windowStatus(offer.is_active, offer.start_at, offer.end_at),
+        ...usage(`offer:${offer.id}`),
+        // Older lines name the offer by number only.
+        ...(use.has(`offer:${offer.offer_number}`) && !use.has(`offer:${offer.id}`) ? usage(`offer:${offer.offer_number}`) : {}),
+      }
+    }),
+    ...products.map((product) => ({
+      kind: "product",
+      id: product.product_number,
+      name: product.discount_name || "Product discount",
+      type: "product_discount",
+      amount: amountText(product.discount_type, product.discount_value),
+      applies_to: product.title,
+      start_at: null,
+      end_at: null,
+      status: product.is_active ? "running" : "inactive",
+      ...usage(`product:${product.id}`),
+    })),
+    ...categories.map((category) => ({
+      kind: "category",
+      id: category.category_number,
+      name: category.discount_name || "Category discount",
+      type: "category_discount",
+      amount: amountText(category.discount_type, category.discount_value),
+      applies_to: category.name,
+      start_at: null,
+      end_at: null,
+      status: category.is_active ? "running" : "inactive",
+      ...usage(`category:${category.id}`),
+    })),
+    ...coupons.map((coupon) => ({
+      kind: "coupon",
+      id: coupon.code,
+      name: coupon.code,
+      type: "coupon",
+      amount: amountText(coupon.type, coupon.value),
+      applies_to: "Whole order",
+      start_at: coupon.start_date,
+      end_at: coupon.end_date,
+      status: windowStatus(coupon.is_active, coupon.start_date, coupon.end_date),
+      ...usage(`coupon:${String(coupon.code).toLowerCase()}`),
+    })),
+  ]
+  return rows
+}
+
 /**
  * Every discount given on the sales in the range, as kept on each sale (the discounts that were
  * running then, even if changed or deleted since): line discounts (product, category, offer,
- * bulk tier, custom) and order discounts / coupons, with totals per source.
+ * bulk tier, custom) and order discounts / coupons, with totals per source; and each discounted
+ * sale with its calculation (gross − line discounts − order discount − coupon = net, + tax = total).
  */
-function discountReport(completed) {
-  const rows = []
+async function discountReport(actor, completed) {
+  const lines = []
+  const sales = []
   const bySource = new Map()
   const add = (source, amount, orderId) => {
     const row = bySource.get(source) || { source, label: DISCOUNT_SOURCE_LABEL[source] || source, lines: 0, orders: new Set(), amount: 0 }
@@ -1027,42 +1174,64 @@ function discountReport(completed) {
       location: order.Location?.name || "—",
       cashier: order.cashier?.name || "—",
     }
+    const saleLines = []
     for (const line of figures.lines) {
       const amount = Number(line.line_discount || 0)
-      if (!(amount > 0)) continue
-      const source = line.item.discount_source && line.item.discount_source in DISCOUNT_SOURCE_LABEL ? line.item.discount_source : "unknown"
-      add(source, amount, order.id)
-      rows.push({
-        ...base,
-        id: `${order.id}-${line.item.id}`,
+      const source = line.item.discount_source && line.item.discount_source in DISCOUNT_SOURCE_LABEL ? line.item.discount_source : amount > 0 ? "unknown" : null
+      const view = {
         product: line.item.title || "—",
         qty: line.units,
-        source,
-        source_label: DISCOUNT_SOURCE_LABEL[source],
-        name: discountName(line.item),
+        unit_price: Number(line.item.unit_price || 0),
         gross: line.gross,
-        amount: money(amount),
-      })
+        discount: money(amount),
+        source,
+        source_label: source ? DISCOUNT_SOURCE_LABEL[source] : null,
+        name: amount > 0 ? discountName(line.item) : null,
+        net: money(line.gross - amount),
+      }
+      saleLines.push(view)
+      if (!(amount > 0)) continue
+      add(source, amount, order.id)
+      lines.push({ ...base, id: `${order.id}-${line.item.id}`, product: view.product, qty: view.qty, source, source_label: view.source_label, name: view.name, gross: view.gross, amount: view.discount })
     }
-    const orderDiscount = Number(order.discount_amount || 0)
-    if (orderDiscount > 0 && !figures.fully_refunded) {
+    const orderDiscount = figures.fully_refunded ? 0 : Number(order.discount_amount || 0)
+    const coupon = figures.fully_refunded ? 0 : Number(order.coupon_discount_amount || 0)
+    if (orderDiscount > 0) {
       add("order", orderDiscount, order.id)
-      rows.push({ ...base, id: `${order.id}-order`, product: "Whole order", qty: null, source: "order", source_label: DISCOUNT_SOURCE_LABEL.order, name: order.order_discount_type ? `${order.order_discount_type}` : null, gross: money(order.subtotal || 0), amount: money(orderDiscount) })
+      lines.push({ ...base, id: `${order.id}-order`, product: "Whole order", qty: null, source: "order", source_label: DISCOUNT_SOURCE_LABEL.order, name: order.order_discount_type || null, gross: money(order.subtotal || 0), amount: money(orderDiscount) })
     }
-    const coupon = Number(order.coupon_discount_amount || 0)
-    if (coupon > 0 && !figures.fully_refunded) {
+    if (coupon > 0) {
       add("coupon", coupon, order.id)
-      rows.push({ ...base, id: `${order.id}-coupon`, product: "Whole order", qty: null, source: "coupon", source_label: DISCOUNT_SOURCE_LABEL.coupon, name: order.coupon_code || null, gross: money(order.subtotal || 0), amount: money(coupon) })
+      lines.push({ ...base, id: `${order.id}-coupon`, product: "Whole order", qty: null, source: "coupon", source_label: DISCOUNT_SOURCE_LABEL.coupon, name: order.coupon_code || null, gross: money(order.subtotal || 0), amount: money(coupon) })
+    }
+    const lineDiscount = money(saleLines.reduce((sum, line) => sum + line.discount, 0))
+    if (lineDiscount > 0 || orderDiscount > 0 || coupon > 0) {
+      sales.push({
+        ...base,
+        id: order.id,
+        gross: figures.gross,
+        line_discount: lineDiscount,
+        order_discount: money(orderDiscount),
+        coupon_discount: money(coupon),
+        coupon_code: coupon > 0 ? order.coupon_code || null : null,
+        discount: money(lineDiscount + orderDiscount + coupon),
+        net: figures.net,
+        tax: figures.taxes.total,
+        total: figures.total,
+        lines: saleLines,
+      })
     }
   }
   const by_source = [...bySource.values()]
     .map(({ orders, ...row }) => ({ ...row, orders: orders.size }))
-    .sort((a, b) => b.amount - a.amount)
+    .sort((x, y) => y.amount - x.amount)
   return {
     total: money(by_source.reduce((sum, row) => sum + row.amount, 0)),
-    orders: new Set(rows.map((row) => row.order)).size,
+    orders: sales.length,
     by_source,
-    rows: rows.sort((a, b) => new Date(b.date) - new Date(a.date)),
+    catalog: await discountCatalog(actor, completed),
+    sales: sales.sort((x, y) => new Date(y.date) - new Date(x.date)),
+    rows: lines.sort((x, y) => new Date(y.date) - new Date(x.date)),
   }
 }
 
@@ -1075,11 +1244,12 @@ async function buildPosReports(actor, query = {}, { withLocations = false } = {}
   const extras = liveOrders(orders)
   const sales_summary = salesSummary(extras.completed, extras, scopedQuery)
   const payments = paymentBreakdown(extras.completed)
-  const [z_reports, inventory, stock_movement, stock_transfers] = await Promise.all([
+  const [z_reports, inventory, stock_movement, stock_transfers, discounts] = await Promise.all([
     zReports(actor, scopedQuery, scope),
     inventoryReport(actor, scopedQuery, scope),
     stockMovementReport(actor, scopedQuery, scope),
     transferReport(actor, scopedQuery, scope),
+    discountReport(actor, extras.completed),
   ])
 
   return {
@@ -1096,7 +1266,7 @@ async function buildPosReports(actor, query = {}, { withLocations = false } = {}
     inventory,
     stock_movement,
     stock_transfers,
-    discounts: discountReport(extras.completed),
+    discounts,
     refund_void: refundVoidRows(orders),
     refunded_orders: refundedOrders(orders),
     cancelled_orders: cancelledOrders(orders),
