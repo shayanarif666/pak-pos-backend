@@ -5,12 +5,11 @@ import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { nextSurchargeNumber } from "../../shared/utils/counter.util.js"
 
-/** As the API returns it: id = surcharge_number (the UUID is uuid). */
+/** As the API returns it: id = surcharge_number (the UUID is not returned; it is still accepted as an id). */
 export function publicSurcharge(row) {
   const json = row.toJSON ? row.toJSON() : row
   return {
     id: json.surcharge_number,
-    uuid: json.id,
     method: json.method,
     type: json.type,
     charges: Number(json.charges),
