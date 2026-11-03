@@ -7,6 +7,8 @@ import { Product } from "../catalog/product.model.js"
 import { Category } from "../catalog/category.model.js"
 import { ProductStock } from "../catalog/productStock.model.js"
 import { StockMovement } from "../inventory/stockMovement.model.js"
+import { StockTransfer } from "../inventory/stockTransfer.model.js"
+import { StockTransferItem } from "../inventory/stockTransferItem.model.js"
 import { RegisterSession } from "../pos/registerSession.model.js"
 import { Location } from "../locations/location.model.js"
 import { User } from "../auth/user.model.js"
@@ -814,6 +816,7 @@ async function inventoryReport(actor, query, scope) {
         attributes: ["id", "title", "sku"],
         include: [{ model: Category, attributes: ["id", "name"] }],
       },
+      { model: Location, attributes: ["id", "name", "location_id_int"] },
     ],
     order: [["qty", "ASC"]],
     limit: 400,
@@ -828,24 +831,29 @@ async function inventoryReport(actor, query, scope) {
   }
   applyMovementChannel(moveWhere, query)
   const moves = await StockMovement.findAll({ where: moveWhere })
+  // In / out per product at each location (a stock row is one product at one location).
+  const flowKey = (productId, locationId) => `${productId}|${locationId}`
   const flow = new Map()
   for (const move of moves) {
-    const cur = flow.get(move.product_id) || { inn: 0, out: 0 }
+    const key = flowKey(move.product_id, move.location_id)
+    const cur = flow.get(key) || { inn: 0, out: 0 }
     const next = movementBuckets(move.movement_type, move.qty)
     cur.inn = money(cur.inn + next.inn)
     cur.out = money(cur.out + next.out)
-    flow.set(move.product_id, cur)
+    flow.set(key, cur)
   }
 
   return {
     rows: stocks.map((row) => {
       const json = row.toJSON()
-      const delta = flow.get(json.product_id) || { inn: 0, out: 0 }
+      const delta = flow.get(flowKey(json.product_id, json.location_id)) || { inn: 0, out: 0 }
       return {
         id: json.id,
         product: json.Product?.title || "—",
         sku: json.Product?.sku || "—",
         category: json.Product?.Category?.name || "—",
+        location: json.Location?.name || "—",
+        location_id: json.Location?.location_id_int ?? null,
         stock_in: delta.inn,
         stock_out: delta.out,
         current_stock: Number(json.qty || 0),
@@ -876,6 +884,7 @@ async function stockMovementReport(actor, query, scope) {
     include: [
       { model: Product, attributes: ["id", "title", "sku"] },
       { model: User, as: "staff", attributes: ["id", "name"] },
+      { model: Location, attributes: ["id", "name", "location_id_int"] },
     ],
     order: [["created_at", "DESC"]],
     limit: 300,
@@ -887,6 +896,8 @@ async function stockMovementReport(actor, query, scope) {
         id: json.id,
         date: json.created_at,
         product: json.Product?.title || "—",
+        location: json.Location?.name || "—",
+        location_id: json.Location?.location_id_int ?? null,
         type: String(json.movement_type || "").toUpperCase(),
         qty: Number(json.qty || 0),
         reason: prettyReason(json.reason),
@@ -894,6 +905,164 @@ async function stockMovementReport(actor, query, scope) {
         cashier: json.staff?.name || "System",
       }
     }),
+  }
+}
+
+/**
+ * Stock transfers in the range (sent from or arriving at the location shown): one row per product
+ * per destination, with the summary of what left, what arrived and what is still on the way.
+ */
+async function transferReport(actor, query, scope) {
+  const where = { store_id: actor.store_id }
+  applyDateRange(where, query)
+  if (where.placed_at) {
+    where.created_at = where.placed_at
+    delete where.placed_at
+  }
+  const transfers = await StockTransfer.findAll({
+    where,
+    include: [
+      { model: Location, as: "fromLocation", attributes: ["id", "name", "location_id_int"] },
+      { model: User, as: "createdBy", attributes: ["id", "name"] },
+      {
+        model: StockTransferItem,
+        as: "items",
+        include: [
+          { model: Location, as: "toLocation", attributes: ["id", "name", "location_id_int"] },
+          { model: Product, attributes: ["id", "title", "sku"] },
+        ],
+      },
+    ],
+    order: [["created_at", "DESC"]],
+    limit: 300,
+  })
+  const rows = []
+  const summary = { transfers: 0, lines: 0, units_sent: 0, units_received: 0, units_on_the_way: 0, units_cancelled: 0 }
+  for (const transfer of transfers) {
+    const json = transfer.toJSON()
+    // A location's report: what it sent and what came to it.
+    const items = (json.items || []).filter(
+      (item) => !scope.location_id || json.from_location_id === scope.location_id || item.to_location_id === scope.location_id
+    )
+    if (!items.length) continue
+    summary.transfers += 1
+    for (const item of items) {
+      const qty = Number(item.qty || 0)
+      const received = Number(item.received_qty || 0)
+      summary.lines += 1
+      summary.units_sent = money(summary.units_sent + qty)
+      summary.units_received = money(summary.units_received + received)
+      if (item.status === "on_the_way" || item.status === "pending") summary.units_on_the_way = money(summary.units_on_the_way + qty)
+      if (item.status === "cancelled") summary.units_cancelled = money(summary.units_cancelled + qty)
+      rows.push({
+        id: item.id,
+        transfer: json.transfer_number,
+        date: json.created_at,
+        from: json.fromLocation?.name || "—",
+        to: item.toLocation?.name || "—",
+        direction: !scope.location_id ? null : json.from_location_id === scope.location_id ? "out" : "in",
+        product: item.Product?.title || "—",
+        sku: item.Product?.sku || "—",
+        qty,
+        received_qty: item.received_qty == null ? null : received,
+        status: item.status,
+        received_at: item.received_at || null,
+        staff: json.createdBy?.name || "—",
+        note: json.note || null,
+      })
+    }
+  }
+  return { summary, rows }
+}
+
+const DISCOUNT_SOURCE_LABEL = {
+  product: "Product discount",
+  category: "Category discount",
+  "product+category": "Product + category discount",
+  bulk_tier: "Bulk tier",
+  offer: "Offer",
+  custom: "Custom (till)",
+  order: "Order discount",
+  coupon: "Coupon",
+  unknown: "Other",
+}
+
+/** A line's discount name: its offer, else the product / category discount it was sold with. */
+function discountName(item) {
+  const offer = offersOf(item)[0]
+  if (offer?.name) return offer.name
+  const parse = (value) => {
+    if (!value) return null
+    if (typeof value === "string") {
+      try {
+        return JSON.parse(value)
+      } catch {
+        return null
+      }
+    }
+    return value
+  }
+  return parse(item.product_discount)?.name || parse(item.category_discount)?.name || null
+}
+
+/**
+ * Every discount given on the sales in the range, as kept on each sale (the discounts that were
+ * running then, even if changed or deleted since): line discounts (product, category, offer,
+ * bulk tier, custom) and order discounts / coupons, with totals per source.
+ */
+function discountReport(completed) {
+  const rows = []
+  const bySource = new Map()
+  const add = (source, amount, orderId) => {
+    const row = bySource.get(source) || { source, label: DISCOUNT_SOURCE_LABEL[source] || source, lines: 0, orders: new Set(), amount: 0 }
+    row.lines += 1
+    row.orders.add(orderId)
+    addMoney(row, "amount", amount)
+    bySource.set(source, row)
+  }
+  for (const { order, figures } of completed) {
+    const base = {
+      order: order.order_number,
+      date: order.placed_at,
+      location: order.Location?.name || "—",
+      cashier: order.cashier?.name || "—",
+    }
+    for (const line of figures.lines) {
+      const amount = Number(line.line_discount || 0)
+      if (!(amount > 0)) continue
+      const source = line.item.discount_source && line.item.discount_source in DISCOUNT_SOURCE_LABEL ? line.item.discount_source : "unknown"
+      add(source, amount, order.id)
+      rows.push({
+        ...base,
+        id: `${order.id}-${line.item.id}`,
+        product: line.item.title || "—",
+        qty: line.units,
+        source,
+        source_label: DISCOUNT_SOURCE_LABEL[source],
+        name: discountName(line.item),
+        gross: line.gross,
+        amount: money(amount),
+      })
+    }
+    const orderDiscount = Number(order.discount_amount || 0)
+    if (orderDiscount > 0 && !figures.fully_refunded) {
+      add("order", orderDiscount, order.id)
+      rows.push({ ...base, id: `${order.id}-order`, product: "Whole order", qty: null, source: "order", source_label: DISCOUNT_SOURCE_LABEL.order, name: order.order_discount_type ? `${order.order_discount_type}` : null, gross: money(order.subtotal || 0), amount: money(orderDiscount) })
+    }
+    const coupon = Number(order.coupon_discount_amount || 0)
+    if (coupon > 0 && !figures.fully_refunded) {
+      add("coupon", coupon, order.id)
+      rows.push({ ...base, id: `${order.id}-coupon`, product: "Whole order", qty: null, source: "coupon", source_label: DISCOUNT_SOURCE_LABEL.coupon, name: order.coupon_code || null, gross: money(order.subtotal || 0), amount: money(coupon) })
+    }
+  }
+  const by_source = [...bySource.values()]
+    .map(({ orders, ...row }) => ({ ...row, orders: orders.size }))
+    .sort((a, b) => b.amount - a.amount)
+  return {
+    total: money(by_source.reduce((sum, row) => sum + row.amount, 0)),
+    orders: new Set(rows.map((row) => row.order)).size,
+    by_source,
+    rows: rows.sort((a, b) => new Date(b.date) - new Date(a.date)),
   }
 }
 
@@ -906,10 +1075,11 @@ async function buildPosReports(actor, query = {}, { withLocations = false } = {}
   const extras = liveOrders(orders)
   const sales_summary = salesSummary(extras.completed, extras, scopedQuery)
   const payments = paymentBreakdown(extras.completed)
-  const [z_reports, inventory, stock_movement] = await Promise.all([
+  const [z_reports, inventory, stock_movement, stock_transfers] = await Promise.all([
     zReports(actor, scopedQuery, scope),
     inventoryReport(actor, scopedQuery, scope),
     stockMovementReport(actor, scopedQuery, scope),
+    transferReport(actor, scopedQuery, scope),
   ])
 
   return {
@@ -925,6 +1095,8 @@ async function buildPosReports(actor, query = {}, { withLocations = false } = {}
     z_reports,
     inventory,
     stock_movement,
+    stock_transfers,
+    discounts: discountReport(extras.completed),
     refund_void: refundVoidRows(orders),
     refunded_orders: refundedOrders(orders),
     cancelled_orders: cancelledOrders(orders),
