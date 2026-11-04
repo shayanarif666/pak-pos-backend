@@ -30,6 +30,8 @@ import { AppError } from "../../shared/errors/AppError.js"
 const RESET_TTL_MS = 60 * 60 * 1000
 const VERIFY_TTL_MS = 7 * 24 * 60 * 60 * 1000
 const STAFF_ROLES = new Set(["store_admin", "manager", "cashier"])
+/** What a deactivated staff account gets on sign-in, PIN check and token use. */
+const ACCOUNT_SUSPENDED = "Account Suspended"
 
 // PIN is only echoed on staff-management screens, never on login / me.
 export function publicUser(user, { includePin = false } = {}) {
@@ -205,17 +207,23 @@ async function buildPosLogin(pos, user) {
 export async function verifyPin(actor, pin) {
   const value = String(pin ?? "").trim()
   if (!value) throw new AppError("pin is required", 400)
-  const matches = await User.findAll({
+  const rows = await User.findAll({
     where: {
       store_id: actor.store_id,
       pin: value,
-      is_active: true,
       role: { [Op.in]: [...STAFF_ROLES] },
+      deleted_at: null,
     },
   })
-  const here = matches.filter((row) => row.location_id && row.location_id === actor.location_id)
-  const staff = here[0] || matches.find((row) => row.role === "store_admin")
-  if (!staff) throw new UnauthorizedError("Invalid PIN")
+  const pick = (list) =>
+    list.find((row) => row.location_id && row.location_id === actor.location_id) ||
+    list.find((row) => row.role === "store_admin")
+  const staff = pick(rows.filter((row) => row.is_active))
+  if (!staff) {
+    // The PIN belongs to a deactivated staff member here: tell the till the account is suspended.
+    if (pick(rows.filter((row) => !row.is_active))) throw new AppError(ACCOUNT_SUSPENDED, 403)
+    throw new UnauthorizedError("Invalid PIN")
+  }
   const store = await Store.findByPk(actor.store_id, { attributes: ["id", "status"] })
   return publicPosStaff(staff, store)
 }
@@ -431,12 +439,17 @@ function maybeRevealToken(token) {
 
 // Email is unique per store, so one email can belong to several accounts. The password picks
 // the account; if it still matches more than one, the owner has to fix the duplicate.
+// A deactivated (suspended) staff account with the right password gets 403 "Account Suspended".
 async function findUserByEmailPassword(email, password) {
-  const candidates = await User.findAll({ where: { email, is_active: true } })
+  const candidates = await User.findAll({ where: { email, deleted_at: null } })
   const matches = []
+  let suspended = false
   for (const user of candidates) {
-    if (await comparePassword(password, user.password)) matches.push(user)
+    if (!(await comparePassword(password, user.password))) continue
+    if (user.is_active) matches.push(user)
+    else suspended = true
   }
+  if (!matches.length && suspended) throw new AppError(ACCOUNT_SUSPENDED, 403)
   if (matches.length > 1) {
     throw new ConflictError(
       "This email is linked to more than one store with the same password. Change the password on one of them"
@@ -596,9 +609,8 @@ export async function refreshSession(refreshToken) {
   }
 
   const user = await User.findByPk(payload.sub)
-  if (!user || !user.is_active) {
-    throw new UnauthorizedError("Invalid refresh token")
-  }
+  if (!user || user.deleted_at) throw new UnauthorizedError("Invalid refresh token")
+  if (!user.is_active) throw new UnauthorizedError(ACCOUNT_SUSPENDED)
 
   if ((payload.tv ?? 0) !== (user.token_version ?? 0)) {
     throw new UnauthorizedError("Session has ended")

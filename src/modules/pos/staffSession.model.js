@@ -26,10 +26,14 @@ export const StaffSession = sequelize.define(
     },
     clock_in_at: { type: DataTypes.DATE, allowNull: false },
     clock_out_at: { type: DataTypes.DATE, allowNull: true },
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
   },
   {
     ...modelOptions,
     tableName: "staff_sessions",
+    // Soft delete: destroy() sets deleted_at and every query leaves the row out.
+    paranoid: true,
+    deletedAt: "deleted_at",
     indexes: [
       { unique: true, fields: ["store_id", "session_number"] },
       { fields: ["store_id", "user_id", "status"] },

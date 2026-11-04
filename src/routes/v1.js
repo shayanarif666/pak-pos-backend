@@ -39,6 +39,7 @@ import cartRoutes from "../modules/carts/cart.routes.js"
 import addressRoutes from "../modules/addresses/address.routes.js"
 import reviewRoutes from "../modules/reviews/review.routes.js"
 import reportRoutes from "../modules/orders/reports.routes.js"
+import reportingRoutes from "../modules/reporting/reporting.routes.js"
 import auditRoutes from "../modules/audit/audit.routes.js"
 import uploadRoutes from "../modules/uploads/upload.routes.js"
 
@@ -85,6 +86,8 @@ router.use("/cart", cartRoutes)
 router.use("/addresses", addressRoutes)
 router.use("/reviews", reviewRoutes)
 router.use("/reports", reportRoutes)
+// Dashboard reporting by plan level (not in the endpoint docs yet).
+router.use("/reporting", reportingRoutes)
 router.use("/audit-logs", auditRoutes)
 router.use("/uploads", uploadRoutes)
 

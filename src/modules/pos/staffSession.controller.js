@@ -64,3 +64,13 @@ export const patchBulk = asyncHandler(async (req, res) => {
   })
   return bulkUpdateResponse(res, data, "Staff Sessions Updated", data.created)
 })
+
+export const patchOne = asyncHandler(async (req, res) => {
+  const data = await staffSessionService.updateStaffSessionByRef(actorFromReq(req), req.params.id, req.body || {})
+  return apiResponse(res, 200, "Staff Session Updated", data)
+})
+
+export const remove = asyncHandler(async (req, res) => {
+  const data = await staffSessionService.deleteStaffSession(actorFromReq(req), req.params.id)
+  return apiResponse(res, 200, "Staff Session Deleted", data)
+})

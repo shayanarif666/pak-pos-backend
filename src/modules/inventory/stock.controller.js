@@ -23,7 +23,9 @@ async function prepare(req, base, { staff_ref, supplier_ref, ...fields }, fallba
     if (!supplier) throw new NotFoundError("Supplier not found")
     supplier_id = supplier.id
   }
-  return { actor: actingAs(base, staff), fields: { ...fields, supplier_id } }
+  // The movement is written in the staff member's name, but which locations may be used follows
+  // the signed-in user: a store admin picking a manager / cashier still moves stock anywhere.
+  return { actor: { ...actingAs(base, staff), role: base.role }, fields: { ...fields, supplier_id } }
 }
 
 async function movementSummary(result) {

@@ -456,7 +456,7 @@ export async function currentBatch(req) {
 export async function staff(req) {
   const scope = await scopeOf(req)
   const pageInfo = pageOf(req.query)
-  const where = { store_id: scope.store_id, role: { [Op.in]: ["manager", "cashier"] }, ...atLocation(scope), ...dateRange(req.query, "created_at") }
+  const where = { store_id: scope.store_id, role: { [Op.in]: ["manager", "cashier"] }, deleted_at: null, ...atLocation(scope), ...dateRange(req.query, "created_at") }
   const role = queryRef(req.query, "role")
   if (role) where.role = role
   const { rows, count } = await User.findAndCountAll({

@@ -2,6 +2,7 @@ import { AppError } from "../../shared/errors/AppError.js"
 import { STOCK_MOVEMENT_REASON } from "../../db/enums.js"
 import { parseCatalogVisibility } from "../../db/channelVisibility.js"
 import { staffRefFrom } from "../../shared/utils/staff.util.js"
+import { parseStockUnit } from "../../shared/utils/stockUnit.util.js"
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -37,7 +38,7 @@ function signedQty(movement_type, value, label) {
   return qty
 }
 
-/** stock: [{ location_id, qty, expiry_date? }] → one unit per location. */
+/** stock: [{ location_id, qty, stock_unit?, expiry_date? }] → one unit per location (stock_unit unit | pack). */
 function stockUnits(list, movement_type, label, variant = null) {
   if (!Array.isArray(list) || !list.length) throw new AppError(`${label} must be a non-empty array of { location_id, qty }`, 400)
   return list.map((entry, index) => {
@@ -51,6 +52,7 @@ function stockUnits(list, movement_type, label, variant = null) {
       variant,
       location: location == null || location === "" ? null : String(location).trim(),
       qty: signedQty(movement_type, entry.qty, `${at}.qty`),
+      stock_unit: parseStockUnit(entry.stock_unit, `${at}.stock_unit`),
       expiry_date: parseExpiry(entry.expiry_date, `${at}.expiry_date`),
     }
   })
@@ -109,7 +111,13 @@ export function parseCreateMovement(body) {
   } else if (Array.isArray(body.stock)) {
     units = stockUnits(body.stock, movement_type, "stock")
   } else {
-    units = [{ variant: null, location: null, qty: signedQty(movement_type, body.qty, "qty"), expiry_date: parseExpiry(body.expiry_date, "expiry_date") }]
+    units = [{
+      variant: null,
+      location: null,
+      qty: signedQty(movement_type, body.qty, "qty"),
+      stock_unit: parseStockUnit(body.stock_unit, "stock_unit"),
+      expiry_date: parseExpiry(body.expiry_date, "expiry_date"),
+    }]
   }
 
   return {

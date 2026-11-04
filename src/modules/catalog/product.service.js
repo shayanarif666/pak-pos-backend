@@ -28,6 +28,7 @@ import {
   viewerLocationId,
 } from "./category.service.js"
 import { ProductLocation } from "./catalogLocation.model.js"
+import { toItemQty } from "../../shared/utils/stockUnit.util.js"
 import { applyStockDelta, loadLocation } from "./productStock.service.js"
 import { freeBarcode } from "../../shared/utils/barcode.util.js"
 import { storeTaxMatcher } from "../taxes/tax.service.js"
@@ -166,7 +167,15 @@ async function applyProductStock({ store, target, rows, held, actor, mode, warni
       warnings.push(`${label}: location ${ref ?? "(none)"} does not hold this product's stock, skipped`)
       continue
     }
-    wanted.set(location.id, { location, qty: row.qty, expiry_date: row.expiry_date })
+    // stock_unit pack: qty is whole packs; stock is kept in loose items (packs × pack_size).
+    let qty
+    try {
+      qty = toItemQty(target, Number(row.qty), row.stock_unit)
+    } catch (err) {
+      warnings.push(`${label}: ${err.message}, skipped`)
+      continue
+    }
+    wanted.set(location.id, { location, qty, expiry_date: row.expiry_date })
   }
   const entries =
     mode === "opening" ? held.map((location) => wanted.get(location.id) || { location, qty: 0 }) : [...wanted.values()]

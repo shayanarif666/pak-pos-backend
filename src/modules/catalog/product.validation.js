@@ -1,6 +1,7 @@
 import { AppError } from "../../shared/errors/AppError.js"
 import { parseCatalogVisibility } from "../../db/channelVisibility.js"
 import { parseLocationScope } from "../../shared/utils/locationScope.util.js"
+import { parseStockUnit } from "../../shared/utils/stockUnit.util.js"
 import { DISCOUNT_TYPE, PRODUCT_UNIT, TAX_AMOUNT_TYPE } from "../../db/enums.js"
 
 /**
@@ -207,8 +208,9 @@ function resolveProductImages(body, { allowMissingImages = false } = {}) {
 const REF_RE = /^([1-9][0-9]*|[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/i
 
 /**
- * Stock per location: stock: [{ location_id, qty, expiry_date? }] (location number or UUID), or
- * one number (older clients) for the request's location. Returns [{ location, qty, expiry_date }]
+ * Stock per location: stock: [{ location_id, qty, stock_unit?, expiry_date? }] (location number or
+ * UUID), or one number (older clients) for the request's location. stock_unit: unit (loose items,
+ * default) or pack (qty is whole packs of a pack product). Returns [{ location, qty, stock_unit, expiry_date }]
  * (location null = the request's location), or undefined when nothing was sent. A location sent
  * twice keeps its last row.
  */
@@ -217,7 +219,11 @@ function parseStockRows(row, label) {
   const fallbackLocation = row.location_id ?? row.locationId ?? null
   if (raw === undefined || raw === null || raw === "") return undefined
   if (typeof raw === "number" || (typeof raw === "string" && /^\s*\d+(\.\d+)?\s*$/.test(raw))) {
-    return [{ location: fallbackLocation == null ? null : String(fallbackLocation).trim(), qty: Number(raw) }]
+    return [{
+      location: fallbackLocation == null ? null : String(fallbackLocation).trim(),
+      qty: Number(raw),
+      stock_unit: parseStockUnit(row.stock_unit, `${label}_unit`),
+    }]
   }
   let list = raw
   if (typeof list === "string") {
@@ -244,7 +250,8 @@ function parseStockRows(row, label) {
       if (Number.isNaN(new Date(entry.expiry_date).getTime())) throw new AppError(`${at}.expiry_date is invalid`, 400)
       expiry_date = String(entry.expiry_date).slice(0, 10)
     }
-    byLocation.set(String(location).trim(), { location: String(location).trim(), qty, expiry_date })
+    const stock_unit = parseStockUnit(entry.stock_unit, `${at}.stock_unit`)
+    byLocation.set(String(location).trim(), { location: String(location).trim(), qty, stock_unit, expiry_date })
   })
   return [...byLocation.values()]
 }

@@ -1371,3 +1371,27 @@ export async function locationReport(actor, query = {}) {
   const report = await buildPosReports(actor, { ...rest, location_id: location.id })
   return reportHead(report, location.location_id_int)
 }
+
+/**
+ * The section builders, for GET /api/v1/reporting (the dashboard's plan-based reporting), so both
+ * report the same figures. Nothing here changes the /reports endpoints.
+ */
+export const reportParts = {
+  loadOrders,
+  liveOrders,
+  salesSummary,
+  byProduct,
+  byCategory,
+  byLocation,
+  paymentBreakdown,
+  byCashier,
+  byOffer,
+  taxBreakdown,
+  refundedOrders,
+  cancelledOrders,
+  zReports,
+  inventoryReport,
+  stockMovementReport,
+  transferReport,
+  discountReport,
+}

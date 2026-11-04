@@ -45,10 +45,14 @@ export const RegisterSession = sequelize.define(
     note: { type: DataTypes.TEXT, allowNull: true },
     opened_at: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
     closed_at: { type: DataTypes.DATE, allowNull: true },
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
   },
   {
     ...modelOptions,
     tableName: "register_sessions",
+    // Soft delete: destroy() sets deleted_at and every query leaves the row out.
+    paranoid: true,
+    deletedAt: "deleted_at",
     indexes: [
       { fields: ["store_id", "location_id", "status"] },
       { unique: true, fields: ["store_id", "session_number"] },

@@ -1,7 +1,7 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js"
 import { asyncHandler } from "../../shared/utils/asyncHandler.js"
 import { bulkStatus, posBulkResponse, extractBulkItems, runBulk } from "../../shared/utils/bulk.util.js"
-import { parseCreateStaff, parsePatchStaff } from "./staff.validation.js"
+import { parseCreateStaff, parsePatchStaff, parseStaffPasswordReset } from "./staff.validation.js"
 import { User } from "./user.model.js"
 import { Location } from "../locations/location.model.js"
 import { AppError } from "../../shared/errors/AppError.js"
@@ -18,7 +18,7 @@ import { Refs } from "../pos/posResponses.js"
 
 export const list = asyncHandler(async (req, res) => {
   if (req.auth?.channel === "pos") return posHistory.sendPage(res, await posHistory.staff(req))
-  const data = await staffService.listStaff(req.user)
+  const data = await staffService.listStaff(req.user, req.query)
   return apiResponse(res, 200, "OK", data)
 })
 
@@ -108,7 +108,7 @@ function staffActor(req) {
   }
 }
 
-function bulkStaffUpdate(parse, message) {
+function bulkStaffUpdate(parse, message, validateFields = parsePatchStaff) {
   return asyncHandler(async (req, res) => {
     const actor = staffActor(req)
     const data = await runBulkUpdate(req.body, {
@@ -119,7 +119,7 @@ function bulkStaffUpdate(parse, message) {
       handler: async (uuid, fields) => {
         const location = await optionalUuidOfNumber(Location, "location_id_int", actor.store_id, fields.location_id, "Location")
         const input = location === undefined ? fields : { ...fields, location_id: location }
-        return staffService.patchStaff(actor, uuid, parsePatchStaff(parse(input)))
+        return staffService.patchStaff(actor, uuid, validateFields(parse(input)))
       },
     })
     const rows = req.auth?.channel === "pos" ? await staffWithLocations(data.created) : data.created
@@ -147,5 +147,12 @@ export const patchBulkLocation = bulkStaffUpdate((fields) => {
 /** PATCH /staff/bulk/password — { id, password?, pin? }: a manager resets a forgotten password / PIN. */
 export const patchBulkPassword = bulkStaffUpdate(
   (fields) => pickFields(fields, ["password", "pin"], "password"),
-  "Staff Password Updated"
+  "Staff Password Updated",
+  parseStaffPasswordReset
 )
+
+/** DELETE /staff/:id — soft delete (the row and history stay). */
+export const remove = asyncHandler(async (req, res) => {
+  const data = await staffService.deleteStaff(req.user, req.params.id)
+  return apiResponse(res, 200, "Staff deleted", data)
+})

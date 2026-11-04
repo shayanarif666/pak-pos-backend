@@ -21,6 +21,7 @@ import {
   resolveLocationId,
 } from "../catalog/productStock.service.js"
 import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
+import { toItemQty } from "../../shared/utils/stockUnit.util.js"
 
 const movementInclude = [
   { model: Store, attributes: ["id", "name"] },
@@ -148,7 +149,9 @@ export async function createMovements(actor, fields) {
         throw new ForbiddenError("You can only move stock at your location")
       }
       if (!byRef.has(location.id)) throw new AppError(`${product.title} is not sold at ${location.name}`, 400)
-      created.push(await moveOne(actor, target, location, { ...fields, qty: unit.qty, expiry_date: unit.expiry_date }))
+      // stock_unit pack: unit.qty is whole packs of a pack product, moved as packs × pack_size items.
+      const qty = toItemQty(target, unit.qty, unit.stock_unit)
+      created.push(await moveOne(actor, target, location, { ...fields, qty, expiry_date: unit.expiry_date }))
     } catch (err) {
       failed.push({
         variant_id: unit.variant ? (/^\d+$/.test(unit.variant) ? Number(unit.variant) : unit.variant) : null,

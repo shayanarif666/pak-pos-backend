@@ -33,6 +33,7 @@ import * as offerSaleUnits from "./migrations/20261108120000-offer-sale-units.js
 import * as storeTaxes from "./migrations/20261109120000-store-taxes.js"
 import * as paymentSurcharges from "./migrations/20261110120000-payment-surcharges.js"
 import * as morePaymentMethods from "./migrations/20261111120000-more-payment-methods.js"
+import * as softDelete from "./migrations/20261114120000-soft-delete-staff-sessions-batches.js"
 
 // Migrations the running code cannot work without (e.g. users.token_version is read on every
 // authenticated request). Each one checks before it changes anything, so running it on a
@@ -100,6 +101,8 @@ const REQUIRED = [
   paymentSurcharges,
   // Every payment method (bank transfer, Raast, the wallets, cheque…) on orders, payments and settings.
   morePaymentMethods,
+  // users / staff_sessions / register_sessions.deleted_at (soft delete; the models read it).
+  softDelete,
 ]
 
 export async function ensureSchema() {

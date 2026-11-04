@@ -18,6 +18,7 @@ import {
   patchBulkLocation,
   patchBulkPassword,
   patchBulkStatus,
+  remove,
   sales,
 } from "./staff.controller.js"
 
@@ -42,5 +43,6 @@ router.patch("/bulk/password", patchBulkPassword)
 router.get("/:id/sales", sales)
 router.get("/:id", getOne)
 router.patch("/:id", validate(parsePatchStaff), patch)
+router.delete("/:id", remove)
 
 export default router

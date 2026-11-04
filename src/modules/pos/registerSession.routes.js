@@ -14,6 +14,9 @@ import {
   getOne,
   list,
   openBatch,
+  patchBulk,
+  patchOne,
+  remove,
 } from "./registerSession.controller.js"
 
 const router = Router()
@@ -27,6 +30,11 @@ router.get("/current", ...till, current)
 // /register-sessions.
 router.post("/open", ...till, requestScope(), validateOneOrBulk(parseOpenBatch), openBatch)
 router.post("/close", ...till, requestScope(), validateOneOrBulk(parseCloseBatch), closeBatch)
+// Corrections and soft delete: store admin / manager (batch number or UUID).
+const management = [...tenant, authorize("store_admin", "manager")]
+router.patch("/bulk", ...management, patchBulk)
 router.get("/:id", ...staff, getOne)
+router.patch("/:id", ...management, patchOne)
+router.delete("/:id", ...management, remove)
 
 export default router

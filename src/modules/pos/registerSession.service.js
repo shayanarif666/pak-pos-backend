@@ -399,3 +399,89 @@ export async function applySessionSale(session, { payments, total, reverse = fal
   }
   await session.update(patch, { transaction })
 }
+
+const MONEY_FIELDS = ["opening_cash", "cash_in", "cash_out", "counted_cash"]
+
+/** A batch by session number or UUID, visible to the actor (a manager / cashier: their location). */
+async function visibleBatch(actor, ref) {
+  const row = await getSessionByIdOrNumber(actor.store_id, ref)
+  if (actor.role !== "store_admin" && row.location_id !== actor.location_id) {
+    throw new NotFoundError("Register session not found")
+  }
+  return row
+}
+
+/**
+ * Corrects a batch: opening_cash, cash_in, cash_out, counted_cash (closed batch), opened_at,
+ * closed_at (closed batch), note. Expected cash and the variance are worked out again.
+ */
+export async function updateBatch(actor, ref, input = {}) {
+  const row = await visibleBatch(actor, ref)
+  const patch = {}
+  for (const key of MONEY_FIELDS) {
+    const raw = input[key] ?? (key === "counted_cash" ? input.total_cash : undefined)
+    if (raw === undefined) continue
+    const value = Number(raw)
+    if (raw === null || raw === "" || Number.isNaN(value) || value < 0) throw new AppError(`${key} must be a number >= 0`, 400)
+    if (key === "counted_cash" && row.status !== "closed") throw new AppError("counted_cash is set when the batch is closed", 400)
+    patch[key] = money(value)
+  }
+  for (const key of ["opened_at", "closed_at"]) {
+    if (input[key] === undefined) continue
+    const date = new Date(input[key])
+    if (input[key] === null || Number.isNaN(date.getTime())) throw new AppError(`${key} must be a date-time`, 400)
+    if (key === "closed_at" && row.status !== "closed") throw new AppError("closed_at is set when the batch is closed", 400)
+    patch[key] = date
+  }
+  if (input.note !== undefined) patch.note = input.note === null ? null : String(input.note).trim() || null
+  if (!Object.keys(patch).length) {
+    throw new AppError("Send opening_cash, cash_in, cash_out, counted_cash, opened_at, closed_at or note", 400)
+  }
+  const opened = patch.opened_at ?? row.opened_at
+  const closed = patch.closed_at ?? row.closed_at
+  const datesEdited = patch.opened_at !== undefined || patch.closed_at !== undefined
+  if (datesEdited && closed && opened && new Date(closed) < new Date(opened)) throw new AppError("closed_at must be after opened_at", 400)
+
+  const next = { ...row.toJSON(), ...patch }
+  if (row.status === "closed") {
+    const expected = expectedCash(next)
+    const counted = Number(next.counted_cash ?? 0)
+    // The counted cash is what was left in the drawer at closing.
+    patch.expected_cash = expected
+    if (patch.counted_cash !== undefined) patch.closing_cash = patch.counted_cash
+    patch.cash_variance = money(Number(patch.closing_cash ?? next.closing_cash ?? counted) - expected)
+  }
+  await row.update(patch)
+  await writeAudit({
+    action: "update",
+    entity_type: "register_sessions",
+    entity_id: row.id,
+    store_id: row.store_id,
+    store_id_int: row.store_id_int,
+    location_id: row.location_id,
+    location_id_int: row.location_id_int,
+    user_id: actor.id,
+    channel: "web",
+    note: `batch #${row.session_number} edited`,
+  })
+  return publicSession(row)
+}
+
+/** Soft delete: the batch leaves lists and reports; its row (and the orders on it) stay. */
+export async function deleteBatch(actor, ref) {
+  const row = await visibleBatch(actor, ref)
+  await row.destroy()
+  await writeAudit({
+    action: "delete",
+    entity_type: "register_sessions",
+    entity_id: row.id,
+    store_id: row.store_id,
+    store_id_int: row.store_id_int,
+    location_id: row.location_id,
+    location_id_int: row.location_id_int,
+    user_id: actor.id,
+    channel: "web",
+    note: `batch #${row.session_number} deleted (soft)`,
+  })
+  return { id: row.session_number, deleted: true }
+}

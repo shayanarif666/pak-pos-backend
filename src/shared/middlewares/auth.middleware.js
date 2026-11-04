@@ -32,9 +32,9 @@ export async function authMiddleware(req, res, next) {
     }
 
     const user = await User.findByPk(payload.sub)
-    if (!user || !user.is_active) {
-      throw new UnauthorizedError("Account is not available")
-    }
+    if (!user || user.deleted_at) throw new UnauthorizedError("Account is not available")
+    // Deactivated staff: the token stops working at once.
+    if (!user.is_active) throw new UnauthorizedError("Account Suspended")
     if ((payload.tv ?? 0) !== (user.token_version ?? 0)) {
       throw new UnauthorizedError("Session has ended. Sign in again.")
     }

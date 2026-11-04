@@ -22,6 +22,8 @@ export const User = sequelize.define(
     is_verified: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
     is_active: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
     last_login_at: { type: DataTypes.DATE, allowNull: true },
+    // Soft delete (staff): the row stays for history; deleted staff are left out of lists and sign-in.
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
     refresh_token_hash: { type: DataTypes.TEXT, allowNull: true },
     token_version: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
   },

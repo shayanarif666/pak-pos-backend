@@ -136,3 +136,39 @@ export async function updateStaffSession(actor, id, fields) {
   })
   return publicStaffSession(row, staff)
 }
+
+/** A session by its UUID or session number, visible to the actor (a manager: their location). */
+async function visibleSession(actor, ref) {
+  const value = String(ref ?? "").trim()
+  const where = /^\d+$/.test(value) ? { store_id: actor.store_id, session_number: Number(value) } : { store_id: actor.store_id, id: value }
+  const row = await StaffSession.findOne({ where })
+  if (!row || (actor.role !== "store_admin" && row.location_id && row.location_id !== actor.location_id)) {
+    throw new NotFoundError("Staff session not found")
+  }
+  return row
+}
+
+/** PATCH /staff-sessions/:id — clock_in_at / clock_out_at (session number or UUID). */
+export async function updateStaffSessionByRef(actor, ref, fields) {
+  const row = await visibleSession(actor, ref)
+  return updateStaffSession(actor, row.id, fields)
+}
+
+/** DELETE /staff-sessions/:id — soft delete: the row stays, lists and reports leave it out. */
+export async function deleteStaffSession(actor, ref) {
+  const row = await visibleSession(actor, ref)
+  await row.destroy()
+  await writeAudit({
+    action: "delete",
+    entity_type: "staff_sessions",
+    entity_id: row.id,
+    store_id: row.store_id,
+    store_id_int: row.store_id_int,
+    location_id: row.location_id,
+    location_id_int: row.location_id_int,
+    user_id: actor.id,
+    channel: "web",
+    note: `session #${row.session_number} deleted (soft)`,
+  })
+  return { id: row.session_number, deleted: true }
+}

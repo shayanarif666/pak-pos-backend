@@ -67,13 +67,21 @@ export function parseCreateStaff(body) {
   }
 }
 
+/** PATCH /staff/bulk/password — a forgotten password (min 6) and / or PIN reset. */
+export function parseStaffPasswordReset(body) {
+  const patch = {}
+  if (body.password !== undefined) patch.password = requireString(body, "password", { min: 6, max: 128 })
+  if (body.pin !== undefined) patch.pin = requirePin(body, "pin")
+  if (!Object.keys(patch).length) throw new AppError("Send password and / or pin", 400)
+  return patch
+}
+
 export function parsePatchStaff(body) {
   const patch = {}
   if (body.name !== undefined) patch.name = requireString(body, "name")
+  if (body.email !== undefined) patch.email = requireString(body, "email").toLowerCase()
   if (body.phone !== undefined) patch.phone = optionalString(body, "phone")
-  if (body.password !== undefined) {
-    patch.password = requireString(body, "password", { min: 6, max: 128 })
-  }
+  // The password is not edited here: staff reset it with POST /auth/forgot-password.
   if (body.pin !== undefined) patch.pin = requirePin(body, "pin")
   if (body.location_id !== undefined) {
     const location_id = optionalUuid(body, "location_id")

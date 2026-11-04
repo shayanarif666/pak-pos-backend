@@ -11,14 +11,18 @@ import { assertPinAvailable, assertUserPinAvailable, PIN_TAKEN_MESSAGE } from ".
 import { nextUserNumber } from "../../shared/utils/counter.util.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
+import { StaffSession } from "../pos/staffSession.model.js"
+import { writeAudit } from "../../shared/utils/audit.util.js"
 
 const LISTABLE_ROLES = ["store_admin", "manager", "cashier"]
 const CREATABLE_ROLES = ["manager", "cashier"]
 
-function staffWhere(actor) {
+function staffWhere(actor, { withDeleted = false } = {}) {
   const where = {
     store_id: actor.store_id,
     role: { [Op.in]: LISTABLE_ROLES },
+    // Deleted staff stay in the database (their sales and history point at them).
+    ...(withDeleted ? {} : { deleted_at: null }),
   }
   if (actor.role === "manager") {
     where.location_id = actor.location_id
@@ -58,12 +62,18 @@ async function assertEmailFree(storeId, email, exceptId) {
 }
 
 function staffPayload(user, plaintextPassword = null) {
-  return { ...publicUser(user, { includePin: true }), password: plaintextPassword }
+  return {
+    ...publicUser(user, { includePin: true }),
+    password: plaintextPassword,
+    ...(user.deleted_at ? { deleted: true, deleted_at: user.deleted_at } : {}),
+  }
 }
 
-export async function listStaff(actor) {
+/** ?include_deleted=1 adds the deleted staff (flagged deleted: true), e.g. to name them in history. */
+export async function listStaff(actor, query = {}) {
+  const withDeleted = ["1", "true"].includes(String(query.include_deleted ?? ""))
   const rows = await User.findAll({
-    where: staffWhere(actor),
+    where: staffWhere(actor, { withDeleted }),
     order: [
       ["role", "ASC"],
       ["created_at", "ASC"],
@@ -140,6 +150,10 @@ export async function patchStaff(actor, id, fields) {
 
   const patch = {}
   if (fields.name !== undefined) patch.name = fields.name
+  if (fields.email !== undefined && fields.email !== user.email) {
+    await assertEmailFree(actor.store_id, fields.email, user.id)
+    patch.email = fields.email
+  }
   if (fields.phone !== undefined) patch.phone = fields.phone
   if (fields.is_active !== undefined) {
     if (user.id === actor.id && fields.is_active === false) {
@@ -178,6 +192,38 @@ export async function patchStaff(actor, id, fields) {
   }
 
   return staffPayload(user, fields.password || null)
+}
+
+/**
+ * Soft delete: the staff member leaves the list and can no longer sign in or use their PIN (their
+ * tokens stop working and an open clock-in is closed); the row, sales and history stay.
+ */
+export async function deleteStaff(actor, id) {
+  const user = await findVisibleStaff(actor, id)
+  if (user.role === "store_admin") throw new ForbiddenError("The store admin cannot be deleted")
+  if (user.id === actor.id) throw new AppError("You cannot delete your own account", 400)
+  if (actor.role === "manager" && user.role === "manager") {
+    throw new ForbiddenError("Managers cannot delete other managers")
+  }
+  const now = new Date()
+  await user.update({ deleted_at: now, is_active: false, token_version: Number(user.token_version || 0) + 1 })
+  await StaffSession.update(
+    { status: "clock_out", clock_out_at: now },
+    { where: { store_id: user.store_id, user_id: user.id, status: "clock_in" } }
+  )
+  await writeAudit({
+    action: "delete",
+    entity_type: "users",
+    entity_id: user.id,
+    store_id: user.store_id,
+    store_id_int: user.store_id_int,
+    location_id: user.location_id,
+    location_id_int: user.location_id_int,
+    user_id: actor.id,
+    channel: "web",
+    note: `staff ${user.name} deleted (soft)`,
+  })
+  return { id: user.user_number, deleted: true }
 }
 
 export async function getStaffSales(actor, id, query = {}) {
