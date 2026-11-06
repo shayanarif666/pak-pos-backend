@@ -23,6 +23,7 @@ import {
   patch,
   patchBulk,
   patchBulkStatus,
+  patchLocations,
   remove,
 } from "./category.controller.js"
 
@@ -65,6 +66,8 @@ router.post(
 // Bulk updates (POS offline sync): items[] = [{ id (category number), ...fields }].
 router.patch("/bulk", ...tenant, authorize("store_admin", "manager"), patchBulk)
 router.patch("/bulk/status", ...tenant, authorize("store_admin", "manager"), patchBulkStatus)
+// Where several categories are sold, in one call (dashboard: select rows -> Update Locations).
+router.patch("/locations", ...tenant, authorize("store_admin"), patchLocations)
 router.get(
   "/:id",
   ...tenant,

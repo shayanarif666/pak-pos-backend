@@ -207,6 +207,46 @@ export async function updateCategory(storeId, id, input, actor = null) {
   return publicCategory(await getCategory(storeId, category.id))
 }
 
+/**
+ * Sets where several categories are sold, in one transaction (all of them change or none):
+ * refs = category numbers or UUIDs; scope "all" clears the location links, "selected" sets them.
+ */
+export async function updateCategoryLocations(storeId, refs, { location_scope, location_ids }) {
+  const numbers = refs.filter((ref) => /^\d+$/.test(ref)).map(Number)
+  const uuids = refs.filter((ref) => !/^\d+$/.test(ref))
+  const or = []
+  if (numbers.length) or.push({ category_number: { [Op.in]: numbers } })
+  if (uuids.length) or.push({ id: { [Op.in]: uuids } })
+  const rows = await Category.findAll({ where: { store_id: storeId, [Op.or]: or } })
+  const found = new Set(rows.flatMap((row) => [row.id, String(row.category_number)]))
+  const missing = refs.filter((ref) => !found.has(ref))
+  if (missing.length) throw new NotFoundError(`Categories not found: ${missing.join(", ")}`)
+
+  await sequelize.transaction(async (transaction) => {
+    const locationIds = await resolveStoreLocations(
+      storeId,
+      location_scope === "selected" ? location_ids : [],
+      transaction
+    )
+    for (const row of rows) {
+      await replaceLocationLinks(CategoryLocation, "category_id", row, locationIds, transaction)
+    }
+    // A static update always writes, so updated_at moves (the POS syncs on it) even when the
+    // scope stays the same and only the selected locations change.
+    await Category.update(
+      { location_scope, updated_at: new Date() },
+      { where: { id: rows.map((row) => row.id) }, transaction }
+    )
+  })
+
+  const updated = await Category.findAll({
+    where: { id: rows.map((row) => row.id) },
+    include: [CATEGORY_LOCATIONS_INCLUDE],
+    order: [["category_number", "ASC"]],
+  })
+  return updated.map(publicCategory)
+}
+
 export async function deleteCategory(storeId, id) {
   const category = await getCategory(storeId, id)
   const productCount = await Product.count({ where: { category_id: id } })

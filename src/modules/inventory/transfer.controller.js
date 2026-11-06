@@ -4,11 +4,11 @@ import * as transferService from "./transfer.service.js"
 import { resolveStaff } from "../../shared/utils/staff.util.js"
 import { posTransfer, posTransfers } from "../pos/posResponses.js"
 import { bulkStatus, posBulkResponse, extractBulkItems, runBulk } from "../../shared/utils/bulk.util.js"
-import { parseCreateTransfer, parseReceive } from "./transfer.validation.js"
+import { parseCreateTransfer, parsePatchTransfer, parseReceive } from "./transfer.validation.js"
 import * as posHistory from "../pos/posHistory.service.js"
 import { StockTransfer } from "./stockTransfer.model.js"
 import { AppError } from "../../shared/errors/AppError.js"
-import { bulkUpdateResponse, runBulkUpdate } from "../../shared/utils/bulkUpdate.util.js"
+import { bulkUpdateResponse, runBulkUpdate, uuidOfNumber } from "../../shared/utils/bulkUpdate.util.js"
 
 // The acting user with the request's location (a manager / cashier: their own).
 const actorOf = (req, staff = req.user) => ({
@@ -82,15 +82,29 @@ function bulkTransferUpdate(message, handler) {
   })
 }
 
-/** PATCH /stock-transfers/bulk — what is still on the way: products [{ product_id, to_location_id?, qty }], note. */
-export const patchBulk = bulkTransferUpdate("Stock Transfers Updated", (req, uuid, fields) =>
-  transferService.updateTransfer(req.storeId, uuid, {
-    products: fields.products,
-    qty: fields.qty,
-    to_location_id: fields.to_location_id ?? fields.toLocationId,
-    note: fields.note,
+/**
+ * PATCH /stock-transfers/bulk — { staff_id?, items: [{ id (transfer number), from_location_id?, note?,
+ * destinations?: [{ to_location_id, products: [{ product_id, variant_id?, qty }] }] }] }: each item
+ * the same as on create, plus id. The reply is the create reply too (short numbers, every channel).
+ */
+export const patchBulk = asyncHandler(async (req, res) => {
+  const data = await runBulkUpdate(req.body, {
+    model: StockTransfer,
+    column: "transfer_number",
+    label: "Transfer",
+    storeId: req.storeId,
+    handler: (uuid, fields) => transferService.replaceTransfer(req.storeId, uuid, parsePatchTransfer(fields)),
   })
-)
+  return bulkUpdateResponse(res, data, "Stock Transfers Updated", await posTransfers(data.created))
+})
+
+/** DELETE /stock-transfers/:id (transfer number) — soft delete of a transfer not received yet. */
+export const remove = asyncHandler(async (req, res) => {
+  const uuid = await uuidOfNumber(StockTransfer, "transfer_number", req.storeId, req.params.id, "Transfer")
+  const { view, deleted_at } = await transferService.deleteTransfer(req.storeId, uuid)
+  const [data] = await posTransfers([view])
+  return apiResponse(res, 200, "Stock Transfer Deleted", { ...data, deleted_at })
+})
 
 /** PATCH /stock-transfers/bulk/qty — { id, products: [{ product_id, to_location_id?, qty }] } (or qty for one product). */
 export const patchBulkQty = bulkTransferUpdate("Stock Transfer Qty Updated", (req, uuid, fields) => {

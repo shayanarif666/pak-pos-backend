@@ -165,3 +165,28 @@ export function parsePatchCategory(body) {
   Object.assign(fields, parseLocationScope(body))
   return fields
 }
+
+/**
+ * PATCH /categories/locations — where several categories are sold, in one call:
+ * { category_ids: [1, 2] (category numbers or UUIDs), location_scope: "all" | "selected",
+ *   location_ids: [1, 2] (with "selected") }.
+ */
+export function parseCategoryLocations(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new AppError("Send { category_ids, location_scope, location_ids }", 400)
+  }
+  if (!Array.isArray(body.category_ids) || !body.category_ids.length) {
+    throw new AppError("category_ids must be a non-empty array of category ids", 400)
+  }
+  const categoryIds = [...new Set(body.category_ids.map((value) => String(value ?? "").trim()))]
+  if (categoryIds.length > 500) throw new AppError("category_ids can hold at most 500 categories", 400)
+  for (const id of categoryIds) {
+    if (!/^[1-9]\d*$/.test(id) && !UUID_RE.test(id)) {
+      throw new AppError("category_ids must contain category numbers (1, 2, 3...) or UUIDs", 400)
+    }
+  }
+  if (body.location_scope === undefined || body.location_scope === null || body.location_scope === "") {
+    throw new AppError("location_scope is required (all or selected)", 400)
+  }
+  return { category_ids: categoryIds, ...parseLocationScope(body) }
+}

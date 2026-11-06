@@ -532,7 +532,7 @@ export async function expiryList(req) {
   const pageInfo = pageOf(req.query)
   const store = await Store.findByPk(scope.store_id, { attributes: ["expiry_warning_days", "expiry_critical_days"] })
   const { rows, count } = await ProductStock.findAndCountAll({
-    where: { store_id: scope.store_id, expiry_date: { [Op.ne]: null }, ...atLocation(scope), ...dateRange(req.query, "expiry_date") },
+    where: { store_id: scope.store_id, expiry_date: { [Op.ne]: null }, deleted_at: null, ...atLocation(scope), ...dateRange(req.query, "expiry_date") },
     include: [
       { model: Product, attributes: ["product_number", "title", "sku", "barcode", "unit"], required: true },
       { model: Location, attributes: ["location_id_int", "name"] },

@@ -1,7 +1,10 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js"
 import { asyncHandler } from "../../shared/utils/asyncHandler.js"
-import { bulkStatus, posBulkResponse, extractBulkItems } from "../../shared/utils/bulk.util.js"
-import { parseCreateMovement } from "./stock.validation.js"
+import { bulkStatus, posBulkResponse, extractBulkItems, runBulk } from "../../shared/utils/bulk.util.js"
+import { bulkUpdateResponse } from "../../shared/utils/bulkUpdate.util.js"
+import { AppError } from "../../shared/errors/AppError.js"
+import { stockEditRows } from "./stockEditView.js"
+import { parseCreateMovement, parsePatchMovement } from "./stock.validation.js"
 import * as stockService from "./stock.service.js"
 import { StockMovement } from "./stockMovement.model.js"
 import { Supplier } from "./supplier.model.js"
@@ -102,4 +105,28 @@ export const createBulk = asyncHandler(async (req, res) => {
   }
   const created = moved.map(({ summary: _summary, ...row }) => row)
   return apiResponse(res, bulkStatus(data), "Bulk stock movements processed", { ...data, created })
+})
+
+/** PATCH /stock-movements/:id (movement number or UUID) — fixes a wrong movement; the stock follows. */
+/**
+ * PATCH /stock-movements/bulk — { items: [{ id (movement number), movement_type?, reason?, qty?,
+ * reason_note? }] }, one item or many. Each row saves on its own (a failed one is listed in
+ * failed[]); data = [{ movement, stock }] with short numbers only.
+ */
+export const patchBulk = asyncHandler(async (req, res) => {
+  const actor = movementActor(req)
+  const data = await runBulk(extractBulkItems(req.body), async (item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw new AppError("Each item must be an object", 400)
+    const { id, ...fields } = item
+    if (id === undefined || id === null || String(id).trim() === "") throw new AppError("id (the movement number) is required", 400)
+    return stockService.updateMovement(actor, id, parsePatchMovement(fields))
+  })
+  return bulkUpdateResponse(res, data, "Stock Movements Updated", await stockEditRows(data.created))
+})
+
+/** DELETE /stock-movements/:id — soft delete; its qty is taken back off the stock. */
+export const remove = asyncHandler(async (req, res) => {
+  const result = await stockService.deleteMovement(movementActor(req), req.params.id)
+  const [data] = await stockEditRows([result])
+  return apiResponse(res, 200, "Stock Movement Deleted", data)
 })

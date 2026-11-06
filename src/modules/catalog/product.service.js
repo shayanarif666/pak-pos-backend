@@ -1090,9 +1090,9 @@ export async function updateProduct(storeId, id, input, actor = null) {
     }
     throw err
   }
-  // A product with variants switched back on (after a delete): its variants come back too.
-  if (fields.is_active === true && product.has_variants) {
-    await Product.update({ is_active: true }, { where: { store_id: storeId, parent_product_id: product.id } })
+  // A product with variants switched on / off: its variants follow (as on delete).
+  if (typeof fields.is_active === "boolean" && product.has_variants) {
+    await Product.update({ is_active: fields.is_active }, { where: { store_id: storeId, parent_product_id: product.id } })
   }
   // The product's taxes changed: every variant gets them again, plus its own.
   if (fields.taxes !== undefined && product.has_variants) {
@@ -1183,6 +1183,7 @@ export async function listExpiryProducts(storeId, locationId = null) {
     where: {
       store_id: storeId,
       expiry_date: { [Op.ne]: null },
+      deleted_at: null,
       ...(locationId ? { location_id: locationId } : {}),
     },
     include: [

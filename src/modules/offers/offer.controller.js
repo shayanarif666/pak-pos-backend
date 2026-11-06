@@ -5,7 +5,7 @@ import { bulkStatus, posBulkResponse, extractBulkItems, runBulk } from "../../sh
 import { offerActive, parseCreateOffer, parsePatchOffer } from "./offer.validation.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { Offer } from "./offer.model.js"
-import { bulkUpdateResponse, runBulkUpdate } from "../../shared/utils/bulkUpdate.util.js"
+import { bulkUpdateResponse, runBulkUpdate, uuidOfNumber } from "../../shared/utils/bulkUpdate.util.js"
 import * as offerService from "./offer.service.js"
 import { actingAs, resolveStaff } from "../../shared/utils/staff.util.js"
 import { posOffer, posOffers } from "../pos/posResponses.js"
@@ -67,9 +67,13 @@ export const patch = asyncHandler(async (req, res) => {
   return apiResponse(res, 200, "Offer updated", data)
 })
 
+/** DELETE /offers/:id (UUID or offer number) — soft delete; switching off stays PATCH is_active. */
 export const remove = asyncHandler(async (req, res) => {
-  const data = await offerService.deactivateOffer(req.user, req.params.id)
-  return apiResponse(res, 200, "Offer deactivated", data)
+  const id = /^\d+$/.test(String(req.params.id))
+    ? await uuidOfNumber(Offer, "offer_number", req.storeId, req.params.id, "Offer")
+    : req.params.id
+  const data = await offerService.deleteOffer(req.user, id)
+  return apiResponse(res, 200, "Offer deleted", data)
 })
 
 export const listTargets = asyncHandler(async (req, res) => {

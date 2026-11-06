@@ -34,6 +34,9 @@ import * as storeTaxes from "./migrations/20261109120000-store-taxes.js"
 import * as paymentSurcharges from "./migrations/20261110120000-payment-surcharges.js"
 import * as morePaymentMethods from "./migrations/20261111120000-more-payment-methods.js"
 import * as softDelete from "./migrations/20261114120000-soft-delete-staff-sessions-batches.js"
+import * as softDeleteStock from "./migrations/20261115120000-soft-delete-stock.js"
+import * as softDeleteTransfers from "./migrations/20261116120000-soft-delete-transfers.js"
+import * as softDeleteOffersLocations from "./migrations/20261117120000-soft-delete-offers-locations.js"
 
 // Migrations the running code cannot work without (e.g. users.token_version is read on every
 // authenticated request). Each one checks before it changes anything, so running it on a
@@ -103,6 +106,12 @@ const REQUIRED = [
   morePaymentMethods,
   // users / staff_sessions / register_sessions.deleted_at (soft delete; the models read it).
   softDelete,
+  // stock_movements.deleted_at / updated_at, product_stocks.deleted_at (edit & soft delete of stock).
+  softDeleteStock,
+  // stock_transfers.deleted_at (soft delete of a transfer whose stock has not moved).
+  softDeleteTransfers,
+  // offers.deleted_at / locations.deleted_at (soft delete of a discount / a branch).
+  softDeleteOffersLocations,
 ]
 
 export async function ensureSchema() {

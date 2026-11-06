@@ -90,18 +90,41 @@ function parsePricedLine(row, index) {
   const unit_price = moneyAtLeastZero(row, "unit_price", label) ?? moneyAtLeastZero(row, "price", label)
   if (unit_price == null) throw new AppError(`${label}.unit_price is required`, 400)
 
+  // discount: [{ discount_id }] — the discounts (offer numbers) the till applied to this line, one
+  // or many. The till works out every figure: the line's discount_amount (all of them together)
+  // and free_qty (BOGO) are sent next to it and saved as they are. The older single object
+  // { source, offer_id, amount, free_qty } still works.
   let discount = null
-  if (row.discount && typeof row.discount === "object") {
-    const source = row.discount.source == null ? "custom" : String(row.discount.source)
+  const rawDiscount = row.discount ?? row.discounts
+  if (Array.isArray(rawDiscount)) {
+    const refs = rawDiscount.map((entry, d) => {
+      const at = `${label}.discount[${d}]`
+      if (!entry || typeof entry !== "object") throw new AppError(`${at} must be { discount_id }`, 400)
+      const ref = optionalRef(entry, ["discount_id", "discountId", "offer_id", "offerId"])
+      if (!ref) throw new AppError(`${at}.discount_id is required (the discount number)`, 400)
+      return ref
+    })
+    const offer_refs = [...new Set(refs)]
+    const amount = moneyAtLeastZero(row, "discount_amount", label) ?? 0
+    const free_qty = moneyAtLeastZero(row, "free_qty", label) ?? 0
+    if (offer_refs.length || amount > 0 || free_qty > 0) {
+      discount = { source: offer_refs.length ? "offer" : "custom", offer_refs, amount, free_qty }
+    }
+  } else if (rawDiscount && typeof rawDiscount === "object") {
+    const source = rawDiscount.source == null ? "custom" : String(rawDiscount.source)
     if (!DISCOUNT_SOURCES.includes(source)) {
       throw new AppError(`${label}.discount.source must be one of ${DISCOUNT_SOURCES.join(", ")}`, 400)
     }
+    const ref = optionalRef(rawDiscount, ["discount_id", "discountId", "offer_id", "offerId"])
     discount = {
       source,
-      offer_ref: optionalRef(row.discount, ["offer_id", "offerId"]),
-      amount: moneyAtLeastZero(row.discount, "amount", `${label}.discount`) ?? 0,
-      free_qty: moneyAtLeastZero(row.discount, "free_qty", `${label}.discount`) ?? 0,
+      offer_refs: ref ? [ref] : [],
+      amount: moneyAtLeastZero(rawDiscount, "amount", `${label}.discount`) ?? 0,
+      free_qty: moneyAtLeastZero(rawDiscount, "free_qty", `${label}.discount`) ?? 0,
     }
+  } else {
+    const amount = moneyAtLeastZero(row, "discount_amount", label) ?? 0
+    if (amount > 0) discount = { source: "custom", offer_refs: [], amount, free_qty: moneyAtLeastZero(row, "free_qty", label) ?? 0 }
   }
 
   const taxes = (Array.isArray(row.taxes) ? row.taxes : []).map((tax, t) => {

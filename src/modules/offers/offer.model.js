@@ -42,10 +42,15 @@ export const Offer = sequelize.define(
     end_at: { type: DataTypes.DATE, allowNull: true },
     is_active: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
     created_by: uuidCol(true),
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
   },
   {
     ...modelOptions,
     tableName: "offers",
+    // Soft delete: destroy() sets deleted_at; lists, the POS and pricing leave it out. Sales made
+    // with it read it with paranoid: false.
+    paranoid: true,
+    deletedAt: "deleted_at",
     indexes: [{ unique: true, fields: ["store_id", "offer_number"] }],
   }
 )

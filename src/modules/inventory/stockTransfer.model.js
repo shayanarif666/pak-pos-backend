@@ -24,10 +24,14 @@ export const StockTransfer = sequelize.define(
     },
     note: { type: DataTypes.TEXT, allowNull: true },
     created_by: uuidCol(true),
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
   },
   {
     ...modelOptions,
     tableName: "stock_transfers",
+    // Soft delete: destroy() sets deleted_at and every query (lists, reports, POS sync) leaves it out.
+    paranoid: true,
+    deletedAt: "deleted_at",
     indexes: [{ unique: true, fields: ["store_id", "transfer_number"] }],
   }
 )

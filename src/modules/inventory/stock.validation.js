@@ -137,3 +137,38 @@ export function parseCreateMovement(body) {
     supplier_ref: staffRefFrom(body, ["supplier_id", "supplierId"]),
   }
 }
+
+/**
+ * PATCH /stock-movements/:id — { movement_type?, reason?, qty?, reason_note? }; at least one.
+ * qty is the amount moved (stock_in adds it, stock_out takes it away, an adjustment keeps its sign).
+ */
+export function parsePatchMovement(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new AppError("Send the fields to change", 400)
+  const out = {}
+  if (body.movement_type !== undefined) {
+    if (!MANUAL_TYPES.includes(body.movement_type)) {
+      throw new AppError("movement_type must be stock_in, stock_out, or adjustment", 400)
+    }
+    out.movement_type = body.movement_type
+  }
+  if (body.reason !== undefined) {
+    if (!MANUAL_REASONS.includes(body.reason) && body.reason !== "opening_balance") {
+      throw new AppError("Invalid stock movement reason", 400)
+    }
+    out.reason = body.reason
+  }
+  if (body.qty !== undefined) {
+    const qty = Number(body.qty)
+    if (body.qty === null || body.qty === "" || Number.isNaN(qty) || qty === 0) {
+      throw new AppError("qty must be a non-zero number", 400)
+    }
+    out.qty = qty
+  }
+  if (body.reason_note !== undefined) {
+    out.reason_note = body.reason_note === null ? null : String(body.reason_note).trim() || null
+  }
+  if (!Object.keys(out).length) {
+    throw new AppError("Send at least one of movement_type, reason, qty, reason_note", 400)
+  }
+  return out
+}

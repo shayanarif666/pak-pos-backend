@@ -12,6 +12,7 @@ import {
 } from "./location.validation.js"
 import {
   createLocation,
+  deleteLocation,
   getLocation,
   listLocations,
   patchBulk,
@@ -38,5 +39,7 @@ router.post(
 router.patch("/bulk", patchBulk)
 router.get("/:id", getLocation)
 router.patch("/:id", validate(parsePatchLocation), patchLocation)
+// Soft delete a branch (store admin): not the default one, nor with stock or transfers on the way.
+router.delete("/:id", authorize("store_admin"), deleteLocation)
 
 export default router

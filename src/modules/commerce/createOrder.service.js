@@ -228,7 +228,10 @@ function posPricedLine(item, product, offersById) {
   const { discount, taxes } = item.priced
   const discount_amount = money(discount?.amount || 0)
   const source = discount?.source || (discount_amount > 0 ? "custom" : product ? "none" : "custom")
-  const offer = discount?.offer_id ? offersById.get(discount.offer_id) : null
+  // The discounts the till applied (one or many), as they were at the sale. Only the line's total
+  // discount is sent, so one discount keeps that amount; with several, each one's share is null.
+  const appliedOffers = (discount?.offer_ids || []).map((id) => offersById.get(id)).filter(Boolean)
+  const offer = appliedOffers[0] || null
   // A store tax (Taxes page) is saved with the product's own taxes.
   const ofLevel = (level) =>
     taxes.filter((tax) => tax.level === level || (level === "product" && tax.level === "store"))
@@ -263,7 +266,10 @@ function posPricedLine(item, product, offersById) {
     discount_amount,
     discount_source: source,
     offer_id: offer?.id || null,
-    offers: offer ? [offerSnapshot(offer, null, discount_amount)] : [],
+    offers: appliedOffers.map((row) => ({
+      ...offerSnapshot(row, null, 0),
+      amount: appliedOffers.length === 1 ? discount_amount : null,
+    })),
     product_discount: source === "product" ? snapshot(discount_amount) : null,
     category_discount: source === "category" ? snapshot(discount_amount) : null,
     free_qty: discount?.free_qty || 0,
@@ -435,10 +441,10 @@ export async function createOrder(actor, input) {
     }
 
     const offerIds = input.precomputed
-      ? [...new Set(items.map((item) => item.priced?.discount?.offer_id).filter(Boolean))]
+      ? [...new Set(items.flatMap((item) => item.priced?.discount?.offer_ids || []).filter(Boolean))]
       : []
     const offersById = new Map(
-      (offerIds.length ? await Offer.findAll({ where: { id: offerIds, store_id: store.id }, transaction }) : []).map(
+      (offerIds.length ? await Offer.findAll({ where: { id: offerIds, store_id: store.id }, transaction, paranoid: false }) : []).map(
         (row) => [row.id, row]
       )
     )

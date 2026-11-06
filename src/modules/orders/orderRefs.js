@@ -80,11 +80,11 @@ export async function resolveOrderRefs(storeId, input) {
       })
     : []
   const byNumber = new Map(products.map((row) => [String(row.product_number), row.id]))
-  // A POS-priced line may name the offer that priced it (offer number or UUID).
+  // A POS-priced line may name the discounts (offers) that priced it: their numbers or UUIDs.
   const offerNumbers = [
     ...new Set(
       (input.items || [])
-        .map((item) => item.priced?.discount?.offer_ref)
+        .flatMap((item) => item.priced?.discount?.offer_refs || [])
         .filter((ref) => ref && isNumber(ref))
         .map(Number)
     ),
@@ -93,6 +93,8 @@ export async function resolveOrderRefs(storeId, input) {
     ? await Offer.findAll({
         where: { store_id: storeId, offer_number: { [Op.in]: offerNumbers } },
         attributes: ["id", "offer_number"],
+        // A sale made offline before the discount was deleted still records it.
+        paranoid: false,
       })
     : []
   const offerByNumber = new Map(offers.map((row) => [String(row.offer_number), row.id]))
@@ -103,11 +105,14 @@ export async function resolveOrderRefs(storeId, input) {
       if (!id) throw new NotFoundError(`Product ${item.product_id} not found`)
       next = { ...next, product_id: id }
     }
-    const offerRef = item.priced?.discount?.offer_ref
-    if (offerRef) {
-      const offerId = isNumber(offerRef) ? offerByNumber.get(String(Number(offerRef))) : offerRef
-      if (!offerId) throw new NotFoundError(`Offer ${offerRef} not found`)
-      next = { ...next, priced: { ...next.priced, discount: { ...next.priced.discount, offer_id: offerId } } }
+    const offerRefs = item.priced?.discount?.offer_refs || []
+    if (offerRefs.length) {
+      const offer_ids = offerRefs.map((ref) => {
+        const offerId = isNumber(ref) ? offerByNumber.get(String(Number(ref))) : ref
+        if (!offerId) throw new NotFoundError(`Discount ${ref} not found`)
+        return offerId
+      })
+      next = { ...next, priced: { ...next.priced, discount: { ...next.priced.discount, offer_ids } } }
     }
     return next
   })

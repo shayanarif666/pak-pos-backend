@@ -1,7 +1,8 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js"
 import { asyncHandler } from "../../shared/utils/asyncHandler.js"
 import * as stockService from "./productStock.service.js"
-import { parsePutStock } from "./productStock.validation.js"
+import { parseDeleteStockEntry, parsePutStock, parseStockEditItem } from "./productStock.validation.js"
+import { stockEditRows } from "../inventory/stockEditView.js"
 import { Product } from "./product.model.js"
 import { Refs } from "../pos/posResponses.js"
 import { AppError } from "../../shared/errors/AppError.js"
@@ -94,22 +95,44 @@ async function shapeStocks(req, rows) {
   }))
 }
 
+/** The product (or its variant: variant_id = the variant number inside it) as a UUID. */
+async function stockProductId(storeId, item) {
+  const productId = await uuidOfNumber(Product, "product_number", storeId, item.product_id ?? item.productId, "Product")
+  const variantRef = item.variant_id ?? item.variantId
+  if (variantRef === undefined || variantRef === null || variantRef === "") return productId
+  const value = String(variantRef).trim()
+  const variant = await Product.findOne({
+    where: /^\d+$/.test(value)
+      ? { store_id: storeId, parent_product_id: productId, variant_number: Number(value) }
+      : { store_id: storeId, parent_product_id: productId, id: value },
+    attributes: ["id"],
+  })
+  if (!variant) throw new AppError(`Variant ${value} is not a variant of product ${item.product_id ?? item.productId}`, 404)
+  return variant.id
+}
+
 /**
- * PATCH /product-stocks/bulk — each item its own change: qty (the new stock) or delta (+ / −),
- * expiry_date, low_stock_threshold, reason, movement_type, note. A stock movement records
- * every qty change.
+ * PATCH /product-stocks/bulk — { locationId?, staff_id?, items: [{ product_id, variant_id?,
+ * location_id?, qty | delta | number_of_packs + loose_units, expiry_date?, low_stock_threshold?,
+ * reason?, movement_type?, reason_note? }] }, one item or many (POS sync and the dashboard's
+ * Product Stock & Expiry). location_id on an item wins over locationId sent once. Every qty change
+ * writes a movement. data = [{ stock, movement }] with short numbers only (movement null when the
+ * qty did not change).
  */
-export const patchBulk = asyncHandler(async (req, res) =>
-  bulkStock(req, res, "Stock Updated", (item) => ({
-    qty: item.qty,
-    delta: item.delta,
-    expiry_date: item.expiry_date,
-    low_stock_threshold: item.low_stock_threshold,
-    reason: item.reason,
-    movement_type: moveType(item.movement_type),
-    reason_note: item.note ?? item.reason_note,
-  }))
-)
+export const patchBulk = asyncHandler(async (req, res) => {
+  const location = await bulkLocation(req)
+  const fallbackStaff = req.body?.staff_id ?? req.body?.staffId ?? null
+  const data = await runBulk(extractBulkItems(req.body), async (item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw new AppError("Each item must be an object", 400)
+    const productId = await stockProductId(req.storeId, item)
+    const ref = item.staff_id ?? item.staffId ?? fallbackStaff
+    const staff = await resolveStaff(req.storeId, ref == null ? null : String(ref), req.user)
+    const itemLocation = item.location_id ?? item.locationId
+    const locationRef = itemLocation == null || itemLocation === "" ? location?.id : String(itemLocation)
+    return stockService.editStock(stockActor(req, null, staff), productId, locationRef, parseStockEditItem(item))
+  })
+  return bulkUpdateResponse(res, data, "Stock Updated", await stockEditRows(data.created))
+})
 
 /**
  * PATCH /product-stocks/bulk/qty — one movement_type and reason for every item:
@@ -131,4 +154,22 @@ export const patchBulkQty = asyncHandler(async (req, res) => {
       reason_note: item.note ?? req.body.note ?? null,
     }
   })
+})
+
+// ---- One stock entry from Product Stock & Expiry (:id = the stock entry's UUID) ----
+
+function entryActor(req) {
+  return {
+    ...req.user.get({ plain: true }),
+    store_id: req.auth?.store_id || req.user.store_id,
+    location_id: req.auth?.location_id || req.user.location_id,
+    store_id_int: req.user.store_id_int,
+  }
+}
+
+/** DELETE /product-stocks/:id — soft delete (qty set to 0 by an adjustment movement first). */
+export const removeEntry = asyncHandler(async (req, res) => {
+  const result = await stockService.deleteStockEntry(entryActor(req), req.params.id, parseDeleteStockEntry(req.body))
+  const [data] = await stockEditRows([result])
+  return apiResponse(res, 200, "Stock Deleted", data)
 })

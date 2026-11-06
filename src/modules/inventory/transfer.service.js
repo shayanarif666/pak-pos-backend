@@ -131,9 +131,47 @@ async function available(locationId, productId, transaction) {
 export async function createTransfer(storeId, fields, actor) {
   await getStoreForManager(storeId)
   const from = await loadLocation(storeId, fields.from_location_id)
+  const lines = await buildLines(storeId, from, fields.destinations)
+
+  const id = await sequelize.transaction(async (transaction) => {
+    const row = await StockTransfer.create(
+      {
+        store_id: storeId,
+        transfer_number: await nextStockTransferNumber(storeId, transaction),
+        from_location_id: from.id,
+        note: fields.note,
+        // Sent from the source; stock moves when each destination receives its part.
+        status: "on_the_way",
+        created_by: actor.id,
+      },
+      { transaction }
+    )
+    await StockTransferItem.bulkCreate(lineRows(storeId, row.id, lines), { transaction })
+    return row.id
+  })
+  return getTransferView(storeId, id)
+}
+
+function lineRows(storeId, transferId, lines) {
+  return lines.map((line, index) => ({
+    store_id: storeId,
+    transfer_id: transferId,
+    item_number: index + 1,
+    to_location_id: line.to_location_id,
+    product_id: line.product_id,
+    qty: line.qty,
+    status: "on_the_way",
+  }))
+}
+
+/**
+ * The lines of a transfer from `from` (one per product per destination) after checking the source
+ * holds, per product, the qty of every destination together.
+ */
+async function buildLines(storeId, from, destinations) {
   const lines = []
   const totalByProduct = new Map()
-  for (const dest of fields.destinations) {
+  for (const dest of destinations) {
     const to = await loadLocation(storeId, dest.to_location_id)
     if (to.id === from.id) throw new ConflictError("A destination cannot be the location the stock leaves from")
     for (const row of dest.products) {
@@ -152,35 +190,76 @@ export async function createTransfer(storeId, fields, actor) {
       throw new ConflictError(`Only ${have} of ${title} available at the source location (${qty} sent)`)
     }
   }
+  return lines
+}
 
-  const id = await sequelize.transaction(async (transaction) => {
-    const row = await StockTransfer.create(
+/** No stock has moved yet: nothing of it was received (every line on the way or cancelled). */
+function assertNothingReceived(row, action) {
+  if ((row.items || []).some((item) => item.status === "completed")) {
+    throw new ConflictError(`Part of transfer ${row.transfer_number} has been received, so its stock has moved: it cannot be ${action}`)
+  }
+}
+
+/**
+ * One row of PATCH /stock-transfers/bulk — the same fields as create: from_location_id, note,
+ * destinations. destinations replace every product on the way (as if the transfer were sent again);
+ * left out, the products stay and only the source / note change. Only a transfer nothing of which
+ * has been received can change (its stock has not moved yet).
+ */
+export async function replaceTransfer(storeId, id, fields) {
+  await getStoreForManager(storeId)
+  const row = await getTransfer(storeId, id)
+  assertNothingReceived(row, "changed")
+  const open = (row.items || []).filter((item) => OPEN.includes(item.status))
+  if (!open.length && !fields.destinations) throw new ConflictError("A cancelled transfer can only change by sending its destinations again")
+  const from = fields.from_location_id ? await loadLocation(storeId, fields.from_location_id) : await loadLocation(storeId, row.from_location_id)
+
+  let lines = null
+  if (fields.destinations) {
+    lines = await buildLines(storeId, from, fields.destinations)
+  } else if (from.id !== row.from_location_id) {
+    // Same products from another source: it must not be one of the destinations, and must hold them.
+    if (open.some((item) => item.to_location_id === from.id)) {
+      throw new ConflictError("A destination cannot be the location the stock leaves from")
+    }
+    const destinations = []
+    for (const item of open) {
+      let dest = destinations.find((d) => d.to_location_id === item.to_location_id)
+      if (!dest) destinations.push((dest = { to_location_id: item.to_location_id, products: [] }))
+      dest.products.push({ product_id: item.product_id, qty: Number(item.qty) })
+    }
+    lines = await buildLines(storeId, from, destinations)
+  }
+
+  await sequelize.transaction(async (transaction) => {
+    if (lines) {
+      // Nothing moved yet, so the old lines are simply replaced by the new ones.
+      await StockTransferItem.destroy({ where: { transfer_id: row.id }, transaction })
+      await StockTransferItem.bulkCreate(lineRows(storeId, row.id, lines), { transaction })
+    }
+    await row.update(
       {
-        store_id: storeId,
-        transfer_number: await nextStockTransferNumber(storeId, transaction),
         from_location_id: from.id,
-        note: fields.note,
-        // Sent from the source; stock moves when each destination receives its part.
-        status: "on_the_way",
-        created_by: actor.id,
+        ...(fields.note !== undefined ? { note: fields.note } : {}),
+        ...(lines ? { status: "on_the_way" } : {}),
       },
       { transaction }
     )
-    await StockTransferItem.bulkCreate(
-      lines.map((line, index) => ({
-        store_id: storeId,
-        transfer_id: row.id,
-        item_number: index + 1,
-        to_location_id: line.to_location_id,
-        product_id: line.product_id,
-        qty: line.qty,
-        status: "on_the_way",
-      })),
-      { transaction }
-    )
-    return row.id
   })
   return getTransferView(storeId, id)
+}
+
+/**
+ * DELETE /stock-transfers/:id — soft delete: the transfer leaves every list and the POS; its rows
+ * stay. Only one nothing of which has been received (its stock has not moved).
+ */
+export async function deleteTransfer(storeId, id) {
+  const row = await getTransfer(storeId, id)
+  assertNothingReceived(row, "deleted")
+  const view = publicTransfer(row)
+  await row.destroy()
+  const deleted = await StockTransfer.findOne({ where: { id: row.id }, paranoid: false, attributes: ["deleted_at"] })
+  return { view, deleted_at: deleted?.deleted_at || new Date() }
 }
 
 /** The lines a request acts on: a destination's (or all), optionally only some products. */

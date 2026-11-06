@@ -339,6 +339,19 @@ export async function updateOffer(actor, id, input) {
   return publicOffer(await getOffer(actor.store_id, id))
 }
 
+/**
+ * DELETE /offers/:id — soft delete: the discount leaves the list, the POS and pricing at once; its
+ * rows stay, so sales made with it still show it. Returns the discount as it was, with deleted_at.
+ */
+export async function deleteOffer(actor, id) {
+  const row = await getOffer(actor.store_id, id)
+  assertCanSee(actor, row)
+  const view = publicOffer(row)
+  await row.destroy()
+  const deleted = await Offer.findOne({ where: { id: row.id }, paranoid: false, attributes: ["deleted_at"] })
+  return { ...view, deleted_at: deleted?.deleted_at || new Date() }
+}
+
 export async function deactivateOffer(actor, id) {
   const row = await getOffer(actor.store_id, id)
   assertCanSee(actor, row)

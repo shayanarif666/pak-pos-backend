@@ -25,10 +25,16 @@ export const StockMovement = sequelize.define(
     staff_id: uuidCol(true),
     order_id: uuidCol(true),
     ...catalogChannelVisibilityFields(),
+    // Set when the movement is edited from the dashboard (null = never edited).
+    updated_at: { type: DataTypes.DATE, allowNull: true },
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
   },
   {
     ...createdOnly,
     tableName: "stock_movements",
+    // Soft delete: destroy() sets deleted_at and every query (lists, reports, totals) leaves it out.
+    paranoid: true,
+    deletedAt: "deleted_at",
     indexes: [
       { fields: ["store_id", "product_id", "created_at"] },
       { unique: true, fields: ["store_id", "movement_number"] },

@@ -18,6 +18,7 @@ import {
   patchBulkQty,
   patchBulkReceive,
   patchBulkStatus,
+  remove,
 } from "./transfer.controller.js"
 
 const router = Router()
@@ -38,7 +39,7 @@ router.post(
   create
 )
 router.post("/bulk", ...tenant, authorize("store_admin"), requestScope(), createBulk)
-// Bulk updates (POS offline sync): items[] = [{ id (transfer number), ...fields }].
+// Update transfers: items[] = [{ id (transfer number), ...the same fields as create }].
 router.patch("/bulk", ...tenant, authorize("store_admin"), patchBulk)
 router.patch("/bulk/qty", ...tenant, authorize("store_admin"), patchBulkQty)
 router.patch("/bulk/status", ...tenant, authorize("store_admin", "manager"), patchBulkStatus)
@@ -55,5 +56,8 @@ router.post(
   authorize("store_admin"),
   cancel
 )
+
+// Soft delete a transfer nothing of which was received yet (:id = transfer number).
+router.delete("/:id", ...tenant, authorize("store_admin"), remove)
 
 export default router

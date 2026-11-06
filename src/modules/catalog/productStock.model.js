@@ -17,6 +17,9 @@ export const ProductStock = sequelize.define(
     unit_sold: { type: DataTypes.DECIMAL(12, 4), allowNull: false, defaultValue: 0 },
     low_stock_threshold: { type: DataTypes.DECIMAL(12, 4), allowNull: true },
     expiry_date: { type: DataTypes.DATEONLY, allowNull: true },
+    // Soft delete from Product Stock & Expiry (qty is 0 by then). Not paranoid: the row is kept
+    // (one per product and location) and a later stock movement clears this again.
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
     ...catalogChannelVisibilityFields(),
   },
   {

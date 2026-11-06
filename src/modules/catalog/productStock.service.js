@@ -34,7 +34,7 @@ export async function listStocks(actor, query = {}) {
     actor,
     query.locationId || query.location_id
   )
-  const where = { store_id: actor.store_id }
+  const where = { store_id: actor.store_id, deleted_at: null }
   if (locationId) where.location_id = locationId
 
   const rows = await ProductStock.findAll({
@@ -46,7 +46,7 @@ export async function listStocks(actor, query = {}) {
 }
 
 export async function getStock(actor, id) {
-  const where = { id, store_id: actor.store_id }
+  const where = { id, store_id: actor.store_id, deleted_at: null }
   if (actor.role !== "store_admin") where.location_id = actor.location_id
   const row = await ProductStock.findOne({
     where,
@@ -61,7 +61,7 @@ export async function listLowStocks(actor, query = {}) {
     actor,
     query.locationId || query.location_id
   )
-  const where = { store_id: actor.store_id }
+  const where = { store_id: actor.store_id, deleted_at: null }
   if (locationId) where.location_id = locationId
 
   const rows = await ProductStock.findAll({
@@ -116,6 +116,11 @@ export async function applyStockDelta(
   const patch = { qty: newQty, unit_sold: newSold }
   if (low_stock_threshold !== undefined) patch.low_stock_threshold = low_stock_threshold
   if (expiry_date !== undefined) patch.expiry_date = expiry_date
+  // A deleted stock entry comes back with the next movement (without its old expiry date).
+  if (row?.deleted_at) {
+    patch.deleted_at = null
+    if (expiry_date === undefined) patch.expiry_date = null
+  }
 
   if (!row) {
     const product = await Product.findByPk(productId, { transaction })
@@ -219,6 +224,105 @@ export async function putStock(actor, productId, fields) {
     )
 
     return publicStock(stock, product)
+  })
+}
+
+// ---- Stock edit (dashboard: Product Stock & Expiry; POS sync) ----
+
+/** A stock entry by its UUID (the dashboard's delete); a manager / cashier only at their location. */
+async function findStockEntry(actor, id, transaction) {
+  const where = { id, store_id: actor.store_id, deleted_at: null }
+  if (actor.role !== "store_admin") where.location_id = actor.location_id
+  const row = await ProductStock.findOne({ where, transaction, lock: transaction.LOCK.UPDATE })
+  if (!row) throw new NotFoundError("Stock entry not found")
+  return row
+}
+
+/**
+ * One row of PATCH /product-stocks/bulk: the stock of a product (or variant) at a location.
+ * qty = the new total (or delta +/-, or number_of_packs + loose_units for a pack product),
+ * expiry_date, low_stock_threshold. A qty change writes a movement (adjustment / count unless
+ * movement_type / reason are sent). Returns { movementId, stockId } for stockEditRows().
+ */
+export async function editStock(actor, productId, locationRef, fields) {
+  const locationId = resolveLocationId(actor, locationRef)
+  if (!locationId) throw new AppError("location_id is required", 400)
+  const location = await loadLocation(actor.store_id, locationId)
+  // A manager / cashier may name their own location (number or UUID), never another one.
+  if (actor.role !== "store_admin" && locationRef && (await loadLocation(actor.store_id, locationRef)).id !== location.id) {
+    throw new ForbiddenError("You can only change stock at your location")
+  }
+  const product = await Product.findOne({ where: { id: productId, store_id: actor.store_id } })
+  if (!product) throw new NotFoundError("Product not found")
+  if (product.has_variants) throw new AppError(`${product.title} has variants: send variant_id (the variant number)`, 400)
+
+  let qty = fields.qty
+  if (fields.number_of_packs !== undefined || fields.loose_units !== undefined) {
+    const packSize = Number(product.pack_size)
+    if (!product.is_pack_product || !(packSize >= 2)) {
+      throw new AppError(`${product.title} is not a pack product: send qty (units)`, 400)
+    }
+    if (!product.sell_loose && fields.loose_units) {
+      throw new AppError(`${product.title} is sold only in whole packs: send number_of_packs without loose_units`, 400)
+    }
+    qty = (fields.number_of_packs || 0) * packSize + (fields.loose_units || 0)
+  }
+
+  return sequelize.transaction(async (transaction) => {
+    const row = await ProductStock.findOne({
+      where: { location_id: location.id, product_id: product.id },
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    })
+    const oldQty = row ? Number(row.qty) : 0
+    const newQty = qty !== undefined ? qty : fields.delta !== undefined ? oldQty + fields.delta : oldQty
+    const signed = newQty - oldQty
+    if (fields.movement_type === "stock_in" && signed < 0) throw new AppError("stock_in cannot lower the stock", 400)
+    if (fields.movement_type === "stock_out" && signed > 0) throw new AppError("stock_out cannot raise the stock", 400)
+    const { stock, movement } = await applyStockDelta(
+      {
+        storeId: actor.store_id,
+        storeIdInt: actor.store_id_int,
+        location,
+        productId: product.id,
+        delta: signed,
+        movement_type: fields.movement_type || "adjustment",
+        reason: fields.reason || (row ? "count" : "opening_balance"),
+        reason_note: fields.reason_note,
+        staff_id: actor.id,
+        low_stock_threshold: fields.low_stock_threshold,
+        expiry_date: fields.expiry_date,
+      },
+      { transaction }
+    )
+    return { movementId: movement?.id || null, stockId: stock.id }
+  })
+}
+
+/**
+ * DELETE /product-stocks/:id — soft delete: the qty goes to 0 through an adjustment movement
+ * (reason other), then the entry leaves the stock & expiry lists. A later movement brings it back.
+ */
+export async function deleteStockEntry(actor, id, { reason_note } = {}) {
+  return sequelize.transaction(async (transaction) => {
+    const row = await findStockEntry(actor, id, transaction)
+    const location = await Location.findByPk(row.location_id, { transaction })
+    const result = await applyStockDelta(
+      {
+        storeId: row.store_id,
+        storeIdInt: row.store_id_int,
+        location,
+        productId: row.product_id,
+        delta: -Number(row.qty),
+        movement_type: "adjustment",
+        reason: "other",
+        reason_note: `Stock entry deleted${reason_note ? `: ${reason_note}` : ""}`,
+        staff_id: actor.id,
+      },
+      { transaction }
+    )
+    await ProductStock.update({ deleted_at: new Date() }, { where: { id: row.id }, transaction })
+    return { movementId: result.movement?.id || null, stockId: row.id }
   })
 }
 

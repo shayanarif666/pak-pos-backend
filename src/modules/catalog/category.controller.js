@@ -2,7 +2,11 @@ import { apiResponse } from "../../shared/utils/apiResponse.js"
 import { asyncHandler } from "../../shared/utils/asyncHandler.js"
 import { getStoreForManager } from "../stores/store.service.js"
 import { bulkStatus, posBulkResponse, extractBulkItems, runBulk } from "../../shared/utils/bulk.util.js"
-import { parseCreateCategory, parsePatchCategory } from "./category.validation.js"
+import {
+  parseCategoryLocations,
+  parseCreateCategory,
+  parsePatchCategory,
+} from "./category.validation.js"
 import { Category } from "./category.model.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import {
@@ -62,6 +66,14 @@ export const patch = asyncHandler(async (req, res) => {
     req.user
   )
   return apiResponse(res, 200, "Category updated", category)
+})
+
+/** PATCH /categories/locations — { category_ids, location_scope, location_ids }: where they are sold. */
+export const patchLocations = asyncHandler(async (req, res) => {
+  const { category_ids, ...scope } = parseCategoryLocations(req.body)
+  const rows = await categoryService.updateCategoryLocations(req.storeId, category_ids, scope)
+  const data = req.auth?.channel === "pos" ? await posCategories(rows) : rows
+  return apiResponse(res, 200, "Category Locations Updated", data)
 })
 
 export const remove = asyncHandler(async (req, res) => {

@@ -5,6 +5,7 @@ import { StockMovement } from "./stockMovement.model.js"
 import { Store } from "../stores/store.model.js"
 import { Location } from "../locations/location.model.js"
 import { User } from "../auth/user.model.js"
+import { Supplier } from "./supplier.model.js"
 import {
   getProduct,
   getProductByNumber,
@@ -13,6 +14,7 @@ import {
   stockPlaces,
 } from "../catalog/product.service.js"
 import { Product } from "../catalog/product.model.js"
+import { ProductStock } from "../catalog/productStock.model.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import {
@@ -28,6 +30,7 @@ const movementInclude = [
   { model: Location, attributes: ["id", "name", "location_id_int"] },
   // Who did it (the store admin too, who is not in the staff list).
   { model: User, as: "staff", attributes: ["id", "user_number", "name", "role"] },
+  { model: Supplier, attributes: ["id", "supplier_number", "name"] },
 ]
 
 /** product / variant of a movement: a variant shows its product and its own number and name. */
@@ -57,6 +60,7 @@ function publicMovement(row, extras = {}) {
   const json = row.toJSON ? row.toJSON() : row
   return {
     id: json.id,
+    movement_number: json.movement_number,
     store_id: json.store_id,
     store_name: extras.store_name ?? json.Store?.name ?? null,
     location_id: json.location_id,
@@ -71,10 +75,13 @@ function publicMovement(row, extras = {}) {
     qty: Number(json.qty),
     qty_after: json.qty_after == null ? null : Number(json.qty_after),
     supplier_id: json.supplier_id,
+    supplier: json.Supplier ? { id: json.Supplier.id, supplier_number: json.Supplier.supplier_number, name: json.Supplier.name } : null,
     staff_id: json.staff_id,
     staff: json.staff ? { id: json.staff.id, user_number: json.staff.user_number, name: json.staff.name, role: json.staff.role } : null,
     order_id: json.order_id,
     created_at: json.created_at,
+    // When it was last edited (null = never).
+    updated_at: json.updated_at || null,
     ...publicVisibility(json),
   }
 }
@@ -265,4 +272,136 @@ function stockSummary(product, qty) {
     }
   }
   return { product_id: product.product_number, qty }
+}
+
+// ---- Edit / soft delete of a movement (dashboard: Stock Movements) ----
+
+const EDITABLE_TYPES = ["stock_in", "stock_out", "adjustment"]
+// Written by a sale, refund or transfer: those change with the order / transfer, never here.
+const LOCKED_REASONS = ["sale", "refund", "transfer", "custom_sale"]
+
+/** The movement by its number (1, 2, 3…) or UUID; a manager / cashier only at their location. */
+async function findMovement(actor, ref, transaction) {
+  const value = String(ref ?? "").trim()
+  const where = /^\d+$/.test(value)
+    ? { store_id: actor.store_id, movement_number: Number(value) }
+    : { store_id: actor.store_id, id: value }
+  const row = await StockMovement.findOne({ where, transaction, lock: transaction?.LOCK.UPDATE })
+  if (!row) throw new NotFoundError("Stock movement not found")
+  if (actor.role !== "store_admin" && row.location_id !== actor.location_id) {
+    throw new NotFoundError("Stock movement not found")
+  }
+  return row
+}
+
+function assertEditable(row, action) {
+  if (!EDITABLE_TYPES.includes(row.movement_type) || LOCKED_REASONS.includes(row.reason) || row.order_id) {
+    throw new AppError(
+      `This ${String(row.movement_type).replaceAll("_", " ")} movement comes from a sale, refund or transfer and cannot be ${action} here`,
+      409
+    )
+  }
+}
+
+/**
+ * Moves the stock at the movement's product + location by diff, and shifts "stock after" of
+ * every later movement there by the same amount (so the history still adds up).
+ */
+async function shiftStock(row, diff, transaction) {
+  const stock = await ProductStock.findOne({
+    where: { location_id: row.location_id, product_id: row.product_id },
+    transaction,
+    lock: transaction.LOCK.UPDATE,
+  })
+  const current = stock ? Number(stock.qty) : 0
+  const next = current + diff
+  if (next < 0) {
+    throw new AppError(
+      `Stock cannot go below 0: there are ${current} left, and this change takes away ${Math.abs(diff)}`,
+      400
+    )
+  }
+  // Nor at any point since this movement (stock after of this one and the later ones).
+  if (diff < 0) {
+    const lowest = await StockMovement.min("qty_after", {
+      where: {
+        store_id: row.store_id,
+        location_id: row.location_id,
+        product_id: row.product_id,
+        movement_number: { [Op.gte]: row.movement_number },
+        qty_after: { [Op.ne]: null },
+      },
+      transaction,
+    })
+    if (lowest != null && Number(lowest) + diff < 0) {
+      throw new AppError(
+        `Stock cannot go below 0: after this movement it dropped to ${Number(lowest)}, and this change takes away ${Math.abs(diff)} more`,
+        400
+      )
+    }
+  }
+  // A deleted stock entry that gets stock back shows again.
+  if (stock && diff !== 0) await stock.update({ qty: next, ...(stock.deleted_at && next > 0 ? { deleted_at: null } : {}) }, { transaction })
+  if (diff !== 0) {
+    await StockMovement.increment(
+      { qty_after: diff },
+      {
+        where: {
+          store_id: row.store_id,
+          location_id: row.location_id,
+          product_id: row.product_id,
+          movement_number: { [Op.gt]: row.movement_number },
+          qty_after: { [Op.ne]: null },
+        },
+        transaction,
+      }
+    )
+  }
+  return stock
+}
+
+/**
+ * One row of PATCH /stock-movements/bulk — fixes a wrong movement: movement_type, reason, qty,
+ * reason_note (only what is sent changes). The difference is put on the stock at once.
+ * Returns { movementId, stockId } (stockEditView shapes the reply).
+ */
+export async function updateMovement(actor, ref, fields) {
+  return sequelize.transaction(async (transaction) => {
+    const row = await findMovement(actor, ref, transaction)
+    assertEditable(row, "edited")
+    const type = fields.movement_type ?? row.movement_type
+    if (fields.reason === "opening_balance" && row.reason !== "opening_balance") {
+      throw new AppError("opening_balance is only for the stock a product was created with", 400)
+    }
+    const oldQty = Number(row.qty)
+    // Same amount, new type: stock_in adds, stock_out takes away, an adjustment keeps the sign.
+    const raw = fields.qty ?? oldQty
+    const qty = type === "stock_in" ? Math.abs(raw) : type === "stock_out" ? -Math.abs(raw) : Number(raw)
+    if (!qty) throw new AppError("qty must be a non-zero number", 400)
+    const diff = qty - oldQty
+    const stock = await shiftStock(row, diff, transaction)
+    await row.update(
+      {
+        movement_type: type,
+        reason: fields.reason ?? row.reason,
+        ...(fields.reason_note !== undefined ? { reason_note: fields.reason_note } : {}),
+        qty,
+        qty_after: row.qty_after == null ? null : Number(row.qty_after) + diff,
+        updated_at: new Date(),
+      },
+      { transaction }
+    )
+    return { movementId: row.id, stockId: stock?.id || null }
+  })
+}
+
+/** DELETE /stock-movements/:id — soft delete: its qty is taken back off the stock. */
+export async function deleteMovement(actor, ref) {
+  return sequelize.transaction(async (transaction) => {
+    const row = await findMovement(actor, ref, transaction)
+    assertEditable(row, "deleted")
+    const stock = await shiftStock(row, -Number(row.qty), transaction)
+    await row.destroy({ transaction })
+    return { movementId: row.id, stockId: stock?.id || null }
+  })
 }

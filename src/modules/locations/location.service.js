@@ -1,6 +1,9 @@
 import { Op, UniqueConstraintError } from "sequelize"
 import { Location } from "./location.model.js"
 import { User } from "../auth/user.model.js"
+import { ProductStock } from "../catalog/productStock.model.js"
+import { StockTransfer } from "../inventory/stockTransfer.model.js"
+import { StockTransferItem } from "../inventory/stockTransferItem.model.js"
 import { sequelize } from "../../db/sequelize.js"
 import {
   ensureSequenceAtLeast,
@@ -195,7 +198,8 @@ async function resolveManagersForLocations(storeId, locations) {
 }
 
 export async function listLocations(storeId, actor = null) {
-  const where = { store_id: storeId }
+  // A deleted branch is left out (its history still loads it by id).
+  const where = { store_id: storeId, deleted_at: null }
   if (actor?.role === "manager") {
     if (!actor.location_id) return []
     where.id = actor.location_id
@@ -238,7 +242,7 @@ export async function listLocations(storeId, actor = null) {
 
 export async function getLocation(storeId, locationId) {
   const location = await Location.findOne({
-    where: { id: locationId, store_id: storeId },
+    where: { id: locationId, store_id: storeId, deleted_at: null },
   })
   if (!location) throw new NotFoundError("Location not found")
   return location
@@ -271,8 +275,9 @@ export async function resolveLocation(locationId) {
 
 export async function createLocation(store, fields) {
   return sequelize.transaction(async (transaction) => {
+    // Deleted branches do not count towards the plan.
     const count = await Location.count({
-      where: { store_id: store.id },
+      where: { store_id: store.id, deleted_at: null },
       transaction,
     })
     await assertPlan(store, "max_locations", { count })
@@ -328,7 +333,7 @@ export async function createLocation(store, fields) {
 
 export async function updateLocation(storeId, locationId, fields, actor) {
   const location = await Location.findOne({
-    where: { id: locationId, store_id: storeId },
+    where: { id: locationId, store_id: storeId, deleted_at: null },
   })
   if (!location) throw new NotFoundError("Location not found")
   if (actor?.role === "manager" && location.id !== actor.location_id) {
@@ -415,4 +420,42 @@ export async function updateLocation(storeId, locationId, fields, actor) {
       }),
     })
   })
+}
+
+/**
+ * DELETE /locations/:id — soft delete of a branch (store admin). It leaves the location list, the
+ * POS and the plan count; orders, stock movements and staff history still show its name. Not the
+ * default location, not while stock is held there or a transfer to / from it is on the way. Its
+ * managers and cashiers are switched off (and signed out).
+ */
+export async function deleteLocation(storeId, locationId) {
+  const location = await Location.findOne({ where: { id: locationId, store_id: storeId, deleted_at: null } })
+  if (!location) throw new NotFoundError("Location not found")
+  if (location.is_default) {
+    throw new ConflictError(`${location.name} is the default location: make another location the default first`)
+  }
+  const held = Number((await ProductStock.sum("qty", { where: { location_id: location.id, deleted_at: null } })) || 0)
+  if (held > 0) {
+    throw new ConflictError(`${location.name} still holds ${held} units of stock: transfer it to another location (or set it to 0) first`)
+  }
+  const openOut = await StockTransfer.count({ where: { store_id: storeId, from_location_id: location.id, status: { [Op.in]: ["pending", "on_the_way"] } } })
+  // Lines coming in, on transfers that are not deleted (StockTransfer is paranoid).
+  const incoming = await StockTransferItem.findAll({
+    where: { store_id: storeId, to_location_id: location.id, status: { [Op.in]: ["pending", "on_the_way"] } },
+    attributes: ["transfer_id"],
+  })
+  const openIn = incoming.length ? await StockTransfer.count({ where: { id: [...new Set(incoming.map((row) => row.transfer_id))] } }) : 0
+  if (openOut || openIn) {
+    throw new ConflictError(`A stock transfer to or from ${location.name} is still on the way: complete or cancel it first`)
+  }
+  const now = new Date()
+  await sequelize.transaction(async (transaction) => {
+    await location.update({ deleted_at: now, is_active: false }, { transaction })
+    // Its staff can no longer work there: switched off, and their tokens stop working.
+    await User.update(
+      { is_active: false, token_version: sequelize.literal("token_version + 1") },
+      { where: { store_id: storeId, location_id: location.id, role: { [Op.in]: ["manager", "cashier"] } }, transaction }
+    )
+  })
+  return { ...publicLocation(location, { manager: null }), deleted_at: now }
 }

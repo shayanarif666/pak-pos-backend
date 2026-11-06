@@ -118,9 +118,19 @@ export function receiptItemView(item, lookups = {}, { salesTaxRate = null } = {}
           type: offers[0].type || null,
           discount_type: offers[0].discount_type || null,
           discount_value: num(offers[0].discount_value),
-          amount: money(offers[0].amount),
+          // One discount: its amount; several: null each (the line's discount_amount is the total).
+          amount: offers[0].amount == null ? null : money(offers[0].amount),
         }
       : null,
+    // Every discount on the line (one or many), as sold.
+    discounts: offers.map((row) => ({
+      discount_id: row.id ?? null,
+      name: row.name || null,
+      type: row.type || null,
+      discount_type: row.discount_type || null,
+      discount_value: num(row.discount_value),
+      amount: row.amount == null ? null : money(row.amount),
+    })),
     ...(present(item.free_qty) ? { free_qty: num(item.free_qty) } : {}),
     ...(salesTax ? { sales_tax: salesTax } : {}),
     ...totals,

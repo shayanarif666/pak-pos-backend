@@ -246,6 +246,8 @@ function orderItemView(item, refs) {
       // Where the discount came from (none | product | category | product+category | bulk_tier |
       // offer) and the offer(s) applied, as they were at the sale. null on lines sold before this was kept.
       discount_source: item.discount_source || null,
+      // The discounts applied, as the till sent them: [{ discount_id (the discount number) }].
+      discount: parseList(item.offers).filter((offer) => offer?.id != null).map((offer) => ({ discount_id: offer.id })),
       offers: parseList(item.offers),
       free_qty: num(item.free_qty) ?? 0,
     }

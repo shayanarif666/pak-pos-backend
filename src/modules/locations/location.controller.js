@@ -5,7 +5,7 @@ import * as locationService from "./location.service.js"
 import { posView } from "../pos/posHistory.service.js"
 import { Location } from "./location.model.js"
 import { parsePatchLocation } from "./location.validation.js"
-import { bulkUpdateResponse, runBulkUpdate } from "../../shared/utils/bulkUpdate.util.js"
+import { bulkUpdateResponse, runBulkUpdate, uuidOfNumber } from "../../shared/utils/bulkUpdate.util.js"
 
 export const listLocations = asyncHandler(async (req, res) => {
   const actor = {
@@ -73,3 +73,15 @@ function posLocation(view) {
   const { id: _managerUuid, ...managerView } = manager || {}
   return { id: location_number, ...rest, manager: manager ? managerView : null }
 }
+
+/** DELETE /locations/:id (UUID or location number) — soft delete of a branch (store admin). */
+export const deleteLocation = asyncHandler(async (req, res) => {
+  const id = /^\d+$/.test(String(req.params.id))
+    ? await uuidOfNumber(Location, "location_id_int", req.storeId, req.params.id, "Location")
+    : req.params.id
+  const location = await locationService.deleteLocation(req.storeId, id)
+  if (req.auth?.channel === "pos") {
+    return apiResponse(res, 200, "Location Deleted", posView(location, "location_number"))
+  }
+  return apiResponse(res, 200, "Location deleted", location)
+})

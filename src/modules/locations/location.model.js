@@ -17,6 +17,9 @@ export const Location = sequelize.define(
     phone: { type: DataTypes.STRING(64), allowNull: true },
     is_default: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     is_active: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+    // Soft delete: the branch leaves the location list and the plan count (is_active is false too).
+    // Not paranoid — orders, stock and staff history still load it by id.
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
   },
   {
     ...modelOptions,

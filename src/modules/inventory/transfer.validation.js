@@ -26,19 +26,11 @@ function optionalVariant(row, label) {
   return value == null ? null : requireRef({ v: value }, "v", `${label}.variant_id`)
 }
 
-/**
- * One transfer: from one location to one or more destinations, each with its own products and qty:
- *   { from_location_id, note?, destinations: [{ to_location_id, products: [{ product_id, variant_id?, qty }] }] }
- * The older single form { from_location_id, to_location_id, product_id, qty } is one destination
- * with one product. The same product twice for one destination is one line (qty added up).
- */
-export function parseCreateTransfer(body) {
-  const from_location_id = requireRef({ from: refOf(body, ["from_location_id", "fromLocationId"]) }, "from", "from_location_id")
-
-  let destinations
+/** destinations: [{ to_location_id, products: [{ product_id, variant_id?, qty }] }], or the older single form. */
+function parseDestinationList(body) {
   if (Array.isArray(body.destinations)) {
     if (!body.destinations.length) throw new AppError("destinations needs at least one location", 400)
-    destinations = body.destinations.map((dest, d) => {
+    return body.destinations.map((dest, d) => {
       const label = `destinations[${d}]`
       if (!dest || typeof dest !== "object") throw new AppError(`${label} is invalid`, 400)
       const to_location_id = requireRef({ to: refOf(dest, ["to_location_id", "toLocationId"]) }, "to", `${label}.to_location_id`)
@@ -52,25 +44,26 @@ export function parseCreateTransfer(body) {
       }))
       return { to_location_id, products }
     })
-  } else {
-    destinations = [
-      {
-        to_location_id: requireRef({ to: refOf(body, ["to_location_id", "toLocationId"]) }, "to", "to_location_id"),
-        products: [
-          {
-            product_id: requireRef({ id: refOf(body, ["product_id", "productId"]) }, "id", "product_id"),
-            variant_id: optionalVariant(body, "body"),
-            qty: requireQty(body.qty, "qty"),
-          },
-        ],
-      },
-    ]
   }
+  return [
+    {
+      to_location_id: requireRef({ to: refOf(body, ["to_location_id", "toLocationId"]) }, "to", "to_location_id"),
+      products: [
+        {
+          product_id: requireRef({ id: refOf(body, ["product_id", "productId"]) }, "id", "product_id"),
+          variant_id: optionalVariant(body, "body"),
+          qty: requireQty(body.qty, "qty"),
+        },
+      ],
+    },
+  ]
+}
 
-  // One destination named twice is merged; a product twice for one destination adds up.
+/** One destination named twice is merged; a product twice for one destination adds up. */
+function mergeDestinations(destinations, from_location_id) {
   const byDestination = new Map()
   for (const dest of destinations) {
-    if (dest.to_location_id === from_location_id) {
+    if (from_location_id && dest.to_location_id === from_location_id) {
       throw new AppError("A destination cannot be the location the stock leaves from", 400)
     }
     const products = byDestination.get(dest.to_location_id) || new Map()
@@ -83,17 +76,43 @@ export function parseCreateTransfer(body) {
     }
     byDestination.set(dest.to_location_id, products)
   }
+  return [...byDestination].map(([to_location_id, products]) => ({ to_location_id, products: [...products.values()] }))
+}
 
+const noteOf = (body) => (body.note === undefined || body.note === null ? null : String(body.note).trim())
+
+/**
+ * One transfer: from one location to one or more destinations, each with its own products and qty:
+ *   { from_location_id, note?, destinations: [{ to_location_id, products: [{ product_id, variant_id?, qty }] }] }
+ * The older single form { from_location_id, to_location_id, product_id, qty } is one destination
+ * with one product. The same product twice for one destination is one line (qty added up).
+ */
+export function parseCreateTransfer(body) {
+  const from_location_id = requireRef({ from: refOf(body, ["from_location_id", "fromLocationId"]) }, "from", "from_location_id")
   return {
     // The staff member who sent it (PIN-picked); defaults to the signed-in user.
     staff_ref: body.staff_id ?? body.staffId ?? null,
     from_location_id,
-    destinations: [...byDestination].map(([to_location_id, products]) => ({
-      to_location_id,
-      products: [...products.values()],
-    })),
-    note: body.note === undefined || body.note === null ? null : String(body.note).trim(),
+    destinations: mergeDestinations(parseDestinationList(body), from_location_id),
+    note: noteOf(body),
   }
+}
+
+/**
+ * One item of PATCH /stock-transfers/bulk, the same shape as create plus id (read by the
+ * controller): { from_location_id?, note?, destinations?: [...] }. destinations replace everything
+ * on the way (the whole list, as on create); left out = the products stay. At least one field.
+ */
+export function parsePatchTransfer(body) {
+  const fromRef = refOf(body, ["from_location_id", "fromLocationId"])
+  const from_location_id = fromRef == null ? null : requireRef({ from: fromRef }, "from", "from_location_id")
+  const hasDestinations = Array.isArray(body.destinations) || refOf(body, ["to_location_id", "toLocationId"]) != null
+  const destinations = hasDestinations ? mergeDestinations(parseDestinationList(body), from_location_id) : undefined
+  const note = body.note === undefined ? undefined : noteOf(body)
+  if (!from_location_id && !destinations && note === undefined) {
+    throw new AppError("Send destinations, from_location_id or note", 400)
+  }
+  return { staff_ref: body.staff_id ?? body.staffId ?? null, from_location_id, destinations, note }
 }
 
 /**
