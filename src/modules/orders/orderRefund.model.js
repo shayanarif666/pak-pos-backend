@@ -23,6 +23,13 @@ export const OrderRefund = sequelize.define(
     // How it was paid back, per method of the sale: [{ method, bill_share, payment_tax_percent,
     // payment_tax_amount, amount }]; method credit = off the udhaar. Null on older (all-cash) refunds.
     payments: { type: DataTypes.JSON, allowNull: true },
+    // POS refunds: the till id (sent again = the same refund), when it happened at the till, the
+    // batch the money left from, and its discount / payment surcharge totals as sent.
+    client_local_id: { type: DataTypes.STRING(128), allowNull: true },
+    refunded_at: { type: DataTypes.DATE, allowNull: true },
+    register_session_id: uuidCol(true),
+    discount_amount: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
+    surcharge_amount: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
     ...saleChannelVisibilityFields(),
   },
   {

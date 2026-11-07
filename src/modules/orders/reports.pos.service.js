@@ -421,6 +421,8 @@ function byProduct(completed) {
             id: key,
             product: item.Product?.title || item.title,
             category: item.Product?.Category?.name || item.custom_category || (item.product_id ? "Uncategorized" : "Custom"),
+            // The unit its quantities are in (bottle, kg, gram…).
+            unit: item.unit || item.Product?.unit || null,
           })
         )
       }
@@ -771,6 +773,8 @@ async function zReports(actor, query, scope) {
       return {
         id: json.id,
         session_id: shortSessionId(json.id),
+        batch_number: json.session_number ?? null,
+        cashier_id: json.cashier_id || null,
         date_time: json.opened_at,
         closed_at: json.closed_at || null,
         status: json.status === "open" ? "OPEN" : "CLOSED",
@@ -818,7 +822,7 @@ async function inventoryReport(actor, query, scope) {
     include: [
       {
         model: Product,
-        attributes: ["id", "title", "sku"],
+        attributes: ["id", "title", "sku", "unit"],
         include: [{ model: Category, attributes: ["id", "name"] }],
       },
       { model: Location, attributes: ["id", "name", "location_id_int"] },
@@ -859,6 +863,7 @@ async function inventoryReport(actor, query, scope) {
         category: json.Product?.Category?.name || "—",
         location: json.Location?.name || "—",
         location_id: json.Location?.location_id_int ?? null,
+        unit: json.Product?.unit || null,
         stock_in: delta.inn,
         stock_out: delta.out,
         current_stock: Number(json.qty || 0),
@@ -887,7 +892,7 @@ async function stockMovementReport(actor, query, scope) {
   const rows = await StockMovement.findAll({
     where,
     include: [
-      { model: Product, attributes: ["id", "title", "sku"] },
+      { model: Product, attributes: ["id", "title", "sku", "unit"] },
       { model: User, as: "staff", attributes: ["id", "name"] },
       { model: Location, attributes: ["id", "name", "location_id_int"] },
     ],
@@ -905,6 +910,7 @@ async function stockMovementReport(actor, query, scope) {
         location_id: json.Location?.location_id_int ?? null,
         type: String(json.movement_type || "").toUpperCase(),
         qty: Number(json.qty || 0),
+        unit: json.Product?.unit || null,
         reason: prettyReason(json.reason),
         channel: json.channel || null,
         cashier: json.staff?.name || "System",
@@ -934,7 +940,7 @@ async function transferReport(actor, query, scope) {
         as: "items",
         include: [
           { model: Location, as: "toLocation", attributes: ["id", "name", "location_id_int"] },
-          { model: Product, attributes: ["id", "title", "sku"] },
+          { model: Product, attributes: ["id", "title", "sku", "unit"] },
         ],
       },
     ],

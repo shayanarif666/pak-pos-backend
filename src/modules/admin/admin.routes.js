@@ -22,6 +22,7 @@ import {
   bulkDeleteModule,
   createDevice,
   createLicense,
+  clearStoreData,
   deleteAllDbData,
   deleteModuleAll,
   deleteModuleById,
@@ -94,6 +95,8 @@ router.get("/audit-logs", listAdmin)
 router.use("/billings", adminBillingRoutes)
 
 router.get("/data/modules", listDataModules)
+// Every business row of one store (store number or UUID); the store and its admin stay.
+router.delete("/stores/:storeId/data", clearStoreData)
 router.delete("/data", deleteAllDbData)
 router.delete("/data/:module", deleteModuleAll)
 router.post("/data/:module/bulk-delete", validate(parseBulkDelete), bulkDeleteModule)

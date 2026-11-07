@@ -22,6 +22,9 @@ export const Supplier = sequelize.define(
       defaultValue: "all",
     },
     is_active: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
+    // Soft delete: the supplier leaves the list; stock movements and its ledger keep its name
+    // (not paranoid, so those still load it by id).
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
     ...catalogChannelVisibilityFields(),
   },
   {

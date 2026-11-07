@@ -37,7 +37,10 @@ import {
   putBulkTiers,
   remove,
   removeImage,
+  removeVariant,
+  removeVariantImage,
   uploadImage,
+  uploadVariantImage,
 } from "./product.controller.js"
 
 const router = Router()
@@ -51,6 +54,12 @@ router.post("/image", ...catalogWrite, uploadSingleImage("image"), uploadImage)
 router.post("/:id/image", ...catalogWrite, uploadSingleImage("image"), uploadImage)
 router.get("/:id/image", ...catalogRead, getImage)
 router.delete("/:id/image", ...catalogWrite, removeImage)
+// A variant's own image: multipart image + productId + variantId (its number in the product or UUID).
+router.post("/variant-image", ...catalogWrite, uploadSingleImage("image"), uploadVariantImage)
+router.post("/:id/variants/:variantId/image", ...catalogWrite, uploadSingleImage("image"), uploadVariantImage)
+router.delete("/:id/variants/:variantId/image", ...catalogWrite, removeVariantImage)
+// Soft delete of one variant: hidden everywhere, its stock / movements / sales stay.
+router.delete("/:id/variants/:variantId", ...catalogWrite, removeVariant)
 router.post(
   "/",
   ...catalogWrite,

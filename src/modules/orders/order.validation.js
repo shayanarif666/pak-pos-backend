@@ -155,7 +155,14 @@ function parsePricedLine(row, index) {
     weight: row.weight == null ? null : Number(row.weight),
     unit_price,
     cost_price: moneyAtLeastZero(row, "cost_price", label),
-    priced: { discount, taxes },
+    // The till figures of the line (saved as sent; worked out from the rest when left out).
+    priced: {
+      discount,
+      taxes,
+      subtotal: moneyAtLeastZero(row, "subtotal", label),
+      tax_amount: moneyAtLeastZero(row, "tax_amount", label),
+      total: moneyAtLeastZero(row, "total", label),
+    },
   }
 }
 
@@ -260,6 +267,8 @@ export function parseCreateOrder(body) {
     register_session_id: optionalRef(body, ["batch_id", "batchId", "register_session_id"]),
     device_id: optionalUuid(body, "device_id"),
     client_local_id: optionalString(body, "client_local_id"),
+    // The number printed on the till (offline) receipt.
+    local_receipt_number: optionalString(body, "local_receipt_number"),
     coupon_code: optionalString(body, "coupon_code"),
     shipping_address: optionalString(body, "shipping_address"),
     order_discount_type: optionalString(body, "order_discount_type"),
@@ -284,6 +293,12 @@ export function parseCreateOrder(body) {
           coupon: pricedAmount(body, "coupon", (value) => ({ code: value.code == null ? null : String(value.code).trim() })),
           shipping_fee: moneyAtLeastZero(body, "shipping_fee", "order") ?? 0,
           total_amount: moneyAtLeastZero(body, "total_amount", "order"),
+          // The order totals as the till worked them out (saved as sent).
+          gross_amount: moneyAtLeastZero(body, "gross_amount", "order"),
+          lines_discount_amount: moneyAtLeastZero(body, "discount_amount", "order"),
+          lines_subtotal: moneyAtLeastZero(body, "subtotal", "order"),
+          lines_tax_amount: moneyAtLeastZero(body, "tax_amount", "order"),
+          surcharge_amount: moneyAtLeastZero(body, "surcharge_amount", "order"),
         }
       : {}),
   }
@@ -332,4 +347,92 @@ export function parseBulkRefundComplete(body) {
   const order_id = optionalRef(body, ["order_id", "orderId"])
   if (!order_id) throw new AppError("order_id is required", 400)
   return { order_id, ...parseRefundComplete(body) }
+}
+
+/**
+ * A POS refund (the till works out every figure, saved as sent):
+ *   { client_local_id, refunded_at?, order_id, reason, restock?, batch_id?, staff_id?,
+ *     lines: [{ order_item_id, qty, restock?, discount_amount?, amount, taxes?, total }],
+ *     payments: [{ method, surcharge_type?, surcharge_value?, surcharge_amount?, amount }], total_amount }
+ * qty is in the unit the line was sold in (packs on a pack line).
+ */
+export function parsePosRefund(body) {
+  const order_id = optionalRef(body, ["order_id", "orderId"])
+  if (!order_id) throw new AppError("order_id is required", 400)
+  const reason = optionalString(body, "reason")
+  if (!reason) throw new AppError("reason is required", 400)
+  const client_local_id = optionalString(body, "client_local_id")
+  if (!client_local_id) throw new AppError("client_local_id is required (the till's id for this refund)", 400)
+  const restockAll = body.restock === undefined || body.restock === null ? true : Boolean(body.restock)
+  if (!Array.isArray(body.lines) || !body.lines.length) throw new AppError("lines needs at least one line", 400)
+  const lines = body.lines.map((row, index) => {
+    const label = `lines[${index}]`
+    if (!row || typeof row !== "object") throw new AppError(`${label} is invalid`, 400)
+    const order_item_id = optionalRef(row, ["order_item_id", "orderItemId"])
+    if (!order_item_id) throw new AppError(`${label}.order_item_id is required`, 400)
+    const qty = Number(row.qty ?? row.quantity)
+    if (Number.isNaN(qty) || qty <= 0) throw new AppError(`${label}.qty must be > 0`, 400)
+    const amount = moneyAtLeastZero(row, "amount", label)
+    if (amount == null) throw new AppError(`${label}.amount is required`, 400)
+    const taxes = (Array.isArray(row.taxes) ? row.taxes : []).map((tax, t) => {
+      const taxLabel = `${label}.taxes[${t}]`
+      if (!tax || typeof tax !== "object") throw new AppError(`${taxLabel} is invalid`, 400)
+      const level = String(tax.level || "product")
+      if (!TAX_LEVELS.includes(level)) throw new AppError(`${taxLabel}.level must be product, store, category or sales`, 400)
+      const taxAmount = moneyAtLeastZero(tax, "amount", taxLabel)
+      if (taxAmount == null) throw new AppError(`${taxLabel}.amount is required`, 400)
+      return { level, name: tax.name == null ? null : String(tax.name).trim(), rate: moneyAtLeastZero(tax, "rate", taxLabel), amount: taxAmount }
+    })
+    const taxTotal = Number(taxes.reduce((sum, tax) => sum + tax.amount, 0).toFixed(2))
+    const total = moneyAtLeastZero(row, "total", label) ?? Number((amount + taxTotal).toFixed(2))
+    return {
+      order_item_id,
+      qty,
+      restock: row.restock === undefined || row.restock === null ? restockAll : Boolean(row.restock),
+      discount_amount: moneyAtLeastZero(row, "discount_amount", label) ?? 0,
+      amount,
+      taxes,
+      tax_amount: Number((total - amount).toFixed(2)),
+      total,
+    }
+  })
+  if (!Array.isArray(body.payments) || !body.payments.length) throw new AppError("payments needs at least one row", 400)
+  const payments = body.payments.map((row, index) => {
+    const label = `payments[${index}]`
+    if (!row || typeof row !== "object") throw new AppError(`${label} is invalid`, 400)
+    const method = String(row.method || "")
+    if (!PAYMENT_METHOD.includes(method) || method === "mixed") throw new AppError(`${label}.method is invalid`, 400)
+    const amount = moneyAtLeastZero(row, "amount", label)
+    if (!(amount > 0)) throw new AppError(`${label}.amount must be > 0`, 400)
+    const surcharge_type = row.surcharge_type == null || row.surcharge_type === "" ? null : String(row.surcharge_type)
+    if (surcharge_type && !["percentage", "fixed"].includes(surcharge_type)) {
+      throw new AppError(`${label}.surcharge_type must be percentage or fixed`, 400)
+    }
+    const surcharge_amount = moneyAtLeastZero(row, "surcharge_amount", label) ?? 0
+    return {
+      method,
+      bill_share: Number((amount - surcharge_amount).toFixed(2)),
+      surcharge_type,
+      surcharge_value: moneyAtLeastZero(row, "surcharge_value", label),
+      surcharge_amount,
+      amount,
+    }
+  })
+  const total_amount = moneyAtLeastZero(body, "total_amount", "refund")
+  if (total_amount == null) throw new AppError("total_amount is required", 400)
+  const paid = Number(payments.reduce((sum, row) => sum + row.amount, 0).toFixed(2))
+  if (Math.abs(paid - total_amount) > 0.01) {
+    throw new AppError(`total_amount ${total_amount} is not the sum of payments (${paid})`, 400)
+  }
+  return {
+    order_id,
+    reason,
+    client_local_id,
+    refunded_at: optionalString(body, "refunded_at"),
+    batch_ref: optionalRef(body, ["batch_id", "batchId"]),
+    staff_ref: staffRefFrom(body),
+    lines,
+    payments,
+    total_amount,
+  }
 }

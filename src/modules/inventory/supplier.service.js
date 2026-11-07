@@ -55,7 +55,7 @@ function servesLocation(row, locationId) {
 
 async function loadSupplier(storeId, id, transaction) {
   const row = await Supplier.findOne({
-    where: { id, store_id: storeId },
+    where: { id, store_id: storeId, deleted_at: null },
     include: [SUPPLIER_LOCATIONS_INCLUDE],
     transaction,
   })
@@ -107,7 +107,8 @@ async function replaceSupplierLocations(supplier, locationIds, transaction) {
 export async function listSuppliers(storeId, actor = null, query = {}) {
   const locationId = scopedLocationId(actor, query)
   const rows = await Supplier.findAll({
-    where: { store_id: storeId },
+    // A deleted supplier is left out (movements and its ledger still show its name).
+    where: { store_id: storeId, deleted_at: null },
     include: [SUPPLIER_LOCATIONS_INCLUDE],
     order: [["name", "ASC"]],
   })
@@ -167,6 +168,19 @@ export async function updateSupplier(storeId, id, input, actor = null) {
     await row.update(fields, { transaction })
   })
   return publicSupplier(await loadSupplier(storeId, id))
+}
+
+/**
+ * DELETE /suppliers/:id — soft delete: the supplier leaves the list and can no longer be picked on a
+ * stock movement; movements and ledger entries that named it keep its name. Switching it off
+ * instead is PATCH is_active.
+ */
+export async function deleteSupplier(storeId, id, actor = null) {
+  const row = await getSupplier(storeId, id, actor)
+  const view = publicSupplier(row)
+  const deleted_at = new Date()
+  await row.update({ deleted_at, is_active: false })
+  return { ...view, is_active: false, deleted_at }
 }
 
 export async function deactivateSupplier(storeId, id, actor = null) {

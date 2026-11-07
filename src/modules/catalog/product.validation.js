@@ -9,6 +9,38 @@ import { DISCOUNT_TYPE, PRODUCT_UNIT, TAX_AMOUNT_TYPE } from "../../db/enums.js"
  * The single tax_name / tax_type / tax_value of older clients becomes a one-item list.
  * Returns undefined when nothing tax-related was sent (PATCH keeps the current taxes).
  */
+const HEX_COLOR = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i
+
+/**
+ * colors: the colours it comes in, as hex codes ["#E11D48", "#2563EB"] ("e11d48" / "#abc" are
+ * accepted and saved as "#E11D48" / "#AABBCC"; repeats are dropped). null / "" = none.
+ * undefined = not sent. A multipart form may send it as a JSON string.
+ */
+export function parseColors(body, label = "colors") {
+  if (body?.colors === undefined) return undefined
+  let raw = body.colors
+  if (raw === null || raw === "") return []
+  if (typeof raw === "string") {
+    try {
+      raw = JSON.parse(raw)
+    } catch {
+      raw = raw.split(",")
+    }
+  }
+  if (!Array.isArray(raw)) throw new AppError(`${label} must be an array of hex colour codes`, 400)
+  if (raw.length > 50) throw new AppError(`${label}: 50 colours at most`, 400)
+  const out = []
+  for (const [index, value] of raw.entries()) {
+    const text = String(value ?? "").trim()
+    const match = HEX_COLOR.exec(text)
+    if (!match) throw new AppError(`${label}[${index}] must be a hex colour code like #E11D48`, 400)
+    let hex = match[1].toUpperCase()
+    if (hex.length === 3) hex = hex.split("").map((c) => c + c).join("")
+    if (!out.includes(`#${hex}`)) out.push(`#${hex}`)
+  }
+  return out
+}
+
 function parseTaxes(body) {
   let list
   if (body.taxes !== undefined) {
@@ -297,6 +329,10 @@ function parseVariants(body, { patch = false } = {}) {
       if (!(optionalNumber(row, "pack_selling_price") > 0)) throw new AppError(`${label}.pack_price is required for a pack variant`, 400)
     }
     const looseRequired = !existing && !isPack
+    // Its one image: a URL (image or featured_image); null / "" removes it on PATCH.
+    const rawImage = row.image !== undefined ? row.image : row.featured_image
+    if (rawImage != null && typeof rawImage !== "string") throw new AppError(`${label}.image must be an image URL`, 400)
+    const image = rawImage === undefined ? undefined : rawImage && rawImage.trim() ? rawImage.trim() : null
     return {
       ref: existing ? String(ref).trim() : null,
       name,
@@ -315,6 +351,9 @@ function parseVariants(body, { patch = false } = {}) {
       taxes: parseTaxes(row),
       // Opening stock (create / a new variant) or the counted stock (an existing variant), per location.
       stock: parseStockRows(row.stock === undefined && row.qty !== undefined ? { ...row, stock: row.qty } : row, `${label}.stock`),
+      image,
+      // The colours this variant comes in (hex codes). undefined = not sent.
+      colors: parseColors(row, `${label}.colors`),
       is_active: optionalBool(row, "is_active"),
     }
   })
@@ -369,6 +408,8 @@ export function parseCreateProduct(rawBody) {
     pack_selling_price: optionalNumber(body, "pack_selling_price") ?? null,
     sell_loose: optionalBool(body, "sell_loose") ?? false,
     is_weight_based: optionalBool(body, "is_weight_based") ?? false,
+    // The colours it comes in (hex codes); with variants each variant has its own.
+    colors: parseColors(body) ?? [],
     has_bulk_discount: optionalBool(body, "has_bulk_discount") ?? false,
     low_stock_threshold: optionalNumber(body, "low_stock_threshold") ?? 10,
     is_published: optionalBool(body, "is_published") ?? false,
@@ -454,6 +495,7 @@ export function parsePatchProduct(rawBody) {
   if (body.has_bulk_discount !== undefined) {
     fields.has_bulk_discount = optionalBool(body, "has_bulk_discount")
   }
+  if (body.colors !== undefined) fields.colors = parseColors(body)
   if (body.low_stock_threshold !== undefined) {
     fields.low_stock_threshold = optionalNumber(body, "low_stock_threshold")
   }

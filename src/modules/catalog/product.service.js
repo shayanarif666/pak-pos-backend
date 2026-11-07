@@ -1,4 +1,6 @@
 import { Op, UniqueConstraintError } from "sequelize"
+import { lotsByStock, publicLot } from "./stockLots.service.js"
+import { StockLot } from "./stockLot.model.js"
 import { sequelize } from "../../db/sequelize.js"
 import { Product } from "./product.model.js"
 import { Category } from "./category.model.js"
@@ -74,8 +76,10 @@ const VARIANTS_INCLUDE = {
   attributes: [
     "id", "product_number", "variant_number", "variant_name", "title", "sku", "barcode", "cost_price", "selling_price", "is_active",
     "is_pack_product", "pack_size", "pack_cost_price", "pack_selling_price", "sell_loose", "variant_taxes", "taxes",
-    "low_stock_threshold", "is_weight_based",
+    "low_stock_threshold", "is_weight_based", "featured_image", "colors",
   ],
+  // A deleted variant (soft delete) is left out.
+  where: { deleted_at: null },
   separate: true,
   order: [["variant_number", "ASC"], ["product_number", "ASC"]],
 }
@@ -356,6 +360,8 @@ function publicStock(row, product) {
     effective_threshold: threshold == null ? null : Number(threshold),
     is_low: threshold == null ? false : qty <= Number(threshold),
     number_of_packs: numberOfPacks(qty, product?.pack_size),
+    // Its lots, soonest expiry first: [{ id (lot number), qty, expiry_date, days_left, expiry_status, received_at, source }].
+    ...(row._lots ? { lots: row._lots.map((lot) => publicLot(lot)) } : {}),
     ...publicVisibility(row),
   }
 }
@@ -410,6 +416,10 @@ function publicProduct(product, extras = {}) {
       // Its own taxes (on top of the product's); taxes = everything it is charged.
       variant_taxes: Array.isArray(row.variant_taxes) ? row.variant_taxes : [],
       taxes: productTaxList(row),
+      // Its own image (one per variant); null = none (the product's image is shown instead).
+      image: row.featured_image || null,
+      // The colours it comes in (hex codes).
+      colors: jsonList(row.colors),
       is_active: row.is_active,
     })),
     variant_taxes: Array.isArray(json.variant_taxes) ? json.variant_taxes : [],
@@ -420,6 +430,8 @@ function publicProduct(product, extras = {}) {
     image_url: json.featured_image || null,
     images: Array.isArray(json.images) ? json.images : [],
     featured_image: json.featured_image || null,
+    // The colours it comes in, as hex codes: ["#E11D48", "#2563EB"].
+    colors: jsonList(json.colors),
     description: json.description,
     unit: json.unit,
     cost_price: json.cost_price,
@@ -500,7 +512,7 @@ async function resolveCategoryFlexible(storeId, idOrNumber) {
 
 export async function getProduct(storeId, id) {
   const product = await Product.findOne({
-    where: { id, store_id: storeId },
+    where: { id, store_id: storeId, deleted_at: null },
     include: [categoryInclude, PRODUCT_LOCATIONS_INCLUDE, VARIANTS_INCLUDE],
   })
   if (!product) throw new NotFoundError("Product not found")
@@ -537,6 +549,9 @@ async function attachStocks(products, actor, locationId) {
     where,
     include: [{ model: Location, attributes: ["id", "name", "location_id_int"] }],
   })
+  // Each stock row with its lots (soonest expiry first).
+  const lotMap = await lotsByStock(rows)
+  for (const row of rows) row._lots = lotMap.get(`${row.location_id}|${row.product_id}`) || []
   const byProduct = new Map()
   for (const row of rows) {
     const list = byProduct.get(row.product_id) || []
@@ -602,6 +617,7 @@ export async function listProducts(actor, query = {}, { parentsOnly = false } = 
         where: {
           store_id: actor.store_id,
           parent_product_id: { [Op.ne]: null },
+          deleted_at: null,
           [Op.or]: [{ sku: { [Op.like]: q } }, { barcode: { [Op.like]: q } }, { variant_name: { [Op.like]: q } }],
         },
         attributes: ["parent_product_id"],
@@ -633,6 +649,13 @@ function productSummary(store, product, stocks) {
   const { own, fromCategory } = unitDiscountParts(product, category)
   const net = money(selling - own - fromCategory)
   const tax = lineTaxBreakdown(store, product, category, net, 1)
+  // lineTaxBreakdown lists the product's own taxes first, then the Taxes page ones (store_taxes).
+  const ownCount = productTaxList(product).length
+  const ownTaxes = tax.product_taxes.slice(0, ownCount)
+  const storeTaxes = tax.product_taxes.slice(ownCount)
+  const sumOf = (list) => money(list.reduce((sum, row) => sum + Number(row.amount || 0), 0))
+  // The old store-wide sales tax is not charged any more (Taxes page taxes replace it).
+  const salesTaxOn = store?.sales_tax_enabled !== false && Number(tax.sales_tax_amount) > 0
 
   const qty = money(stocks.reduce((sum, row) => sum + Number(row.qty || 0), 0))
   const packSize = Number(product.pack_size || 0)
@@ -648,11 +671,14 @@ function productSummary(store, product, stocks) {
       category_discount_amount: fromCategory,
       discount_amount: money(own + fromCategory),
       price_after_discount: net,
-      product_taxes: tax.product_taxes,
-      product_tax_amount: tax.product_tax_amount,
+      // The product's own taxes, and the Taxes page taxes that apply to it — each with its amount.
+      product_taxes: ownTaxes,
+      product_tax_amount: sumOf(ownTaxes),
+      store_taxes: storeTaxes,
+      store_tax_amount: sumOf(storeTaxes),
       category_tax_amount: tax.category_tax_amount,
-      sales_tax_rate: tax.sales_tax_rate,
-      sales_tax_amount: tax.sales_tax_amount,
+      sales_tax_rate: salesTaxOn ? tax.sales_tax_rate : null,
+      sales_tax_amount: salesTaxOn ? tax.sales_tax_amount : 0,
       tax_amount: tax.tax_amount,
       price_with_tax: money(net + tax.tax_amount),
       taxes_charged: Boolean(store?.charge_tax_on_sales),
@@ -762,6 +788,10 @@ async function createVariant(store, parent, variant, variantNumber) {
       selling_price: variant.selling_price,
       taxes: variantTaxList(productTaxList(json), variant.taxes),
       variant_taxes: variant.taxes || [],
+      colors: variant.colors || [],
+      // Its own image (a URL), when sent.
+      featured_image: variant.image || null,
+      images: variant.image ? [{ url: variant.image }] : [],
       is_pack_product: Boolean(variant.is_pack_product),
       pack_size: variant.is_pack_product ? variant.pack_size : null,
       pack_cost_price: variant.is_pack_product ? variant.pack_cost_price : null,
@@ -841,7 +871,8 @@ export async function createProduct(store, input, actor = null) {
         {
           store_id: store.id,
           store_id_int: store.store_id_int,
-          product_number: await nextProductNumber(store.id, transaction),
+          // A variant does not use up a product number: it is variant 1, 2, 3… of its product.
+          product_number: fields.parent_product_id ? null : await nextProductNumber(store.id, transaction),
           category_id: category.id,
           parent_product_id: fields.parent_product_id || null,
           variant_name: fields.variant_name || null,
@@ -876,6 +907,7 @@ export async function createProduct(store, input, actor = null) {
           pack_selling_price: fields.is_pack_product ? fields.pack_selling_price : null,
           sell_loose: fields.sell_loose,
           is_weight_based: fields.is_weight_based,
+          colors: fields.colors || [],
           has_bulk_discount: fields.has_bulk_discount,
           low_stock_threshold: fields.low_stock_threshold,
           is_published: fields.is_published,
@@ -929,7 +961,7 @@ export async function createProduct(store, input, actor = null) {
 /** PATCH variants[]: an id changes that variant of this product; no id adds a new variant. */
 async function saveVariants(storeId, product, variants, actor, { held, warnings, stockLocationRef }) {
   const store = await getStoreForManager(storeId)
-  const own = await Product.findAll({ where: { store_id: storeId, parent_product_id: product.id } })
+  const own = await Product.findAll({ where: { store_id: storeId, parent_product_id: product.id, deleted_at: null } })
   // id = the variant's number inside this product (1, 2, 3…) or its UUID.
   const findOwn = (ref) => own.find((row) => row.id === ref || String(row.variant_number) === String(ref))
   const changing = variants.filter((v) => v.ref).map((v) => findOwn(v.ref)?.id).filter(Boolean)
@@ -959,8 +991,11 @@ async function saveVariants(storeId, product, variants, actor, { held, warnings,
     if (variant.cost_price != null) patch.cost_price = variant.cost_price
     if (variant.selling_price != null) patch.selling_price = variant.selling_price
     if (variant.is_active !== undefined) patch.is_active = variant.is_active
+    // image: a URL sets the variant's one image, null removes it.
+    if (variant.image !== undefined) Object.assign(patch, { featured_image: variant.image, images: variant.image ? [{ url: variant.image }] : [] })
     if (variant.sell_loose !== undefined) patch.sell_loose = variant.sell_loose
     if (variant.is_weight_based !== undefined) patch.is_weight_based = variant.is_weight_based
+    if (variant.colors !== undefined) patch.colors = variant.colors
     if (variant.is_pack_product === false) Object.assign(patch, { is_pack_product: false, pack_size: null, pack_cost_price: null, pack_selling_price: null })
     if (variant.is_pack_product || (row.is_pack_product && variant.is_pack_product !== false)) {
       const pack = {
@@ -1092,7 +1127,7 @@ export async function updateProduct(storeId, id, input, actor = null) {
   }
   // A product with variants switched on / off: its variants follow (as on delete).
   if (typeof fields.is_active === "boolean" && product.has_variants) {
-    await Product.update({ is_active: fields.is_active }, { where: { store_id: storeId, parent_product_id: product.id } })
+    await Product.update({ is_active: fields.is_active }, { where: { store_id: storeId, parent_product_id: product.id, deleted_at: null } })
   }
   // The product's taxes changed: every variant gets them again, plus its own.
   if (fields.taxes !== undefined && product.has_variants) {
@@ -1152,22 +1187,85 @@ export async function setProductImage(storeId, ref, url) {
   return imageView(product)
 }
 
+/**
+ * One variant of a product: productRef = the product's number or UUID; variantRef = the
+ * variant's number inside it (1, 2, 3…) or the variant's UUID.
+ */
+export async function getVariantByRef(storeId, productRef, variantRef) {
+  const product = await getProductByRef(storeId, productRef)
+  const ref = String(variantRef ?? "").trim()
+  if (!ref) throw new AppError("variantId is required", 400)
+  const variant = await Product.findOne({
+    where: {
+      store_id: storeId,
+      parent_product_id: product.id,
+      deleted_at: null,
+      ...(/^\d+$/.test(ref) ? { variant_number: Number(ref) } : { id: ref }),
+    },
+  })
+  if (!variant) throw new NotFoundError(`Variant ${ref} is not a variant of this product`)
+  return { product, variant }
+}
+
+const variantImageView = (product, variant) => ({
+  id: product.product_number,
+  title: product.title,
+  variant: {
+    id: variant.variant_number,
+    name: variant.variant_name,
+    image: variant.featured_image || null,
+  },
+})
+
+/** Sets (url) or removes (null) a variant's one image. */
+export async function setVariantImage(storeId, productRef, variantRef, url) {
+  const { product, variant } = await getVariantByRef(storeId, productRef, variantRef)
+  await variant.update({ featured_image: url, images: url ? [{ url }] : [] })
+  return variantImageView(product, variant)
+}
+
+/**
+ * DELETE /products/:id/variants/:variantId — soft delete of one variant: it is switched off and
+ * hidden (its product's variant list, the forms, the stock lists, the POS). Its stock rows, lots,
+ * movements and sales stay as they were, so history and reports still name it. Its variant number
+ * is not given to a new variant. Returns the product (without it).
+ */
+export async function deleteVariant(storeId, productRef, variantRef) {
+  const { product, variant } = await getVariantByRef(storeId, productRef, variantRef)
+  await variant.update({ deleted_at: new Date(), is_active: false, is_pos_visible: false, is_published: false })
+  return publicProduct(await getProduct(storeId, product.id))
+}
+
 export async function deleteProduct(storeId, id) {
   const product = await getProduct(storeId, id)
   await product.update({ is_active: false, is_published: false, is_pos_visible: false })
   if (product.has_variants) {
-    await Product.update({ is_active: false }, { where: { store_id: storeId, parent_product_id: product.id } })
+    await Product.update({ is_active: false }, { where: { store_id: storeId, parent_product_id: product.id, deleted_at: null } })
   }
   return publicProduct(await getProduct(storeId, id))
 }
 
 export async function listWeightProducts(storeId) {
   const rows = await Product.findAll({
-    where: { store_id: storeId, is_weight_based: true },
+    where: { store_id: storeId, is_weight_based: true, deleted_at: null },
     include: [categoryInclude],
     order: [["title", "ASC"]],
   })
-  return rows.map((row) => publicProduct(row))
+  // A variant: its product (number, title) and, without an image of its own, the product's image.
+  const parentIds = [...new Set(rows.map((row) => row.parent_product_id).filter(Boolean))]
+  const parents = new Map(
+    (parentIds.length
+      ? await Product.findAll({ where: { store_id: storeId, id: { [Op.in]: parentIds } }, attributes: ["id", "product_number", "title", "featured_image"] })
+      : []
+    ).map((row) => [row.id, row])
+  )
+  return rows.map((row) => {
+    const parent = row.parent_product_id ? parents.get(row.parent_product_id) : null
+    return publicProduct(row, {
+      image: row.featured_image || parent?.featured_image || null,
+      parent: parent ? { id: parent.id, product_number: parent.product_number, title: parent.title } : null,
+    })
+  })
 }
 
 export async function patchWeight(storeId, id, fields) {
@@ -1177,38 +1275,71 @@ export async function patchWeight(storeId, id, fields) {
   return publicProduct(await getProduct(storeId, id))
 }
 
-export async function listExpiryProducts(storeId, locationId = null) {
+/**
+ * GET /products/expiry — one row per lot (a product's stock at a location that came in together,
+ * with its own expiry date), soonest expiry first: the product, lot { id (lot number), qty,
+ * expiry_date, days_left, expiry_status, received_at, source }, location, and the stock of that
+ * product there with all its lots (stocks[0]). all=true: lots without an expiry date too (last).
+ */
+export async function listExpiryProducts(storeId, locationId = null, { all = false } = {}) {
   const store = await getStoreForManager(storeId)
-  const rows = await ProductStock.findAll({
+  const lots = await StockLot.findAll({
     where: {
       store_id: storeId,
-      expiry_date: { [Op.ne]: null },
       deleted_at: null,
+      qty: { [Op.gt]: 0 },
+      ...(all ? {} : { expiry_date: { [Op.ne]: null } }),
       ...(locationId ? { location_id: locationId } : {}),
     },
+    order: [[sequelize.literal("expiry_date IS NULL"), "ASC"], ["expiry_date", "ASC"], ["received_at", "ASC"], ["lot_number", "ASC"]],
+  })
+  if (!lots.length) return []
+  const stocks = await ProductStock.findAll({
+    where: {
+      store_id: storeId,
+      deleted_at: null,
+      location_id: { [Op.in]: [...new Set(lots.map((lot) => lot.location_id))] },
+      product_id: { [Op.in]: [...new Set(lots.map((lot) => lot.product_id))] },
+    },
     include: [
-      { model: Product, include: [categoryInclude] },
+      // A deleted variant's stock is left out of the list (it stays in the database).
+      { model: Product, where: { deleted_at: null }, include: [categoryInclude] },
       { model: Location, attributes: ["id", "name", "location_id_int"] },
     ],
-    order: [["expiry_date", "ASC"]],
   })
-  return rows
-    .filter((stock) => stock.Product)
-    .map((stock) =>
-      publicProduct(stock.Product, {
+  const lotMap = await lotsByStock(stocks)
+  const stockOf = new Map(stocks.map((row) => [`${row.location_id}|${row.product_id}`, row]))
+  const parentIds = [...new Set(stocks.map((row) => row.Product?.parent_product_id).filter(Boolean))]
+  const parentImage = new Map(
+    (parentIds.length
+      ? await Product.findAll({ where: { store_id: storeId, id: { [Op.in]: parentIds } }, attributes: ["id", "featured_image", "product_number", "title"] })
+      : []
+    ).map((row) => [row.id, row])
+  )
+  return lots
+    .map((lot) => {
+      const stock = stockOf.get(`${lot.location_id}|${lot.product_id}`)
+      if (!stock?.Product) return null
+      stock._lots = lotMap.get(`${lot.location_id}|${lot.product_id}`) || []
+      const view = publicLot(lot, store)
+      return publicProduct(stock.Product, {
         stocks: [publicStock(stock, stock.Product)],
+        lot: view,
         store_id: stock.store_id,
         store_number: stock.store_id_int,
         location_id: stock.location_id,
         location_number: stock.location_id_int,
-        expiry_date: stock.expiry_date,
-        expiry_status: expiryStatus(
-          stock.expiry_date,
-          store.expiry_warning_days,
-          store.expiry_critical_days
-        ),
+        expiry_date: lot.expiry_date || null,
+        expiry_status: view.expiry_status,
+        // Its own image, else (a variant) its product's image.
+        image: stock.Product.featured_image || parentImage.get(stock.Product.parent_product_id)?.featured_image || null,
+        // A variant: its product (number + title); the variant is variant_number inside it.
+        parent: stock.Product.parent_product_id
+          ? (({ id, product_number, title }) => ({ id, product_number, title }))(parentImage.get(stock.Product.parent_product_id) || {})
+          : null,
       })
-    )
+    })
+    .filter(Boolean)
 }
 
 export async function listBulkTiers(storeId, productId) {

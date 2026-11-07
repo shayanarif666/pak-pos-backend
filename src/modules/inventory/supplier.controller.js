@@ -51,8 +51,8 @@ export const patch = asyncHandler(async (req, res) => {
 })
 
 export const remove = asyncHandler(async (req, res) => {
-  const data = await supplierService.deactivateSupplier(req.storeId, req.params.id, req.user)
-  return apiResponse(res, 200, "Supplier deactivated", data)
+  const data = await supplierService.deleteSupplier(req.storeId, req.params.id, req.user)
+  return apiResponse(res, 200, "Supplier deleted", data)
 })
 
 /**

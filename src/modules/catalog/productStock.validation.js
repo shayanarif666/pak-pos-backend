@@ -128,6 +128,13 @@ export function parseStockEditItem(item) {
   }
   const note = item.reason_note ?? item.note
   out.reason_note = note == null ? null : String(note).trim() || null
+  // One lot (its number): qty / packs are that lot's new total and expiry_date its date. Left
+  // out: qty is the whole stock's new total and expiry_date goes on the lot that expires first.
+  const lot = item.lot_id ?? item.lotId
+  if (lot != null && lot !== "") {
+    if (!/^[1-9]d*$/.test(String(lot).trim())) throw new AppError("lot_id must be a lot number (1, 2, 3…)", 400)
+    out.lot_id = String(lot).trim()
+  }
   return out
 }
 

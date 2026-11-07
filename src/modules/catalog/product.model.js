@@ -10,7 +10,8 @@ export const Product = sequelize.define(
     id: uuidPk(),
     store_id: uuidCol(false),
     store_id_int: { type: DataTypes.INTEGER, allowNull: false },
-    product_number: { type: DataTypes.INTEGER, allowNull: false },
+    // 1, 2, 3… per store, products only; null for a variant (it is its product's variant_number).
+    product_number: { type: DataTypes.INTEGER, allowNull: true },
     category_id: uuidCol(false),
     // A variant (e.g. "Size: M") is a product of its own, linked to the parent that groups them.
     parent_product_id: uuidCol(true),
@@ -21,6 +22,10 @@ export const Product = sequelize.define(
     has_variants: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     // A variant's own taxes (its taxes column = the parent's taxes + these).
     variant_taxes: { type: DataTypes.JSON, allowNull: true },
+    // The colours it comes in, as hex codes: ["#E11D48", "#2563EB"].
+    colors: { type: DataTypes.JSON, allowNull: true },
+    // A deleted variant (soft delete): hidden everywhere; its stock, movements and sales stay.
+    deleted_at: { type: DataTypes.DATE, allowNull: true },
     title: { type: DataTypes.TEXT, allowNull: false },
     slug: { type: DataTypes.STRING(255), allowNull: false },
     sku: { type: DataTypes.STRING(255), allowNull: false },

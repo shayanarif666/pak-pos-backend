@@ -12,6 +12,7 @@ import { User } from "../auth/user.model.js"
 import { Product } from "../catalog/product.model.js"
 import { Location } from "../locations/location.model.js"
 import { ProductStock } from "../catalog/productStock.model.js"
+import { StockLot } from "../catalog/stockLot.model.js"
 import { Category } from "../catalog/category.model.js"
 import { StockMovement } from "../inventory/stockMovement.model.js"
 import { StockTransfer } from "../inventory/stockTransfer.model.js"
@@ -279,7 +280,7 @@ function mergeRefundPayments(parts) {
       byMethod.set(row.method, { ...row })
       continue
     }
-    for (const key of ["bill_share", "payment_tax_amount", "amount"]) {
+    for (const key of ["bill_share", "surcharge_amount", "amount"]) {
       if (row[key] != null) entry[key] = Number(((entry[key] || 0) + row[key]).toFixed(2))
     }
   }
@@ -294,6 +295,11 @@ export async function refunds(req) {
   const where = { store_id: scope.store_id, refund_type: type, ...atLocation(scope), ...dateRange(req.query, "created_at") }
   const orderId = await idOf(Order, "order_number", scope.store_id, queryRef(req.query, "orderId", "order_id"), "Order")
   if (orderId) where.order_id = orderId
+  // The batch the money left from, and who gave it back.
+  const batchId = await idOf(RegisterSession, "session_number", scope.store_id, queryRef(req.query, "batchId", "batch_id"), "Batch")
+  if (batchId) where.register_session_id = batchId
+  const staffId = await idOf(User, "user_number", scope.store_id, queryRef(req.query, "staffId", "staff_id"), "Staff")
+  if (staffId) where.cashier_id = staffId
 
   if (type === "partial") {
     const { rows, count } = await OrderRefund.findAndCountAll({
@@ -317,9 +323,9 @@ export async function refunds(req) {
   const byUuid = new Map(order.map((id, index) => [id, shaped[index]]))
   const rows = items.map((ids) => {
     const parts = [...ids].reverse().map((id) => byUuid.get(id)).filter(Boolean)
-    const entry = { ...parts[0], items: parts.flatMap((part) => part.items) }
+    const entry = { ...parts[0], lines: parts.flatMap((part) => part.lines) }
     for (const part of parts.slice(1)) {
-      for (const key of ["amount", "tax", "total"]) entry[key] = Number((entry[key] + part[key]).toFixed(2))
+      for (const key of ["amount", "discount_amount", "tax", "surcharge", "total"]) entry[key] = Number(((entry[key] || 0) + (part[key] || 0)).toFixed(2))
     }
     entry.payments = mergeRefundPayments(parts)
     return entry
@@ -531,30 +537,50 @@ export async function expiryList(req) {
   const scope = await scopeOf(req)
   const pageInfo = pageOf(req.query)
   const store = await Store.findByPk(scope.store_id, { attributes: ["expiry_warning_days", "expiry_critical_days"] })
-  const { rows, count } = await ProductStock.findAndCountAll({
-    where: { store_id: scope.store_id, expiry_date: { [Op.ne]: null }, deleted_at: null, ...atLocation(scope), ...dateRange(req.query, "expiry_date") },
-    include: [
-      { model: Product, attributes: ["product_number", "title", "sku", "barcode", "unit"], required: true },
-      { model: Location, attributes: ["location_id_int", "name"] },
-    ],
-    order: [["expiry_date", "ASC"]],
+  // A deleted variant's lots are left out (they stay in the database).
+  const deletedIds = (await Product.findAll({ where: { store_id: scope.store_id, deleted_at: { [Op.ne]: null } }, attributes: ["id"] })).map((row) => row.id)
+  // One row per lot with an expiry date (stock that came in together), soonest first.
+  const { rows, count } = await StockLot.findAndCountAll({
+    where: { store_id: scope.store_id, expiry_date: { [Op.ne]: null }, deleted_at: null, qty: { [Op.gt]: 0 }, ...atLocation(scope), ...dateRange(req.query, "expiry_date"), ...(deletedIds.length ? { product_id: { [Op.notIn]: deletedIds } } : {}) },
+    order: [["expiry_date", "ASC"], ["lot_number", "ASC"]],
     limit: pageInfo.limit,
     offset: pageInfo.offset,
   })
+  const products = new Map(
+    (
+      await Product.findAll({
+        where: { id: { [Op.in]: [...new Set(rows.map((row) => row.product_id))] } },
+        attributes: ["id", "product_number", "title", "sku", "barcode", "unit", "variant_number", "variant_name"],
+        include: [{ model: Product, as: "parent", attributes: ["id", "product_number", "title"] }],
+      })
+    ).map((row) => [row.id, row])
+  )
+  const locations = new Map(
+    (await Location.findAll({ where: { id: { [Op.in]: [...new Set(rows.map((row) => row.location_id))] } }, attributes: ["id", "location_id_int", "name"] })).map((row) => [row.id, row])
+  )
   return paged(
-    rows.map((row) => ({
-      product: {
-        id: row.Product.product_number,
-        title: row.Product.title,
-        sku: row.Product.sku,
-        barcode: row.Product.barcode,
-        unit: row.Product.unit,
-      },
-      location: row.Location ? { id: row.Location.location_id_int, name: row.Location.name } : { id: row.location_id_int, name: null },
-      qty: num(row.qty),
-      expiry_date: row.expiry_date,
-      expiry_status: expiryStatus(row.expiry_date, store?.expiry_warning_days, store?.expiry_critical_days),
-    })),
+    rows.map((row) => {
+      const product = products.get(row.product_id)
+      const location = locations.get(row.location_id)
+      return {
+        // A variant: its product's number and title, and variant { id (number in the product), name }.
+        product: product
+          ? {
+              id: product.parent ? product.parent.product_number : product.product_number,
+              title: product.parent ? product.parent.title : product.title,
+              sku: product.sku,
+              barcode: product.barcode,
+              unit: product.unit,
+              ...(product.parent ? { variant: { id: product.variant_number, name: product.variant_name } } : {}),
+            }
+          : null,
+        location: location ? { id: location.location_id_int, name: location.name } : { id: row.location_id_int, name: null },
+        lot: { id: row.lot_number, received_at: row.received_at },
+        qty: num(row.qty),
+        expiry_date: row.expiry_date,
+        expiry_status: expiryStatus(row.expiry_date, store?.expiry_warning_days, store?.expiry_critical_days),
+      }
+    }),
     count,
     pageInfo
   )
@@ -629,10 +655,28 @@ async function renumber(rows, model, column, idOfRow = (row) => row.id) {
   }
 }
 
+/** Product rows (id = a product UUID): id = the product number; a variant also gets variant_id. */
+async function productIds(rows) {
+  const ids = rows.map((row) => row.id).filter(isUuid)
+  if (!ids.length) return
+  const found = await Product.findAll({
+    where: { id: { [Op.in]: [...new Set(ids)] } },
+    attributes: ["id", "product_number", "variant_number"],
+    include: [{ model: Product, as: "parent", attributes: ["id", "product_number"] }],
+  })
+  const byId = new Map(found.map((row) => [row.id, row]))
+  for (const row of rows) {
+    if (!isUuid(row.id)) continue
+    const product = byId.get(row.id)
+    row.id = product ? (product.parent ? product.parent.product_number : product.product_number) : null
+    if (product?.parent) row.variant_id = product.variant_number
+  }
+}
+
 /** POS reply of GET /reports/breakdown: same report, ids as short numbers. */
 export async function shortReportIds(report) {
   const rows = (key) => report?.[key]?.rows || []
-  await renumber(rows("by_product"), Product, "product_number")
+  await productIds(rows("by_product"))
   await renumber(rows("by_cashier"), User, "user_number")
   await renumber(rows("stock_movement"), StockMovement, "movement_number")
   await renumber(rows("z_reports"), RegisterSession, "session_number")
@@ -645,8 +689,8 @@ export async function shortReportIds(report) {
       attributes: ["id", "product_id"],
     })
     const productOf = new Map(stocks.map((row) => [row.id, row.product_id]))
-    const numbers = await numbersOf(Product, "product_number", [...productOf.values()])
-    for (const row of stockRows) row.id = numbers.get(productOf.get(row.id)) ?? null
+    for (const row of stockRows) row.id = productOf.get(row.id) ?? null
+    await productIds(stockRows)
   }
   // Refund / void rows: "refund" ids are refunds, "voided:<order>" / "cancelled:<order>" orders.
   const refundRows = rows("refund_void")

@@ -149,7 +149,7 @@ function profitSection(completed) {
       if (line.units <= 0) continue
       const { item } = line
       const category = item.Product?.Category?.name || item.custom_category || (item.product_id ? "Uncategorized" : "Custom")
-      add(groups.product, item.product_id || `custom:${item.title}`, { product: item.Product?.title || item.title, category }, line)
+      add(groups.product, item.product_id || `custom:${item.title}`, { product: item.Product?.title || item.title, category, unit: item.unit || item.Product?.unit || null }, line)
       add(groups.category, category, { category }, line)
       add(groups.location, order.location_id || "none", { location: order.Location?.name || "—" }, line)
     }
@@ -218,7 +218,7 @@ async function stockRows(actor, location) {
   return ProductStock.findAll({
     where,
     include: [
-      { model: Product, attributes: ["id", "title", "sku", "barcode", "has_variants", "variant_name", "is_active", "parent_product_id"], where: { has_variants: false } },
+      { model: Product, attributes: ["id", "title", "sku", "barcode", "unit", "has_variants", "variant_name", "is_active", "parent_product_id"], where: { has_variants: false } },
       { model: Location, attributes: ["id", "name"] },
     ],
   })
@@ -236,7 +236,12 @@ function unitsSold(completed) {
   return units
 }
 
-const productName = (product) => (product?.variant_name ? `${product.title} · ${product.variant_name}` : product?.title || "—")
+// A variant's title already ends with its name ("Pepsi - 2L"); add it only when it does not.
+const productName = (product) => {
+  if (!product) return "—"
+  const title = product.title || "—"
+  return product.variant_name && !title.endsWith(product.variant_name) ? `${title} · ${product.variant_name}` : title
+}
 
 /** In stock but not sold in the range, with the last sale ever (up to `to`). */
 async function deadStockSection(actor, location, completed, range) {
@@ -264,6 +269,7 @@ async function deadStockSection(actor, location, completed, range) {
         product: productName(row.Product),
         sku: row.Product?.sku || null,
         location: row.Location?.name || "—",
+        unit: row.Product?.unit || null,
         stock: Number(row.qty),
         last_sold_at: last,
         days_since_sale: last ? Math.floor((end - new Date(last)) / 86400000) : null,
@@ -278,7 +284,7 @@ async function forecastSection(actor, location, completed, range) {
   const sold = unitsSold(completed)
   const byProduct = new Map()
   for (const row of await stockRows(actor, location)) {
-    if (!byProduct.has(row.product_id)) byProduct.set(row.product_id, { product: productName(row.Product), sku: row.Product?.sku || null, stock: 0 })
+    if (!byProduct.has(row.product_id)) byProduct.set(row.product_id, { product: productName(row.Product), sku: row.Product?.sku || null, unit: row.Product?.unit || null, stock: 0 })
     byProduct.get(row.product_id).stock = money(byProduct.get(row.product_id).stock + Number(row.qty || 0))
   }
   const rows = [...byProduct.entries()]
@@ -491,11 +497,12 @@ async function sessionsSection(actor, location, range) {
   const userIds = [...new Set(sessions.map((row) => row.user_id).filter(Boolean))]
   const locationIds = [...new Set(sessions.map((row) => row.location_id).filter(Boolean))]
   const [users, locations] = await Promise.all([
-    userIds.length ? User.findAll({ where: { id: userIds }, attributes: ["id", "name", "role"] }) : [],
-    locationIds.length ? Location.findAll({ where: { id: locationIds }, attributes: ["id", "name"] }) : [],
+    userIds.length ? User.findAll({ where: { id: userIds }, attributes: ["id", "name", "role", "user_number"] }) : [],
+    locationIds.length ? Location.findAll({ where: { id: locationIds }, attributes: ["id", "name", "location_id_int"] }) : [],
   ])
   const userOf = new Map(users.map((row) => [row.id, row]))
   const locationOf = new Map(locations.map((row) => [row.id, row.name]))
+  const locationNumber = new Map(locations.map((row) => [row.id, row.location_id_int]))
   const now = Date.now()
   const rows = sessions.map((row) => {
     const end = row.clock_out_at ? new Date(row.clock_out_at).getTime() : now
@@ -506,6 +513,9 @@ async function sessionsSection(actor, location, range) {
       location: locationOf.get(row.location_id) || "—",
       clock_in_at: row.clock_in_at,
       clock_out_at: row.clock_out_at,
+      // For Clock out from the report: the staff and location numbers.
+      staff_number: userOf.get(row.user_id)?.user_number ?? null,
+      location_number: locationNumber.get(row.location_id) ?? null,
       hours_worked: money((end - new Date(row.clock_in_at).getTime()) / 3600000),
       status: row.status === "clock_in" ? "on_duty" : "clocked_out",
     }

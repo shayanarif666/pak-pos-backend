@@ -111,19 +111,8 @@ export function receiptItemView(item, lookups = {}, { salesTaxRate = null } = {}
           tax: categoryTax,
         }
       : null,
-    offer: offers[0]
-      ? {
-          id: offers[0].id ?? null,
-          name: offers[0].name || null,
-          type: offers[0].type || null,
-          discount_type: offers[0].discount_type || null,
-          discount_value: num(offers[0].discount_value),
-          // One discount: its amount; several: null each (the line's discount_amount is the total).
-          amount: offers[0].amount == null ? null : money(offers[0].amount),
-        }
-      : null,
     // Every discount on the line (one or many), as sold.
-    discounts: offers.map((row) => ({
+    discount: offers.map((row) => ({
       discount_id: row.id ?? null,
       name: row.name || null,
       type: row.type || null,
@@ -131,6 +120,8 @@ export function receiptItemView(item, lookups = {}, { salesTaxRate = null } = {}
       discount_value: num(row.discount_value),
       amount: row.amount == null ? null : money(row.amount),
     })),
+    // Every tax of the line as the till sent it.
+    taxes: (parseJson(item.line_taxes, []) || []).map((tax) => ({ level: tax.level, name: tax.name ?? null, rate: num(tax.rate), amount: money(tax.amount) })),
     ...(present(item.free_qty) ? { free_qty: num(item.free_qty) } : {}),
     ...(salesTax ? { sales_tax: salesTax } : {}),
     ...totals,
@@ -146,8 +137,10 @@ export function receiptPaymentsView(order, paymentRows) {
   if (!splits.length) {
     return rows.map((row) => ({
       method: row.method,
-      gst_percent: null,
-      gst_amount: money(row.tax_amount),
+      bill_share: money(Number(row.amount || 0) - Number(row.tax_amount || 0)),
+      surcharge_type: null,
+      surcharge_value: null,
+      surcharge_amount: money(row.tax_amount),
       amount: money(row.amount),
       paid: money(row.amount),
       change: 0,
@@ -158,8 +151,10 @@ export function receiptPaymentsView(order, paymentRows) {
     const row = rows.find((r) => r.method === split.method)
     return {
       method: split.method,
-      gst_percent: num(split.gst_percent),
-      gst_amount: money(split.gst_amount),
+      bill_share: split.bill_share != null ? money(split.bill_share) : money(Number(split.amount || 0) - Number(split.gst_amount || 0)),
+      surcharge_type: split.surcharge_type || (Number(split.gst_percent) > 0 ? "percentage" : null),
+      surcharge_value: num(split.surcharge_value ?? (Number(split.gst_percent) > 0 ? split.gst_percent : null)),
+      surcharge_amount: money(split.gst_amount),
       amount: money(split.amount),
       paid: money(split.paid ?? split.amount),
       change: money(split.change),
@@ -194,6 +189,8 @@ export function buildReceiptView({ receipt, order, paymentRows, lookups, store, 
   return {
     id: receipt?.receipt_number ?? null,
     order_id: order?.order_number ?? null,
+    // The number printed on the till (offline) receipt.
+    local_receipt_number: order?.local_receipt_number || null,
     store: storeView(store),
     issued_at: order?.placed_at || receipt?.issued_at || null,
     channel: order?.channel || null,
@@ -211,8 +208,9 @@ export function buildReceiptView({ receipt, order, paymentRows, lookups, store, 
       : {}),
     ...(present(coupon) ? { coupon: { code: order.coupon_code || null, amount: coupon } } : {}),
     ...(present(order?.sales_tax_amount) ? { sales_tax: { rate: num(salesTaxRate), amount: money(order.sales_tax_amount) } } : {}),
-    payment_gst_amount: money(order?.payment_gst_amount),
-    tax_amount: num(order?.tax_amount ?? receipt?.tax_amount),
+    // Line taxes only; the payment surcharges are surcharge_amount.
+    tax_amount: money(Number(order?.tax_amount ?? receipt?.tax_amount ?? 0) - Number(order?.payment_gst_amount || 0)),
+    surcharge_amount: money(order?.payment_gst_amount),
     ...(order?.fbr_invoice_enabled ? { fbr_fee: money(order.fbr_tax_amount) } : {}),
     total: num(order?.total_amount ?? receipt?.total_amount),
     amount_paid: num(order?.amount_paid) ?? 0,

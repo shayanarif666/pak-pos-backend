@@ -20,8 +20,8 @@ async function prepare(req, base, { staff_ref, supplier_ref, ...fields }, fallba
   let supplier_id = null
   if (supplier_ref) {
     const where = /^\d+$/.test(supplier_ref)
-      ? { store_id: base.store_id, supplier_number: Number(supplier_ref) }
-      : { store_id: base.store_id, id: supplier_ref }
+      ? { store_id: base.store_id, supplier_number: Number(supplier_ref), deleted_at: null }
+      : { store_id: base.store_id, id: supplier_ref, deleted_at: null }
     const supplier = await Supplier.findOne({ where, attributes: ["id"] })
     if (!supplier) throw new NotFoundError("Supplier not found")
     supplier_id = supplier.id

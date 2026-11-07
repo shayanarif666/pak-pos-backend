@@ -24,6 +24,9 @@ export const StockMovement = sequelize.define(
     supplier_id: uuidCol(true),
     staff_id: uuidCol(true),
     order_id: uuidCol(true),
+    // The lot(s) it moved: lot_id when one, lots = [{ lot_id, lot_number, qty, expiry_date }].
+    lot_id: uuidCol(true),
+    lots: { type: DataTypes.JSON, allowNull: true },
     ...catalogChannelVisibilityFields(),
     // Set when the movement is edited from the dashboard (null = never edited).
     updated_at: { type: DataTypes.DATE, allowNull: true },

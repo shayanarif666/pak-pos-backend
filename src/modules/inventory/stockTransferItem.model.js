@@ -20,6 +20,8 @@ export const StockTransferItem = sequelize.define(
     status: { type: DataTypes.ENUM(...TRANSFER_STATUS), allowNull: false, defaultValue: "on_the_way" },
     received_at: { type: DataTypes.DATE, allowNull: true },
     received_by: uuidCol(true),
+    // The lots this line left from (and arrived as): [{ lot_id, lot_number, qty, expiry_date }].
+    lots: { type: DataTypes.JSON, allowNull: true },
   },
   {
     ...modelOptions,

@@ -4,6 +4,7 @@ import { bulkStatus, posBulkResponse, extractBulkItems, runBulk } from "../../sh
 import {
   parseBulkRefundComplete,
   parseBulkRefundItem,
+  parsePosRefund,
   parseCreateOrder,
   parseVoidCancel,
 } from "./order.validation.js"
@@ -41,7 +42,16 @@ async function refundSummary(data) {
   const rows = await posRefunds((data.refunds || []).map((row) => row.refund.id))
   if (!rows.length) return null
   const sum = (key) => Number(rows.reduce((total, row) => total + Number(row[key] || 0), 0).toFixed(2))
-  return { ...rows[0], items: rows.flatMap((row) => row.items), amount: sum("amount"), tax: sum("tax"), total: sum("total") }
+  return {
+    ...rows[0],
+    lines: rows.flatMap((row) => row.lines),
+    amount: sum("amount"),
+    discount_amount: sum("discount_amount"),
+    tax: sum("tax"),
+    surcharge: sum("surcharge"),
+    total: sum("total"),
+    payments: rows.flatMap((row) => row.payments),
+  }
 }
 
 function actorFromReq(req) {
@@ -208,7 +218,26 @@ async function orderAt(storeId, ref, location) {
   return id
 }
 
+/**
+ * A POS refund with lines[] (the till worked out every figure): one refund per order, saved as sent.
+ * The reply is the refund in the POS shape on every channel.
+ */
+async function posLinesRefund(req, res, complete) {
+  const location = await bulkLocation(req)
+  const data = await runBulk(extractBulkItems(req.body), async (item) => {
+    const { staff_ref, ...parsed } = parsePosRefund(item || {})
+    const actor = await staffActor(req, staff_ref || req.body?.staff_id || req.body?.staffId)
+    return orderService.refundPosOrder(actor, await orderAt(actor.store_id, parsed.order_id, location), parsed, { complete })
+  })
+  const created = []
+  for (const row of data.created) created.push(await posRefund(row.refund.id))
+  return posBulkResponse(res, data, "Refunded Successfully", created)
+}
+
+const hasLines = (req) => extractBulkItems(req.body).some((item) => Array.isArray(item?.lines))
+
 export const refundItemsBulk = asyncHandler(async (req, res) => {
+  if (hasLines(req)) return posLinesRefund(req, res, false)
   const location = await bulkLocation(req)
   const data = await runBulk(extractBulkItems(req.body), async (item) => {
     const { staff_ref, ...parsed } = parseBulkRefundItem(item)
@@ -224,6 +253,7 @@ export const refundItemsBulk = asyncHandler(async (req, res) => {
 })
 
 export const refundCompleteBulk = asyncHandler(async (req, res) => {
+  if (hasLines(req)) return posLinesRefund(req, res, true)
   const location = await bulkLocation(req)
   const data = await runBulk(extractBulkItems(req.body), async (item) => {
     const { staff_ref, ...parsed } = parseBulkRefundComplete(item)

@@ -67,6 +67,10 @@ export const OrderItem = sequelize.define(
     },
     // Snapshot of the product taxes charged on this line: [{ name, type, value, amount }].
     product_taxes: { type: DataTypes.JSON, allowNull: true },
+    // Every tax of the line as the POS sent it: [{ level, name, rate, amount }].
+    line_taxes: { type: DataTypes.JSON, allowNull: true },
+    // The lots this line was taken from: [{ lot_id, lot_number, qty, expiry_date, returned? }].
+    lots: { type: DataTypes.JSON, allowNull: true },
     category_tax_type: { type: DataTypes.STRING(32), allowNull: true },
     category_tax_value: { type: DataTypes.DECIMAL(5, 2), allowNull: true },
     category_tax_name: { type: DataTypes.STRING(255), allowNull: true },

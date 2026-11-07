@@ -37,6 +37,12 @@ import * as softDelete from "./migrations/20261114120000-soft-delete-staff-sessi
 import * as softDeleteStock from "./migrations/20261115120000-soft-delete-stock.js"
 import * as softDeleteTransfers from "./migrations/20261116120000-soft-delete-transfers.js"
 import * as softDeleteOffersLocations from "./migrations/20261117120000-soft-delete-offers-locations.js"
+import * as posFiguresOrdersRefunds from "./migrations/20261118120000-pos-figures-orders-refunds.js"
+import * as softDeleteSuppliers from "./migrations/20261119120000-soft-delete-suppliers.js"
+import * as stockLots from "./migrations/20261120120000-stock-lots.js"
+import * as productVariantLotNumbers from "./migrations/20261121120000-product-variant-lot-numbers.js"
+import * as productColors from "./migrations/20261122120000-product-colors.js"
+import * as softDeleteVariants from "./migrations/20261123120000-soft-delete-variants.js"
 
 // Migrations the running code cannot work without (e.g. users.token_version is read on every
 // authenticated request). Each one checks before it changes anything, so running it on a
@@ -112,6 +118,18 @@ const REQUIRED = [
   softDeleteTransfers,
   // offers.deleted_at / locations.deleted_at (soft delete of a discount / a branch).
   softDeleteOffersLocations,
+  // The POS figures of orders and refunds kept as sent (receipt number, line taxes, refund lines).
+  posFiguresOrdersRefunds,
+  // suppliers.deleted_at (soft delete of a supplier).
+  softDeleteSuppliers,
+  // stock_lots (stock in lots, each with its own expiry; stock out takes the soonest first).
+  stockLots,
+  // Product numbers count products only (not variants); lot numbers 1, 2, 3… per product.
+  productVariantLotNumbers,
+  // products.colors: the colours a product / variant comes in, as hex codes.
+  productColors,
+  // products.deleted_at: soft delete of a variant (history stays).
+  softDeleteVariants,
 ]
 
 export async function ensureSchema() {

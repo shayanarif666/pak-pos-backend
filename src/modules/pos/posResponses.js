@@ -195,8 +195,9 @@ export async function posOrders(orderIds) {
     items.map((item) => item.category_id || refs.get("product", item.product_id)?.category_id)
   )
   const currency = await currencyFor(orders.map((order) => order.store_id))
+  const receipts = await saleReceiptNumbers(orders.map((order) => order.id))
   return orders.map((order) =>
-    orderView(order, refs, currency(order.store_id), remainingAmountOf(order, order.Payments, credit.get(order.id) || 0))
+    orderView(order, refs, currency(order.store_id), remainingAmountOf(order, order.Payments, credit.get(order.id) || 0), receipts)
   )
 }
 
@@ -223,15 +224,50 @@ function saleUnitView(item) {
   return { sale_unit: "pack", packs: num(item.qty_packs), pack_size: item.pack_size ?? null, pack_price: num(item.pack_price) }
 }
 
-function orderItemView(item, refs) {
-  const lineTotal = Number(item.subtotal || 0) + Number(item.tax_amount || 0)
-  const prices = {
-    unit_price: num(item.unit_price),
-    discount_amount: num(item.discount_amount) ?? 0,
-    subtotal: num(item.subtotal),
-    tax_amount: num(item.tax_amount) ?? 0,
-    total: Number(lineTotal.toFixed(2)),
+function lineTaxesOf(item) {
+  // As the till sent them; older lines: rebuilt from the product / category / sales tax kept.
+  const sent = parseList(item.line_taxes)
+  if (sent.length) return sent.map((tax) => ({ level: tax.level, name: tax.name ?? null, rate: num(tax.rate), amount: num(tax.amount) }))
+  const out = parseList(item.product_taxes).map((tax) => ({ level: "product", name: tax.name ?? null, rate: num(tax.value), amount: num(tax.amount) }))
+  if (Number(item.category_tax_amount) > 0) {
+    out.push({ level: "category", name: item.category_tax_name || null, rate: num(item.category_tax_value), amount: num(item.category_tax_amount) })
   }
+  if (Number(item.sales_tax_amount) > 0) out.push({ level: "sales", name: "Sales Tax", rate: null, amount: num(item.sales_tax_amount) })
+  return out
+}
+
+/** A line's discounts as sold: [{ discount_id, name, type, discount_type, discount_value, amount }]. */
+function lineDiscountsOf(item) {
+  return parseList(item.offers)
+    .filter((offer) => offer?.id != null)
+    .map((offer) => ({
+      discount_id: offer.id,
+      name: offer.name || null,
+      type: offer.type || null,
+      discount_type: offer.discount_type || null,
+      discount_value: num(offer.discount_value),
+      amount: offer.amount == null ? null : num(offer.amount),
+    }))
+}
+
+function orderItemView(item, refs) {
+  const subtotal = num(item.subtotal) ?? 0
+  const taxAmount = num(item.tax_amount) ?? 0
+  const packLine = item.sale_unit === "pack"
+  // What the line cost before its discount: price × qty as sold (per pack on a pack line).
+  const gross = packLine ? Number(item.pack_price || 0) * Number(item.qty_packs || 0) : Number(item.unit_price || 0) * Number(item.quantity || 0)
+  const figures = {
+    gross_amount: Number(gross.toFixed(2)),
+    discount_amount: num(item.discount_amount) ?? 0,
+    discount: lineDiscountsOf(item),
+    free_qty: num(item.free_qty) ?? 0,
+    subtotal,
+    taxes: lineTaxesOf(item),
+    tax_amount: taxAmount,
+    total: Number((subtotal + taxAmount).toFixed(2)),
+  }
+  // The lots the line was sold from (soonest expiry first): [{ id (lot number), qty, expiry_date }].
+  const lots = (Array.isArray(item.lots) ? item.lots : typeof item.lots === "string" ? JSON.parse(item.lots || "[]") : []).map((lot) => ({ id: lot.lot_number, qty: Number(lot.qty), expiry_date: lot.expiry_date || null }))
   if (item.product_id) {
     const categoryId = item.category_id || refs.get("product", item.product_id)?.category_id
     const category = refs.category(categoryId)
@@ -240,25 +276,22 @@ function orderItemView(item, refs) {
       // The product as sold: the title saved on the line (it may have been renamed since).
       product: { ...(refs.product(item.product_id) || { id: null, sku: null, unit: null }), title: item.title },
       category: category ? { ...category, name: item.category_name || category.name } : null,
-      qty: num(item.quantity),
-      ...saleUnitView(item),
-      ...prices,
-      // Where the discount came from (none | product | category | product+category | bulk_tier |
-      // offer) and the offer(s) applied, as they were at the sale. null on lines sold before this was kept.
-      discount_source: item.discount_source || null,
-      // The discounts applied, as the till sent them: [{ discount_id (the discount number) }].
-      discount: parseList(item.offers).filter((offer) => offer?.id != null).map((offer) => ({ discount_id: offer.id })),
-      offers: parseList(item.offers),
-      free_qty: num(item.free_qty) ?? 0,
+      qty: packLine ? num(item.qty_packs) : num(item.quantity),
+      sale_unit: packLine ? "pack" : "unit",
+      ...(packLine ? { pack_size: item.pack_size ?? null, units: num(item.quantity) } : {}),
+      // One pack's price on a pack line, one unit's otherwise.
+      unit_price: packLine ? num(item.pack_price) : num(item.unit_price),
+      ...figures,
+      lots,
     }
   }
   return {
     id: item.item_number,
-    category: item.custom_category || null,
     title: item.title,
-    price: num(item.unit_price),
+    category: item.custom_category ? { id: null, name: item.custom_category } : null,
     qty: num(item.quantity),
-    ...prices,
+    unit_price: num(item.unit_price),
+    ...figures,
   }
 }
 
@@ -274,109 +307,167 @@ function paymentSplitsOf(order) {
   return Array.isArray(breakdown?.payment_gst) ? breakdown.payment_gst : []
 }
 
-function orderView(order, refs, currency, remainingAmount = 0) {
+function orderView(order, refs, currency, remainingAmount = 0, receipts = new Map()) {
   const items = [...(order.OrderItems || [])].sort((a, b) => a.item_number - b.item_number)
-  // subtotal here includes the product and category tax of the lines.
-  const subtotal =
-    Number(order.subtotal) + Number(order.product_tax_amount || 0) + Number(order.category_tax_amount || 0)
+  const surcharge = num(order.payment_gst_amount) ?? 0
+  const orderDiscount = num(order.discount_amount) ?? 0
+  const coupon = num(order.coupon_discount_amount) ?? 0
   return {
     id: order.order_number,
+    client_local_id: order.client_local_id || null,
+    local_receipt_number: order.local_receipt_number || null,
+    receiptId: receipts.get(order.id) ?? null,
     location: refs.location(order.location_id),
-    is_custom: Boolean(order.is_custom),
-    offer_exempt: Boolean(order.offer_exempt),
     staff: refs.staff(order.cashier_id),
     customer: refs.customer(order.customer_id),
     batch: refs.batch(order.register_session_id),
     currency,
+    is_custom: Boolean(order.is_custom),
     order_items: items.map((item) => orderItemView(item, refs)),
-    subtotal: Number(subtotal.toFixed(2)),
-    is_order_discounted: Boolean(order.is_order_discounted),
-    order_discount_type: order.order_discount_type,
-    discount_amount: num(order.discount_amount),
+    gross_amount: num(order.gross_amount) ?? 0,
+    // The lines' discounts together (each line's are in order_items[].discount).
+    discount_amount: num(order.line_discount_amount) ?? 0,
+    order_discount: orderDiscount > 0 ? { type: order.order_discount_type || null, amount: orderDiscount } : null,
+    coupon: coupon > 0 ? { code: order.coupon_code || null, amount: coupon } : null,
+    subtotal: num(order.subtotal) ?? 0,
+    // The lines' taxes only; the payment surcharges are surcharge_amount.
+    tax_amount: Number(((Number(order.tax_amount) || 0) - surcharge).toFixed(2)),
+    surcharge_amount: surcharge,
+    total_amount: num(order.total_amount),
     payment_method: order.payment_method,
-    payment_status: order.payment_status,
-    payment_gst_amount: num(order.payment_gst_amount),
-    tax_amount: num(order.tax_amount),
-    // Per method: its share of the bill, its payment tax, what it paid toward the bill and what was handed over.
+    // Per method: its share of the bill, its surcharge, what it paid toward the bill, handed over and change.
     payments: paymentSplitsOf(order).map((row) => ({
       method: row.method,
-      bill_share: num(row.bill_share),
-      payment_tax_percent: num(row.gst_percent),
-      payment_tax_amount: num(row.gst_amount) ?? 0,
+      bill_share: num(row.bill_share) ?? Number(((Number(row.amount) || 0) - (Number(row.gst_amount) || 0)).toFixed(2)),
+      surcharge_type: row.surcharge_type || (Number(row.gst_percent) > 0 ? "percentage" : null),
+      surcharge_value: num(row.surcharge_value ?? (Number(row.gst_percent) > 0 ? row.gst_percent : null)),
+      surcharge_amount: num(row.gst_amount) ?? 0,
       amount: num(row.amount),
       paid: num(row.paid ?? row.amount),
       change: num(row.change) ?? 0,
     })),
-    fbr_invoice_enabled: Boolean(order.fbr_invoice_enabled),
-    fbr_tax_amount: num(order.fbr_tax_amount),
-    order_status: order.order_status,
-    total_amount: num(order.total_amount),
     amount_paid: num(order.amount_paid),
     change_due: num(order.change_due),
     // Udhaar still owed on this sale (payment_status partial); 0 when fully paid.
     remaining_amount: remainingAmount,
+    payment_status: order.payment_status,
+    order_status: order.order_status,
+    fbr_invoice_enabled: Boolean(order.fbr_invoice_enabled),
+    fbr_tax_amount: num(order.fbr_tax_amount),
     cancel_reason: order.cancel_reason || order.void_reason || null,
     cancelled_by: refs.staff(order.cancelled_by),
     placed_at: order.placed_at,
+    synced_at: order.synced_at || null,
     channel: order.channel,
     is_pos_visible: Boolean(order.is_pos_visible),
     is_web_visible: Boolean(order.is_web_visible),
   }
 }
 
+/** Each order's sale receipt number (the first receipt of the order that is not a refund's). */
+async function saleReceiptNumbers(orderIds) {
+  if (!orderIds.length) return new Map()
+  const [receipts, refunds] = await Promise.all([
+    Receipt.findAll({ where: { order_id: { [Op.in]: orderIds } }, attributes: ["id", "order_id", "receipt_number"], order: [["receipt_number", "ASC"]] }),
+    OrderRefund.findAll({ where: { order_id: { [Op.in]: orderIds } }, attributes: ["receipt_id"] }),
+  ])
+  const refundReceipts = new Set(refunds.map((row) => row.receipt_id).filter(Boolean))
+  const out = new Map()
+  for (const row of receipts) {
+    if (refundReceipts.has(row.id) || out.has(row.order_id)) continue
+    out.set(row.order_id, row.receipt_number)
+  }
+  return out
+}
+
 // ---- Refunds ----
 
 /**
- * Refunds by UUID, in the given order: amount = refunded value before tax, tax, total = what went
- * back to the customer; items = the refunded lines.
+ * Refunds by UUID, in the given order — the POS shape, short numbers only: one refund per order
+ * with its lines; amount = goods after discount, tax = line taxes, surcharge = payment surcharges,
+ * total = what went back. Older refunds (made before the till sent the figures) read the same way.
  */
 export async function posRefunds(refundIds) {
   const ids = [...new Set(refundIds.filter(Boolean))]
   if (!ids.length) return []
   const refunds = byIds(await OrderRefund.findAll({ where: { id: { [Op.in]: ids } }, include: [{ model: OrderRefundItem }] }), ids)
   const lines = refunds.flatMap((refund) => refund.OrderRefundItems || [])
-  const [refs, soldLines] = await Promise.all([
-    new Refs().loadAll({
-      user: refunds.map((refund) => refund.cashier_id),
-      order: refunds.map((refund) => refund.order_id),
-      receipt: refunds.map((refund) => refund.receipt_id),
-      location: refunds.map((refund) => refund.location_id),
-      product: lines.map((line) => line.product_id),
+  const [orders, soldLines] = await Promise.all([
+    Order.findAll({ where: { id: { [Op.in]: refunds.map((refund) => refund.order_id) } }, attributes: ["id", "customer_id"] }),
+    OrderItem.findAll({
+      where: { id: { [Op.in]: lines.map((line) => line.order_item_id).filter(Boolean) } },
+      attributes: ["id", "item_number", "sale_unit", "pack_size", "pack_price", "custom_category"],
     }),
-    OrderItem.findAll({ where: { id: { [Op.in]: lines.map((line) => line.order_item_id).filter(Boolean) } }, attributes: ["id", "item_number"] }),
   ])
-  const itemNumber = new Map(soldLines.map((row) => [row.id, row.item_number]))
+  const customerOf = new Map(orders.map((row) => [row.id, row.customer_id]))
+  const sold = new Map(soldLines.map((row) => [row.id, row]))
+  const refs = await new Refs().loadAll({
+    user: refunds.map((refund) => refund.cashier_id),
+    order: refunds.map((refund) => refund.order_id),
+    receipt: refunds.map((refund) => refund.receipt_id),
+    location: refunds.map((refund) => refund.location_id),
+    batch: refunds.map((refund) => refund.register_session_id),
+    customer: refunds.map((refund) => customerOf.get(refund.order_id)),
+    product: lines.map((line) => line.product_id),
+  })
   const currency = await currencyFor(refunds.map((refund) => refund.store_id))
   return refunds.map((refund) => {
-    const total = Number(refund.amount)
-    const tax = Number(refund.tax_amount || 0)
+    const total = num(refund.amount) ?? 0
+    const payments = (Array.isArray(refund.payments) ? refund.payments : [{ method: "cash", amount: total }]).map((row) => ({
+      method: row.method,
+      bill_share: num(row.bill_share) ?? Number(((Number(row.amount) || 0) - (Number(row.surcharge_amount ?? row.payment_tax_amount) || 0)).toFixed(2)),
+      surcharge_type: row.surcharge_type || (Number(row.payment_tax_percent) > 0 ? "percentage" : null),
+      surcharge_value: num(row.surcharge_value ?? (Number(row.payment_tax_percent) > 0 ? row.payment_tax_percent : null)),
+      surcharge_amount: num(row.surcharge_amount ?? row.payment_tax_amount) ?? 0,
+      amount: num(row.amount),
+    }))
+    const surcharge = refund.surcharge_amount != null ? num(refund.surcharge_amount) : Number(payments.reduce((s, row) => s + (row.surcharge_amount || 0), 0).toFixed(2))
+    const views = [...(refund.OrderRefundItems || [])]
+      .sort((a, b) => a.item_number - b.item_number)
+      .map((line) => {
+        const item = sold.get(line.order_item_id)
+        const pack = item?.sale_unit === "pack" && Number(item.pack_size) > 0
+        const amount = num(line.subtotal) ?? 0
+        const tax = num(line.tax_amount) ?? 0
+        return {
+          order_item_id: item?.item_number ?? null,
+          ...(line.product_id
+            ? { product: { ...(refs.product(line.product_id) || { id: null, sku: null, unit: null }), title: line.title } }
+            : { title: line.title, category: item?.custom_category ? { id: null, name: item.custom_category } : null }),
+          qty: pack ? Number((Number(line.quantity) / Number(item.pack_size)).toFixed(4)) : num(line.quantity),
+          sale_unit: pack ? "pack" : "unit",
+          unit_price: pack ? num(item.pack_price) : num(line.unit_price),
+          discount_amount: num(line.discount_amount) ?? 0,
+          amount,
+          taxes: parseList(line.line_taxes).map((row) => ({ level: row.level, name: row.name ?? null, rate: num(row.rate), amount: num(row.amount) })),
+          tax,
+          total: Number((amount + tax).toFixed(2)),
+          restocked: line.restocked == null ? Boolean(line.product_id) : Boolean(line.restocked),
+        }
+      })
+    const amount = Number(views.reduce((s, row) => s + row.amount, 0).toFixed(2))
     return {
       id: refund.refund_number,
       refund_type: refund.refund_type || "partial",
+      client_local_id: refund.client_local_id || null,
       location: refs.location(refund.location_id),
       staff: refs.staff(refund.cashier_id),
+      batch: refs.batch(refund.register_session_id),
       order: refs.order(refund.order_id),
+      customer: refs.customer(customerOf.get(refund.order_id)),
       receiptId: refs.number("receipt", refund.receipt_id),
       currency: currency(refund.store_id),
       reason: refund.reason || null,
-      items: [...(refund.OrderRefundItems || [])]
-        .sort((a, b) => a.item_number - b.item_number)
-        .map((line) => ({
-          order_item_id: itemNumber.get(line.order_item_id) ?? null,
-          ...(line.product_id
-            ? { product: { ...(refs.product(line.product_id) || { id: null, sku: null, unit: null }), title: line.title } }
-            : { title: line.title }),
-          qty: num(line.quantity),
-          unit_price: num(line.unit_price),
-          amount: num(line.subtotal),
-          tax: num(line.tax_amount) ?? 0,
-        })),
-      amount: Number((total - tax).toFixed(2)),
-      tax,
+      lines: views,
+      amount,
+      discount_amount: refund.discount_amount != null ? num(refund.discount_amount) : Number(views.reduce((s, row) => s + row.discount_amount, 0).toFixed(2)),
+      tax: Number(Math.max(0, total - amount - surcharge).toFixed(2)),
+      surcharge,
       total,
-      // How it was paid back, per method (credit = off the udhaar); older refunds were cash.
-      payments: Array.isArray(refund.payments) ? refund.payments : [{ method: "cash", amount: total }],
-      refunded_at: refund.created_at,
+      // How it was paid back, per method (credit = off the udhaar).
+      payments,
+      refunded_at: refund.refunded_at || refund.created_at,
+      synced_at: refund.created_at,
     }
   })
 }
@@ -568,6 +659,8 @@ export async function posStockMovements(movements) {
     reason_note: movement.reason_note || null,
     qty: num(movement.qty),
     qty_after: num(movement.qty_after),
+    // The lot(s) it moved: [{ id (lot number), qty, expiry_date }].
+    lots: (Array.isArray(movement.lots) ? movement.lots : typeof movement.lots === "string" ? JSON.parse(movement.lots || "[]") : []).map((lot) => ({ id: lot.lot_number, qty: Number(lot.qty), expiry_date: lot.expiry_date || null })),
     unit_sold: num(movement.unit_sold) ?? 0,
     created_at: movement.created_at,
   }))
@@ -601,6 +694,8 @@ export async function posTransfers(transfers) {
         qty: line.qty,
         received_qty: line.received_qty,
         status: line.status,
+        // The lots it left from (once received): [{ id (lot number), qty, expiry_date }].
+        lots: (line.lots || []).map((lot) => ({ id: lot.lot_number, qty: num(lot.qty), expiry_date: lot.expiry_date || null })),
       })),
     })),
     ...(view.product_id
@@ -734,10 +829,9 @@ export async function posProducts(views) {
     has_variants: Boolean(view.has_variants),
     parent: view.parent_product_id ? refs.product(view.parent_product_id) : null,
     variant_name: view.variant_name || null,
-    // id = the variant's number inside this product (1, 2, 3…); product_id = its own product number.
+    // id = the variant's number inside this product (1, 2, 3…), sent as variant_id with the product's id.
     variants: (view.variants || []).map((row) => ({
       id: row.variant_number,
-      product_id: row.product_number,
       name: row.name,
       sku: row.sku,
       barcode: row.barcode,
@@ -752,6 +846,10 @@ export async function posProducts(views) {
       taxes: row.taxes || [],
       // Taxes page taxes that apply to this variant: [{ id (tax number), name, type, value }].
       store_taxes: row.store_taxes || [],
+      // Its own image; null = use the product's image.
+      image: row.image || null,
+      // The colours it comes in (hex codes).
+      colors: row.colors || [],
       ...(row.stocks
         ? {
             qty: num(row.total_qty),
@@ -769,6 +867,8 @@ export async function posProducts(views) {
     sku: view.sku,
     barcode: view.barcode,
     image: view.featured_image || null,
+    // The colours it comes in (hex codes); with variants each variant has its own.
+    colors: view.colors || [],
     description: view.description || null,
     unit: view.unit,
     cost_price: num(view.cost_price),

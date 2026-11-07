@@ -109,6 +109,35 @@ export const uploadImage = asyncHandler(async (req, res) => {
   return apiResponse(res, 200, "Product Image Uploaded", data)
 })
 
+/**
+ * POST /products/variant-image (productId + variantId + image file) or
+ * POST /products/:id/variants/:variantId/image (image file).
+ */
+export const uploadVariantImage = asyncHandler(async (req, res) => {
+  const productRef = req.params.id ?? req.body?.productId ?? req.body?.product_id
+  const variantRef = req.params.variantId ?? req.body?.variantId ?? req.body?.variant_id
+  if (!req.file) throw new AppError("Send the image file in the image field", 400)
+  // Check the variant first, so a wrong id never uploads a file.
+  await productService.getVariantByRef(req.storeId, productRef, variantRef)
+  const result = await uploadImageBuffer(req.file.buffer, {
+    folder: `pak-pos/${req.storeId}/products`,
+    filename: req.file.originalname,
+  })
+  const data = await productService.setVariantImage(req.storeId, productRef, variantRef, result.secure_url)
+  return apiResponse(res, 200, "Variant Image Uploaded", data)
+})
+
+/** DELETE /products/:id/variants/:variantId — soft delete of one variant (history stays). */
+export const removeVariant = asyncHandler(async (req, res) => {
+  const product = await productService.deleteVariant(req.storeId, req.params.id, req.params.variantId)
+  return apiResponse(res, 200, "Variant deleted", product)
+})
+
+export const removeVariantImage = asyncHandler(async (req, res) => {
+  const data = await productService.setVariantImage(req.storeId, req.params.id, req.params.variantId, null)
+  return apiResponse(res, 200, "Variant Image Removed", data)
+})
+
 export const getImage = asyncHandler(async (req, res) => {
   return apiResponse(res, 200, "OK", await productService.getProductImage(req.storeId, req.params.id))
 })
@@ -133,7 +162,9 @@ export const listExpiry = asyncHandler(async (req, res) => {
   // A manager sees their own location; a store admin every location (or ?location_id=).
   const locationId =
     req.user.role === "store_admin" ? req.query.location_id || null : req.auth?.location_id || req.user.location_id
-  const data = await productService.listExpiryProducts(req.storeId, locationId)
+  // all=1: lots without an expiry date too (the whole stock, lot by lot).
+  const all = ["1", "true"].includes(String(req.query.all || ""))
+  const data = await productService.listExpiryProducts(req.storeId, locationId, { all })
   return apiResponse(res, 200, "OK", data)
 })
 

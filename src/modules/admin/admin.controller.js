@@ -15,6 +15,12 @@ export const listDataModules = asyncHandler(async (_req, res) => {
   return apiResponse(res, 200, "OK", data)
 })
 
+/** DELETE /admin/stores/:storeId/data — clears one store data (the store and its admin stay). */
+export const clearStoreData = asyncHandler(async (req, res) => {
+  const data = await adminDataService.clearStoreData(req.params.storeId)
+  return apiResponse(res, 200, "Store data cleared", data)
+})
+
 export const deleteAllDbData = asyncHandler(async (_req, res) => {
   const data = await adminDataService.deleteAllDbData()
   return apiResponse(res, 200, "All database rows deleted", data)

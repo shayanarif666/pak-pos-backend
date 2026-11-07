@@ -126,6 +126,10 @@ export const nextSupplierLedgerNumber = (supplierId, transaction) =>
 export const nextStockMovementNumber = (storeId, transaction) =>
   getNextSequence(`stock_movement:${storeId}`, transaction)
 
+/** Lot numbers run 1, 2, 3… per product (or variant). */
+export const nextStockLotNumber = (productId, transaction) =>
+  getNextSequence(`stock_lot:${productId}`, transaction)
+
 export const nextStockTransferNumber = (storeId, transaction) =>
   getNextSequence(`stock_transfer:${storeId}`, transaction)
 

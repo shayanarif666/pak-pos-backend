@@ -44,8 +44,8 @@ async function variantProductId(storeId, productRef, variantRef) {
   if (!parent.has_variants) throw new AppError(`${parent.title} has no variants: leave variant_id out`, 400)
   const variant = await Product.findOne({
     where: isNumber(variantRef)
-      ? { store_id: storeId, parent_product_id: parent.id, variant_number: Number(variantRef) }
-      : { store_id: storeId, parent_product_id: parent.id, id: variantRef },
+      ? { store_id: storeId, parent_product_id: parent.id, variant_number: Number(variantRef), deleted_at: null }
+      : { store_id: storeId, parent_product_id: parent.id, id: variantRef, deleted_at: null },
     attributes: ["id"],
   })
   if (!variant) throw new NotFoundError(`Variant ${variantRef} of ${parent.title} not found`)

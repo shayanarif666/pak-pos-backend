@@ -117,8 +117,9 @@ describe("receiptView", () => {
     assert.deepEqual(view.cashier, { id: 4, name: "Yasir Ali Khan" })
     assert.equal(view.subtotal, 290)
     assert.deepEqual(view.sales_tax, { rate: 18, amount: 52.2 })
-    assert.equal(view.payment_gst_amount, 66.22)
-    assert.equal(view.tax_amount, 190.12)
+    // tax_amount = the line taxes; the payment surcharge is surcharge_amount.
+    assert.equal(view.surcharge_amount, 66.22)
+    assert.equal(view.tax_amount, 123.9)
     assert.equal(view.total, 480.12)
     assert.equal(view.amount_paid, 1000)
     assert.equal(view.change_due, 519.88)
@@ -134,7 +135,7 @@ describe("receiptView", () => {
     assert.deepEqual(pepsi.product.taxes, [{ name: "GST", type: "percentage", value: 18, amount: 34.2 }])
     assert.deepEqual(pepsi.category.tax, { name: null, type: "percentage", value: 5, amount: 9.5 })
     assert.deepEqual(pepsi.sales_tax, { rate: 18, amount: 34.2 })
-    assert.equal(pepsi.offer, null)
+    assert.deepEqual(pepsi.discount, [])
     assert.equal(pepsi.discount_amount, 10)
     assert.equal(pepsi.total, 267.9)
     assert.equal(view.items[1].total, 146)
@@ -142,7 +143,7 @@ describe("receiptView", () => {
 
   it("shows each payment with its GST %, amount, handed over and change", () => {
     assert.deepEqual(view.payments, [
-      { method: "cash", gst_percent: 16, gst_amount: 66.22, amount: 480.12, paid: 1000, change: 519.88, status: "success" },
+      { method: "cash", bill_share: 413.9, surcharge_type: "percentage", surcharge_value: 16, surcharge_amount: 66.22, amount: 480.12, paid: 1000, change: 519.88, status: "success" },
     ])
   })
 

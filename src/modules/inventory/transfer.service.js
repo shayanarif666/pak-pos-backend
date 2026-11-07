@@ -42,6 +42,8 @@ export function publicTransfer(row) {
       status: item.status,
       received_at: item.received_at,
       received_by: item.received_by,
+      // The lots it left from (and arrived as), once received: [{ lot_id, lot_number, qty, expiry_date }].
+      lots: Array.isArray(item.lots) ? item.lots : typeof item.lots === "string" ? JSON.parse(item.lots || "[]") : [],
     })
   }
   for (const dest of destinations) dest.status = groupStatus(dest.products)
@@ -320,7 +322,8 @@ export async function receiveTransfer(storeId, id, actor, { to_location_id, prod
       const lineNote = short > 0 ? `Line ${line.item_number}: received ${received} of ${qty} (${short} short)` : null
       if (lineNote) shortNotes.push(lineNote)
       const movementNote = [row.note, note, lineNote].filter(Boolean).join(" — ") || null
-      await applyStockDelta(
+      // It leaves the source from the lots that expire first (FEFO)…
+      const out = await applyStockDelta(
         {
           storeId,
           storeIdInt: store.store_id_int,
@@ -334,24 +337,36 @@ export async function receiveTransfer(storeId, id, actor, { to_location_id, prod
         },
         { transaction }
       )
-      if (received > 0) {
+      // …and arrives as lots with the same expiry dates (a shortfall comes off the last lots).
+      const left = (out.lots || []).map((lot) => ({ ...lot, qty: Math.abs(lot.qty) }))
+      let toArrive = received
+      const parts = []
+      for (const lot of left) {
+        if (toArrive <= 0) break
+        const part = Math.min(lot.qty, toArrive)
+        parts.push({ qty: part, expiry_date: lot.expiry_date })
+        toArrive = Number((toArrive - part).toFixed(4))
+      }
+      if (toArrive > 0) parts.push({ qty: toArrive, expiry_date: undefined })
+      for (const part of parts) {
         await applyStockDelta(
           {
             storeId,
             storeIdInt: store.store_id_int,
             location: to,
             productId: line.product_id,
-            delta: received,
+            delta: part.qty,
             movement_type: "transfer_in",
             reason: "transfer",
             reason_note: movementNote,
             staff_id: actor.id,
+            ...(part.expiry_date !== undefined ? { expiry_date: part.expiry_date } : {}),
           },
           { transaction }
         )
       }
       await line.update(
-        { status: "completed", received_qty: received, received_at: new Date(), received_by: actor.id },
+        { status: "completed", received_qty: received, received_at: new Date(), received_by: actor.id, lots: left.length ? left : null },
         { transaction }
       )
     }

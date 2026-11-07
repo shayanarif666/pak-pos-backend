@@ -159,13 +159,31 @@ export async function listOrders(actor, query = {}, extraWhere = {}) {
 
   const rows = await Order.findAll({
     where,
+    include: [
+      { model: Customer, as: "customer", attributes: ["id", "name", "phone"] },
+      // Only to count the lines and units; the detail page loads them in full.
+      { model: OrderItem, attributes: ["id", "quantity", "product_id"] },
+    ],
     // placed_at has second precision; order_number keeps same-second sales in sequence.
     order: [
       ["placed_at", "DESC"],
       ["order_number", "DESC"],
     ],
   })
-  return rows.map((row) => publicOrder(row))
+  const sessionIds = [...new Set(rows.map((row) => row.register_session_id).filter(Boolean))]
+  const sessions = new Map(
+    (sessionIds.length ? await RegisterSession.findAll({ where: { id: { [Op.in]: sessionIds } }, attributes: ["id", "session_number"] }) : []).map((row) => [row.id, row.session_number])
+  )
+  return rows.map((row) => {
+    const lines = row.OrderItems || []
+    return publicOrder(row, {
+      customer: row.customer ? { id: row.customer.id, name: row.customer.name, phone: row.customer.phone } : null,
+      // Lines on the order, and how many of them are custom (not from the catalog).
+      item_count: lines.length,
+      custom_item_count: lines.filter((line) => !line.product_id).length,
+      batch: row.register_session_id ? { id: sessions.get(row.register_session_id) ?? null } : null,
+    })
+  })
 }
 
 export async function listCustomOrders(actor, query = {}) {
@@ -375,7 +393,13 @@ export async function getOrderView(actor, id) {
 
   const row = await findOrder(actor.store_id, id)
   assertCanSee(actor, row)
-  return decorate(row)
+  const view = decorate(row)
+  // The batch (register session) it was rung up in.
+  if (row.register_session_id) {
+    const session = await RegisterSession.findByPk(row.register_session_id, { attributes: ["id", "session_number", "status"] })
+    if (session) view.order.batch = { id: session.session_number, status: session.status }
+  }
+  return view
 }
 
 function staffLite(user) {
@@ -491,10 +515,11 @@ async function restockOrder(order, actor, { transaction }) {
         store,
         location,
         productId: item.product_id,
-        qty: item.quantity,
+        qty: Number(item.quantity) - Number(item.refunded_qty || 0),
         staffId: actor.id,
         orderId: order.id,
         isCustom: false,
+        item,
       },
       { transaction }
     )
@@ -756,6 +781,7 @@ export async function refundOrderItem(actor, id, fields) {
           staffId: actor.id,
           orderId: order.id,
           isCustom: Boolean(order.is_custom),
+          item,
         },
         { transaction }
       )
@@ -1102,4 +1128,213 @@ export async function attachOrderCustomer(actor, id, customerId) {
   const customer = await getCustomer(order.store_id, customerId)
   await order.update({ customer_id: customer.id })
   return publicOrder(await findOrder(actor.store_id, id))
+}
+
+// ---- POS refunds: the till works out every figure, the server saves them as sent ----
+
+const REFUND_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000
+
+function refundTime(value, now) {
+  if (!value) return now
+  const at = new Date(value)
+  if (Number.isNaN(at.getTime())) throw new AppError("refunded_at is not a valid date", 400)
+  if (at.getTime() > now.getTime() + 5 * 60 * 1000) throw new AppError("refunded_at cannot be in the future", 400)
+  if (now.getTime() - at.getTime() > REFUND_MAX_AGE_MS) throw new AppError("Offline refund is older than 30 days", 400)
+  return at
+}
+
+/** The batch the money leaves from: the one sent (number or UUID), else the staff member's open one. */
+async function refundSession(storeId, ref, actor, transaction) {
+  if (ref) {
+    const where = /^\d+$/.test(String(ref)) ? { store_id: storeId, session_number: Number(ref) } : { store_id: storeId, id: ref }
+    const session = await RegisterSession.findOne({ where, transaction })
+    if (!session) throw new NotFoundError(`Batch ${ref} not found`)
+    return session
+  }
+  return RegisterSession.findOne({ where: { store_id: storeId, cashier_id: actor.id, status: "open" }, order: [["opened_at", "DESC"]], transaction })
+}
+
+/**
+ * POST /orders/refunds/bulk and /refunds/complete/bulk with lines[]: one refund (and one receipt) for
+ * the order, its lines and payments exactly as the till sent them. The server only checks: each qty
+ * is not more than what is left on its line, a complete refund gives back everything left, and
+ * total_amount = the sum of the payments (checked when parsed). client_local_id makes it safe to
+ * send again. restock false keeps that qty out of stock (damaged / expired).
+ */
+export async function refundPosOrder(actor, id, fields, { complete = false } = {}) {
+  const store = await getStoreForManager(actor.store_id)
+  const existing = await OrderRefund.findOne({ where: { store_id: store.id, client_local_id: fields.client_local_id } })
+  if (existing) return { refund: existing, idempotent: true }
+
+  const order = await findOrder(store.id, id)
+  assertCanSee(actor, order)
+  if (![...SOLD_ORDER_STATUSES, "refunded"].includes(order.order_status)) {
+    throw new ConflictError("Only a completed sale can be refunded")
+  }
+  const items = order.OrderItems || []
+  const packOf = (item) => (item.sale_unit === "pack" ? Number(item.pack_size) || 1 : 1)
+  const picked = fields.lines.map((line) => {
+    const ref = String(line.order_item_id)
+    const item = items.find((row) => row.id === ref || String(row.item_number) === ref)
+    if (!item) throw new NotFoundError(`Order ${order.order_number} has no line ${ref}`)
+    // qty is in the unit the line was sold in (packs on a pack line); stock and refunded_qty are units.
+    const units = Number((line.qty * packOf(item)).toFixed(4))
+    const left = Number(item.quantity) - Number(item.refunded_qty || 0)
+    if (units > left + 1e-6) {
+      throw new AppError(`Order ${order.order_number} line ${item.item_number}: only ${Number((left / packOf(item)).toFixed(4))} left to refund (${line.qty} sent)`, 400)
+    }
+    return { line, item, units }
+  })
+  if (new Set(picked.map((row) => row.item.id)).size !== picked.length) {
+    throw new AppError("A line is listed twice: send it once with its whole qty", 400)
+  }
+  if (complete) {
+    for (const item of items) {
+      const left = Number(item.quantity) - Number(item.refunded_qty || 0)
+      const sent = picked.find((row) => row.item.id === item.id)?.units || 0
+      if (left - sent > 1e-6) {
+        throw new AppError(
+          `Order ${order.order_number}: a complete refund must give back every remaining line (line ${item.item_number} has ${Number(((left - sent) / packOf(item)).toFixed(4))} left)`,
+          400
+        )
+      }
+    }
+  }
+
+  const now = new Date()
+  const refundedAt = refundTime(fields.refunded_at, now)
+  const sum = (rows, key) => money(rows.reduce((total, row) => total + Number(row[key] || 0), 0))
+  const lineAmount = sum(fields.lines, "amount")
+  const lineTax = sum(fields.lines, "tax_amount")
+  const discount = sum(fields.lines, "discount_amount")
+  const surcharge = sum(fields.payments, "surcharge_amount")
+  const total = money(fields.total_amount)
+
+  return sequelize.transaction(async (transaction) => {
+    const location = order.location_id ? await Location.findByPk(order.location_id, { transaction }) : null
+    for (const { line, item, units } of picked) {
+      if (line.restock && item.product_id && location) {
+        await restockSaleStock(
+          { store, location, productId: item.product_id, qty: units, staffId: actor.id, orderId: order.id, isCustom: Boolean(order.is_custom), item },
+          { transaction }
+        )
+      }
+    }
+
+    const receipt = await Receipt.create(
+      {
+        store_id: store.id,
+        store_id_int: store.store_id_int,
+        location_id: order.location_id,
+        location_id_int: order.location_id_int,
+        order_id: order.id,
+        ...visibilityFromOrderChannel(order.channel),
+        payment_id: null,
+        receipt_number: await nextReceiptNumber(store.id, transaction),
+        cashier_id: actor.id,
+        subtotal: lineAmount,
+        discount_amount: discount,
+        tax_amount: money(lineTax + surcharge),
+        shipping_fee: 0,
+        total_amount: total,
+        issued_at: refundedAt,
+      },
+      { transaction }
+    )
+
+    const session = await refundSession(store.id, fields.batch_ref, actor, transaction)
+    const refund = await OrderRefund.create(
+      {
+        store_id: store.id,
+        store_id_int: store.store_id_int,
+        refund_number: await nextOrderRefundNumber(store.id, transaction),
+        location_id: order.location_id,
+        location_id_int: order.location_id_int,
+        order_id: order.id,
+        ...visibilityFromOrderChannel(order.channel),
+        cashier_id: actor.id,
+        receipt_id: receipt.id,
+        reason: fields.reason,
+        refund_type: complete ? "complete" : "partial",
+        amount: total,
+        // Line taxes + payment surcharges (amount - tax = what the goods were worth after discount).
+        tax_amount: money(total - lineAmount),
+        discount_amount: discount,
+        surcharge_amount: surcharge,
+        payments: fields.payments,
+        client_local_id: fields.client_local_id,
+        refunded_at: refundedAt,
+        register_session_id: session?.id || null,
+      },
+      { transaction }
+    )
+
+    let itemNumber = 0
+    for (const { line, item, units } of picked) {
+      itemNumber += 1
+      await OrderRefundItem.create(
+        {
+          refund_id: refund.id,
+          item_number: itemNumber,
+          ...visibilityFromOrderChannel(order.channel),
+          order_item_id: item.id,
+          product_id: item.product_id,
+          title: item.title,
+          quantity: units,
+          unit_price: item.unit_price,
+          subtotal: line.amount,
+          tax_amount: line.tax_amount,
+          discount_amount: line.discount_amount,
+          line_taxes: line.taxes,
+          restocked: Boolean(line.restock && item.product_id),
+        },
+        { transaction }
+      )
+      await item.update({ refunded_qty: money(Number(item.refunded_qty || 0) + units) }, { transaction })
+    }
+
+    const after = await OrderItem.findAll({ where: { order_id: order.id }, transaction })
+    const allBack = after.every((row) => Number(row.refunded_qty || 0) + 1e-6 >= Number(row.quantity))
+    await order.update(
+      {
+        order_status: allBack ? "refunded" : "partial_refunded",
+        payment_status: allBack ? "refunded" : order.payment_status,
+      },
+      { transaction }
+    )
+
+    // The udhaar part comes off what the customer owes; it is not paid out.
+    const creditBack = fields.payments.find((row) => row.method === "credit")
+    if (creditBack && order.customer_id) {
+      const customer = await getCustomer(order.store_id, order.customer_id)
+      await recordLedgerEntry(
+        customer,
+        { entry_type: "credit", amount: creditBack.amount, order_id: order.id, created_by: actor.id, note: `Refund #${refund.refund_number} of order #${order.order_number}` },
+        { transaction }
+      )
+    }
+    // The money leaves the batch it was paid out of (the drawer open now).
+    if (session && session.status === "open") {
+      await applySessionSale(
+        session,
+        { payments: fields.payments.filter((row) => row.method !== "credit"), total, reverse: true },
+        { transaction }
+      )
+    }
+
+    await writeAudit({
+      action: "refund",
+      entity_type: "orders",
+      entity_id: order.id,
+      store_id: store.id,
+      store_id_int: store.store_id_int,
+      location_id: order.location_id,
+      location_id_int: order.location_id_int,
+      user_id: actor.id,
+      channel: order.channel,
+      note: fields.reason,
+      after_data: { refund_id: refund.id, lines: picked.map(({ item, units, line }) => ({ order_item_id: item.id, quantity: units, restock: line.restock })) },
+    })
+    return { refund }
+  })
 }

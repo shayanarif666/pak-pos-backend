@@ -28,6 +28,8 @@ export const Order = sequelize.define(
     customer_id: uuidCol(true),
     register_session_id: uuidCol(true),
     client_local_id: { type: DataTypes.STRING(255), allowNull: true },
+    // The number printed on the till receipt (offline), as the POS sent it.
+    local_receipt_number: { type: DataTypes.STRING(64), allowNull: true },
     gross_amount: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
     line_discount_amount: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
     subtotal: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },

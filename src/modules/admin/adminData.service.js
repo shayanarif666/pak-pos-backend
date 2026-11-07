@@ -254,3 +254,92 @@ export async function deleteExpiredTrialStores() {
   for (const store of stores) await deleteStoreData(store.id)
   return stores.length
 }
+
+// ---- Clear one store's data, keeping the store (super admin) ----
+
+// Kept, so the store can still sign in and sell: the account, its plan / license / billing, the
+// POS devices, its look and settings, and its backups.
+const KEEP_ON_STORE_CLEAR = new Set([
+  "stores", "store_licenses", "billings", "pos_devices", "currencies", "store_themes", "website_content", "store_backups",
+])
+// Numbering that starts again from 1 (users, locations and devices keep theirs: those rows stay).
+const KEEP_COUNTERS = new Set(["user", "location", "device", "store", "plan"])
+
+/**
+ * DELETE /admin/stores/:storeId/data — every business row of one store: catalog, stock, sales,
+ * refunds, customers, suppliers, discounts, taxes, staff (not the store admin), batches, sessions
+ * and logs. The store itself, its store admin(s), its default location, plan / license / billing
+ * and POS devices stay. storeId = the store number (e.g. 1) or UUID. Super admin only.
+ */
+export async function clearStoreData(storeRef) {
+  const { Store } = await import("../stores/store.model.js")
+  const where = /^\d+$/.test(String(storeRef)) ? { store_id_int: Number(storeRef) } : { id: storeRef }
+  const store = await Store.findOne({ where })
+  if (!store) throw new NotFoundError("Store not found")
+  const storeId = store.id
+
+  return sequelize.transaction(async (transaction) => {
+    const run = (sql, replacements = []) => sequelize.query(sql, { replacements, transaction })
+    const count = async (sql, replacements) => {
+      const [result] = await run(sql, replacements)
+      return Number(result?.affectedRows ?? 0)
+    }
+    const cleared = []
+    await run("SET FOREIGN_KEY_CHECKS = 0")
+    try {
+      // Child rows without a store_id, through their parent.
+      const children = [
+        ["order_items", "order_id", "orders"],
+        ["order_refund_items", "refund_id", "order_refunds"],
+        ["offer_targets", "offer_id", "offers"],
+        ["cart_items", "cart_id", "carts"],
+        ["store_tax_products", "tax_id", "store_taxes"],
+      ]
+      for (const [table, fk, parent] of children) {
+        cleared.push({ table, deleted: await count(`DELETE c FROM \`${table}\` c JOIN \`${parent}\` p ON p.id = c.\`${fk}\` WHERE p.store_id = ?`, [storeId]) })
+      }
+      // Tokens / sessions of the staff about to go (the store admin stays signed in).
+      for (const table of ["auth_tokens", "user_sessions"]) {
+        cleared.push({
+          table,
+          deleted: await count(
+            `DELETE c FROM \`${table}\` c JOIN \`users\` u ON u.id = c.user_id WHERE u.store_id = ? AND u.role <> 'store_admin'`,
+            [storeId]
+          ),
+        })
+      }
+      const [tables] = await run(
+        `SELECT TABLE_NAME AS name FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = DATABASE() AND COLUMN_NAME = 'store_id'`
+      )
+      for (const { name } of tables) {
+        if (KEEP_ON_STORE_CLEAR.has(name)) continue
+        if (name === "users") {
+          cleared.push({ table: name, deleted: await count("DELETE FROM `users` WHERE store_id = ? AND role <> 'store_admin'", [storeId]) })
+          continue
+        }
+        if (name === "locations") {
+          cleared.push({
+            table: name,
+            deleted: await count("DELETE FROM `locations` WHERE store_id = ? AND (id <> ? OR ? IS NULL)", [storeId, store.default_location_id, store.default_location_id]),
+          })
+          continue
+        }
+        cleared.push({ table: name, deleted: await count(`DELETE FROM \`${name}\` WHERE store_id = ?`, [storeId]) })
+      }
+      // Numbering of the cleared rows starts again from 1.
+      const [counters] = await run("SELECT name FROM counters WHERE name LIKE ?", [`%:${storeId}`])
+      for (const { name } of counters) {
+        const kind = String(name).split(":")[0]
+        if (!KEEP_COUNTERS.has(kind)) await run("DELETE FROM counters WHERE name = ?", [name])
+      }
+    } finally {
+      await run("SET FOREIGN_KEY_CHECKS = 1")
+    }
+    return {
+      store: { id: store.store_id_int, name: store.name },
+      kept: ["store", "store admin", "default location", "plan / license / billing", "POS devices", "settings and look", "backups"],
+      cleared: cleared.filter((row) => row.deleted > 0),
+    }
+  })
+}

@@ -6,8 +6,10 @@ import { Product } from "./product.model.js"
 import { Location } from "../locations/location.model.js"
 import { Store } from "../stores/store.model.js"
 import { StockMovement } from "../inventory/stockMovement.model.js"
+import { StockLot } from "./stockLot.model.js"
 import { getProduct, publicStock } from "./product.service.js"
 import { nextStockMovementNumber } from "../../shared/utils/counter.util.js"
+import { findLot, lotSource, moveLots, setLotExpiry, soonestExpiry } from "./stockLots.service.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
@@ -39,7 +41,8 @@ export async function listStocks(actor, query = {}) {
 
   const rows = await ProductStock.findAll({
     where,
-    include: [{ model: Product }],
+    // A deleted variant's stock is left out (it stays in the database).
+    include: [{ model: Product, where: { deleted_at: null } }],
     order: [["updated_at", "DESC"]],
   })
   return rows.map((row) => publicStock(row, row.Product))
@@ -90,6 +93,11 @@ export async function applyStockDelta(
     low_stock_threshold,
     expiry_date,
     visibility,
+    // Lots: lot_id = the lot to use (number or UUID); return_lots = a refund: the lots the sale took
+    // [{ lot_id, qty }]; received_at = when a new lot came in (default now).
+    lot_id,
+    return_lots,
+    received_at,
   },
   { transaction }
 ) {
@@ -113,14 +121,36 @@ export async function applyStockDelta(
   const soldDelta = ["sale", "refund"].includes(reason) ? -Number(delta) : 0
   const newSold = Math.max(0, oldSold + soldDelta)
 
+  // The lots: stock in makes / fills a lot, stock out takes the soonest expiry first (FEFO).
+  const signedDelta = Number(delta)
+  let lots = []
+  if (signedDelta !== 0) {
+    lots = await moveLots(
+      {
+        storeId,
+        storeIdInt,
+        location,
+        productId,
+        delta: signedDelta,
+        lotRef: lot_id,
+        expiry: signedDelta > 0 ? expiry_date : undefined,
+        returnTo: return_lots,
+        source: lotSource(movement_type, reason),
+        receivedAt: received_at,
+      },
+      transaction
+    )
+  } else if (expiry_date !== undefined) {
+    await setLotExpiry({ storeId, location, productId, lotRef: lot_id, expiry: expiry_date }, transaction)
+  }
+
   const patch = { qty: newQty, unit_sold: newSold }
   if (low_stock_threshold !== undefined) patch.low_stock_threshold = low_stock_threshold
-  if (expiry_date !== undefined) patch.expiry_date = expiry_date
-  // A deleted stock entry comes back with the next movement (without its old expiry date).
-  if (row?.deleted_at) {
-    patch.deleted_at = null
-    if (expiry_date === undefined) patch.expiry_date = null
-  }
+  // The stock row shows the soonest expiry still in stock (each lot keeps its own).
+  const soonest = await soonestExpiry(location.id, productId, transaction)
+  patch.expiry_date = soonest ?? (signedDelta === 0 && expiry_date !== undefined && !lot_id ? expiry_date : null)
+  // A deleted stock entry comes back with the next movement.
+  if (row?.deleted_at) patch.deleted_at = null
 
   if (!row) {
     const product = await Product.findByPk(productId, { transaction })
@@ -160,6 +190,8 @@ export async function applyStockDelta(
         staff_id: staff_id || null,
         supplier_id: supplier_id || null,
         order_id: order_id || null,
+        lot_id: lots.length === 1 ? lots[0].lot_id : lots[0]?.lot_id || null,
+        lots: lots.length ? lots : null,
         // A manual movement may name its own visibility; otherwise it follows the stock row.
         ...(visibility || copyVisibility(row)),
       },
@@ -167,7 +199,7 @@ export async function applyStockDelta(
     )
   }
 
-  return { stock: row, movement, qty: newQty }
+  return { stock: row, movement, qty: newQty, lots }
 }
 
 export async function putStock(actor, productId, fields) {
@@ -274,7 +306,9 @@ export async function editStock(actor, productId, locationRef, fields) {
       transaction,
       lock: transaction.LOCK.UPDATE,
     })
-    const oldQty = row ? Number(row.qty) : 0
+    // One lot: qty / packs are that lot's new total; otherwise the whole stock's.
+    const lot = fields.lot_id ? await findLot(actor.store_id, fields.lot_id, { locationId: location.id, productId: product.id, transaction }) : null
+    const oldQty = lot ? Number(lot.qty) : row ? Number(row.qty) : 0
     const newQty = qty !== undefined ? qty : fields.delta !== undefined ? oldQty + fields.delta : oldQty
     const signed = newQty - oldQty
     if (fields.movement_type === "stock_in" && signed < 0) throw new AppError("stock_in cannot lower the stock", 400)
@@ -291,11 +325,19 @@ export async function editStock(actor, productId, locationRef, fields) {
         reason_note: fields.reason_note,
         staff_id: actor.id,
         low_stock_threshold: fields.low_stock_threshold,
-        expiry_date: fields.expiry_date,
+        // With a lot, a new expiry date is set on it below (a qty change keeps it in that lot).
+        ...(lot && signed !== 0 ? {} : { expiry_date: fields.expiry_date }),
+        lot_id: lot ? lot.id : undefined,
       },
       { transaction }
     )
-    return { movementId: movement?.id || null, stockId: stock.id }
+    if (lot && signed !== 0 && fields.expiry_date !== undefined) {
+      await applyStockDelta(
+        { storeId: actor.store_id, storeIdInt: actor.store_id_int, location, productId: product.id, delta: 0, expiry_date: fields.expiry_date, lot_id: lot.id },
+        { transaction }
+      )
+    }
+    return { movementId: movement?.id || null, stockId: stock.id, lotId: lot?.id || null }
   })
 }
 
@@ -303,7 +345,12 @@ export async function editStock(actor, productId, locationRef, fields) {
  * DELETE /product-stocks/:id — soft delete: the qty goes to 0 through an adjustment movement
  * (reason other), then the entry leaves the stock & expiry lists. A later movement brings it back.
  */
-export async function deleteStockEntry(actor, id, { reason_note } = {}) {
+export async function deleteStockEntry(actor, id, { reason_note, productId = null, locationRef = null } = {}) {
+  // A lot (its number with the product, or its UUID): only that lot (its qty goes to 0, then it
+  // leaves the lists).
+  if (/^\d+$/.test(String(id)) || (await StockLot.count({ where: { id: String(id), store_id: actor.store_id } }))) {
+    return deleteLot(actor, id, { reason_note, productId, locationRef })
+  }
   return sequelize.transaction(async (transaction) => {
     const row = await findStockEntry(actor, id, transaction)
     const location = await Location.findByPk(row.location_id, { transaction })
@@ -323,6 +370,40 @@ export async function deleteStockEntry(actor, id, { reason_note } = {}) {
     )
     await ProductStock.update({ deleted_at: new Date() }, { where: { id: row.id }, transaction })
     return { movementId: result.movement?.id || null, stockId: row.id }
+  })
+}
+
+/**
+ * DELETE /product-stocks/:lotNumber — soft delete of one lot: its qty goes to 0 through an
+ * adjustment movement (reason other), then it leaves the stock & expiry lists. The rest of the
+ * stock (its other lots) stays.
+ */
+async function deleteLot(actor, ref, { reason_note, productId, locationRef } = {}) {
+  const locationId = locationRef ? (await loadLocation(actor.store_id, locationRef)).id : null
+  return sequelize.transaction(async (transaction) => {
+    const lot = await findLot(actor.store_id, ref, { productId, locationId, transaction })
+    if (actor.role !== "store_admin" && lot.location_id !== actor.location_id) throw new NotFoundError(`Lot ${ref} not found`)
+    const location = await Location.findByPk(lot.location_id, { transaction })
+    const result = Number(lot.qty) > 0
+      ? await applyStockDelta(
+          {
+            storeId: lot.store_id,
+            storeIdInt: lot.store_id_int,
+            location,
+            productId: lot.product_id,
+            delta: -Number(lot.qty),
+            movement_type: "adjustment",
+            reason: "other",
+            reason_note: `Lot ${lot.lot_number} deleted${reason_note ? `: ${reason_note}` : ""}`,
+            staff_id: actor.id,
+            lot_id: lot.id,
+          },
+          { transaction }
+        )
+      : null
+    await lot.update({ deleted_at: new Date() }, { transaction })
+    const stock = await ProductStock.findOne({ where: { location_id: lot.location_id, product_id: lot.product_id }, transaction })
+    return { movementId: result?.movement?.id || null, stockId: stock?.id || null, lotId: lot.id }
   })
 }
 

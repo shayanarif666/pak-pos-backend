@@ -5,6 +5,9 @@ import { Location } from "../locations/location.model.js"
 import { User } from "../auth/user.model.js"
 import { Supplier } from "./supplier.model.js"
 import { StockMovement } from "./stockMovement.model.js"
+import { StockLot } from "../catalog/stockLot.model.js"
+import { Store } from "../stores/store.model.js"
+import { lotsByStock, publicLot } from "../catalog/stockLots.service.js"
 
 /*
  * Replies of the stock edit APIs (PATCH /stock-movements/bulk, PATCH /product-stocks/bulk and the
@@ -46,10 +49,13 @@ function productView(row, parent) {
   }
 }
 
-/** pairs: [{ movementId, stockId }] (either may be null) → [{ movement, stock }]. */
+/** pairs: [{ movementId, stockId, lotId? }] (any may be null) → [{ movement, stock }]. */
 export async function stockEditRows(pairs) {
   const movements = await mapById(StockMovement, pairs.map((pair) => pair.movementId), undefined, { paranoid: false })
   const stocks = await mapById(ProductStock, pairs.map((pair) => pair.stockId))
+  const editedLots = await mapById(StockLot, pairs.map((pair) => pair.lotId))
+  const lotsOf = await lotsByStock([...stocks.values()])
+  const storeRow = stocks.size ? await Store.findByPk([...stocks.values()][0].store_id, { attributes: ["expiry_warning_days", "expiry_critical_days"] }) : null
   const productIds = [...[...movements.values()].map((row) => row.product_id), ...[...stocks.values()].map((row) => row.product_id)]
   const products = await mapById(Product, productIds, PRODUCT_ATTRS)
   const parents = await mapById(Product, [...products.values()].map((row) => row.parent_product_id), PRODUCT_ATTRS)
@@ -85,6 +91,8 @@ export async function stockEditRows(pairs) {
       reason_note: row.reason_note || null,
       qty: num(row.qty),
       qty_after: num(row.qty_after),
+      // The lot(s) it moved: [{ id (lot number), qty, expiry_date }].
+      lots: (Array.isArray(row.lots) ? row.lots : typeof row.lots === "string" ? JSON.parse(row.lots || "[]") : []).map((lot) => ({ id: lot.lot_number, qty: num(lot.qty), expiry_date: lot.expiry_date || null })),
       created_at: row.created_at,
       updated_at: row.updated_at || null,
       ...(row.deleted_at ? { deleted_at: row.deleted_at } : {}),
@@ -108,7 +116,9 @@ export async function stockEditRows(pairs) {
       number_of_packs: packSize >= 2 ? Math.floor(qty / packSize) : null,
       loose_units: packSize >= 2 ? Math.round((qty - Math.floor(qty / packSize) * packSize) * 10000) / 10000 : null,
       sell_loose: isPack ? Boolean(item.sell_loose) : null,
+      // The soonest expiry still in stock; each lot keeps its own (lots, soonest first).
       expiry_date: row.expiry_date || null,
+      lots: (lotsOf.get(`${row.location_id}|${row.product_id}`) || []).map((lot) => publicLot(lot, storeRow)),
       low_stock_threshold: threshold,
       is_low: threshold == null ? false : qty <= threshold,
       updated_at: row.updated_at,
@@ -116,8 +126,13 @@ export async function stockEditRows(pairs) {
     }
   }
 
-  return pairs.map((pair) => ({
-    movement: movementView(movements.get(pair.movementId)),
-    stock: stockView(stocks.get(pair.stockId)),
-  }))
+  return pairs.map((pair) => {
+    const lot = editedLots.get(pair.lotId)
+    return {
+      movement: movementView(movements.get(pair.movementId)),
+      stock: stockView(stocks.get(pair.stockId)),
+      // The lot edited / deleted (when one was named).
+      ...(lot ? { lot: { ...publicLot(lot, storeRow), ...(lot.deleted_at ? { deleted_at: lot.deleted_at } : {}) } } : {}),
+    }
+  })
 }

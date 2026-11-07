@@ -98,6 +98,9 @@ export function publicOrder(order, extras = {}) {
     change_due: json.change_due == null ? null : Number(json.change_due),
     shipping_address: json.shipping_address,
     placed_at: json.placed_at,
+    // The POS's own receipt number and when the order reached the server.
+    local_receipt_number: json.local_receipt_number || null,
+    synced_at: json.synced_at || null,
     ...extras,
     tax: json.tax_breakdown || extras.tax || null,
   }
@@ -145,8 +148,35 @@ export function publicOrderItem(item) {
     refunded_qty: Number(json.refunded_qty || 0),
     remaining_qty: money(Math.max(0, quantity - Number(json.refunded_qty || 0))),
     pricing_source: json.pricing_source || null,
+    // Where it was filed: the catalog category, or the custom line's own category.
+    category_name: json.category_name || json.custom_category || null,
+    is_custom_line: !json.product_id,
+    free_qty: Number(json.free_qty || 0),
+    // The discounts that priced it: [{ id (discount number), name, type, amount, … }].
+    discount_source: json.discount_source || null,
+    discounts: jsonArray(json.offers),
+    // Every tax on the line: [{ level (product | store | category), name, rate, amount }].
+    taxes: jsonArray(json.line_taxes).length
+      ? jsonArray(json.line_taxes)
+      : jsonArray(json.product_taxes).map((tax) => ({ level: "product", name: tax.name, rate: tax.value, type: tax.type, amount: tax.amount })),
+    // The stock lots it was sold from: [{ id (lot number), qty, expiry_date }].
+    lots: jsonArray(json.lots).map((lot) => ({ id: lot.lot_number ?? lot.id, qty: Number(lot.qty), expiry_date: lot.expiry_date || null, returned: lot.returned ? Number(lot.returned) : 0 })),
     ...publicVisibility(json),
   }
+}
+
+/** A JSON column that may come back as text. */
+function jsonArray(value) {
+  if (Array.isArray(value)) return value
+  if (typeof value === "string" && value.trim()) {
+    try {
+      const parsed = JSON.parse(value)
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  }
+  return []
 }
 
 async function loadExisting(storeId, clientLocalId, transaction) {
@@ -274,8 +304,10 @@ function posPricedLine(item, product, offersById) {
     category_discount: source === "category" ? snapshot(discount_amount) : null,
     free_qty: discount?.free_qty || 0,
     // The till's own figures: price × qty as it sold them (per pack on a pack line).
-    subtotal: money(salePrice * Number(item.quantity) - discount_amount),
-    tax_amount: sumOf(taxes, (tax) => tax.amount),
+    subtotal: item.priced.subtotal != null ? money(item.priced.subtotal) : money(salePrice * Number(item.quantity) - discount_amount),
+    tax_amount: item.priced.tax_amount != null ? money(item.priced.tax_amount) : sumOf(taxes, (tax) => tax.amount),
+    // Every tax of the line as the till sent it (level, name, rate, amount).
+    line_taxes: taxes.map((tax) => ({ level: tax.level, name: tax.name, rate: tax.rate ?? null, amount: money(tax.amount) })),
     product_tax_amount: sumOf(ofLevel("product"), (tax) => tax.amount),
     category_tax_amount: sumOf(ofLevel("category"), (tax) => tax.amount),
     sales_tax_amount: sumOf(ofLevel("sales"), (tax) => tax.amount),
@@ -296,6 +328,9 @@ function posPricedTotals({ lines, store, input, orderDiscount, couponDiscount })
       method: row.method,
       bill_share: money(amount - gst_amount),
       gst_percent: row.surcharge_type === "fixed" ? 0 : row.surcharge_value ?? row.tax_rate ?? 0,
+      // The surcharge as the till sent it (percentage | fixed and its value).
+      surcharge_type: row.surcharge_type || null,
+      surcharge_value: row.surcharge_value ?? null,
       gst_amount,
       amount,
       paid: money(row.paid ?? amount),
@@ -303,15 +338,20 @@ function posPricedTotals({ lines, store, input, orderDiscount, couponDiscount })
       transaction_id: row.transaction_id || null,
     }
   })
-  const subtotal = sumOf(lines, (line) => line.subtotal)
-  const line_tax = sumOf(lines, (line) => line.tax_amount)
+  // The till totals win; without them they are the sums of what it sent.
+  const subtotal = input.lines_subtotal != null ? money(input.lines_subtotal) : sumOf(lines, (line) => line.subtotal)
+  // A check, not a calculation: the order subtotal the till sent must be the sum of its lines.
+  if (input.lines_subtotal != null && Math.abs(subtotal - sumOf(lines, (line) => line.subtotal)) > 0.01) {
+    throw new AppError(`subtotal ${subtotal} is not the sum of the lines (${sumOf(lines, (line) => line.subtotal)})`, 400)
+  }
+  const line_tax = input.lines_tax_amount != null ? money(input.lines_tax_amount) : sumOf(lines, (line) => line.tax_amount)
   const shipping_fee = money(input.shipping_fee || 0)
-  const gst = sumOf(splits, (row) => row.gst_amount)
+  const gst = input.surcharge_amount != null ? money(input.surcharge_amount) : sumOf(splits, (row) => row.gst_amount)
   const salesRate = input.items.flatMap((item) => item.priced.taxes).find((tax) => tax.level === "sales")?.rate
   const tax_amount = money(line_tax + gst)
   const totals = {
-    gross_amount: sumOf(lines, (line) => Number(line.unit_price) * Number(line.quantity)),
-    line_discount_amount: sumOf(lines, (line) => line.discount_amount),
+    gross_amount: input.gross_amount != null ? money(input.gross_amount) : sumOf(lines, (line) => Number(line.unit_price) * Number(line.quantity)),
+    line_discount_amount: input.lines_discount_amount != null ? money(input.lines_discount_amount) : sumOf(lines, (line) => line.discount_amount),
     subtotal,
     discount_amount: money(orderDiscount),
     coupon_discount_amount: money(couponDiscount),
@@ -325,11 +365,17 @@ function posPricedTotals({ lines, store, input, orderDiscount, couponDiscount })
     fbr_tax_amount: store.fbr_invoice_enabled ? tax_amount : 0,
     gst,
     payment_gst_amount: gst,
+    // Every payment as the till sent it: share of the bill, surcharge, amount, handed over, change.
     payment_gst_splits: splits.map((row) => ({
       method: row.method,
-      amount: row.amount,
+      bill_share: row.bill_share,
+      surcharge_type: row.surcharge_type,
+      surcharge_value: row.surcharge_value,
       gst_percent: row.gst_percent,
       gst_amount: row.gst_amount,
+      amount: row.amount,
+      paid: row.paid,
+      change: row.change,
     })),
     tax_amount,
     // The till's total wins; without one it is the sum of what it sent.
@@ -664,6 +710,7 @@ export async function createOrder(actor, input) {
           customer_id: customer?.id || null,
           register_session_id: session?.id || null,
           client_local_id,
+          local_receipt_number: input.local_receipt_number || null,
           gross_amount: totals.gross_amount,
           line_discount_amount: totals.line_discount_amount,
           subtotal: totals.subtotal,
@@ -751,6 +798,7 @@ export async function createOrder(actor, input) {
         category_tax_amount: line.category_tax_amount || 0,
         sales_tax_amount: line.sales_tax_amount || 0,
         product_taxes: line.product_taxes || [],
+        line_taxes: line.line_taxes || null,
         category_tax_type: line.category_tax_type || null,
         category_tax_value: line.category_tax_value ?? null,
         category_tax_name: line.category_tax_name || null,
@@ -759,9 +807,9 @@ export async function createOrder(actor, input) {
       { transaction }
     )
 
-    for (const line of priced) {
+    for (const [index, line] of priced.entries()) {
       if (!line.product_id) continue
-      await deductSaleStock(
+      const moved = await deductSaleStock(
         {
           store,
           location,
@@ -773,6 +821,13 @@ export async function createOrder(actor, input) {
         },
         { transaction }
       )
+      // The lots this line was taken from (soonest expiry first), so a refund puts it back there.
+      if (moved?.lots?.length && savedItems[index]) {
+        await savedItems[index].update(
+          { lots: moved.lots.map((lot) => ({ ...lot, qty: Math.abs(lot.qty) })) },
+          { transaction }
+        )
+      }
     }
 
     // Each payment row: amount = its share of the bill + its payment tax; paid = handed over.

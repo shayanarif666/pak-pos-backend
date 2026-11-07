@@ -15,6 +15,8 @@ import {
 } from "../catalog/product.service.js"
 import { Product } from "../catalog/product.model.js"
 import { ProductStock } from "../catalog/productStock.model.js"
+import { StockLot } from "../catalog/stockLot.model.js"
+import { moveLots, soonestExpiry } from "../catalog/stockLots.service.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import {
@@ -74,6 +76,8 @@ function publicMovement(row, extras = {}) {
     reason_note: json.reason_note,
     qty: Number(json.qty),
     qty_after: json.qty_after == null ? null : Number(json.qty_after),
+    // The lot(s) it moved: [{ id (lot number), qty, expiry_date }].
+    lots: (Array.isArray(json.lots) ? json.lots : typeof json.lots === "string" ? JSON.parse(json.lots || "[]") : []).map((lot) => ({ id: lot.lot_number, qty: Number(lot.qty), expiry_date: lot.expiry_date || null })),
     supplier_id: json.supplier_id,
     supplier: json.Supplier ? { id: json.Supplier.id, supplier_number: json.Supplier.supplier_number, name: json.Supplier.name } : null,
     staff_id: json.staff_id,
@@ -158,7 +162,7 @@ export async function createMovements(actor, fields) {
       if (!byRef.has(location.id)) throw new AppError(`${product.title} is not sold at ${location.name}`, 400)
       // stock_unit pack: unit.qty is whole packs of a pack product, moved as packs × pack_size items.
       const qty = toItemQty(target, unit.qty, unit.stock_unit)
-      created.push(await moveOne(actor, target, location, { ...fields, qty, expiry_date: unit.expiry_date }))
+      created.push(await moveOne(actor, target, location, { ...fields, qty, expiry_date: unit.expiry_date, lot_id: unit.lot }))
     } catch (err) {
       failed.push({
         variant_id: unit.variant ? (/^\d+$/.test(unit.variant) ? Number(unit.variant) : unit.variant) : null,
@@ -187,6 +191,7 @@ async function moveOne(actor, product, location, fields) {
         reason_note: fields.reason_note,
         staff_id: actor.id,
         expiry_date: fields.expiry_date,
+        lot_id: fields.lot_id || undefined,
         visibility: fields.visibility,
         supplier_id: fields.supplier_id || null,
       },
@@ -203,7 +208,7 @@ async function moveOne(actor, product, location, fields) {
           })
         : null,
       stock: publicStock(stock, product),
-      summary: stockSummary(product, Number(stock.qty)),
+      summary: stockSummary(product, Number(stock.qty), refs),
     }
   })
 }
@@ -238,6 +243,7 @@ export async function createMovement(actor, fields) {
         reason_note: fields.reason_note,
         staff_id: actor.id,
         expiry_date: fields.expiry_date,
+        lot_id: fields.lot_id || undefined,
         visibility: fields.visibility,
         supplier_id: fields.supplier_id || null,
       },
@@ -252,7 +258,7 @@ export async function createMovement(actor, fields) {
           })
         : null,
       stock: publicStock(stock, product),
-      summary: stockSummary(product, Number(stock.qty)),
+      summary: stockSummary(product, Number(stock.qty), (await productRefs([product.id])).get(product.id)),
     }
   })
 }
@@ -261,17 +267,22 @@ export async function createMovement(actor, fields) {
  * The POS response: the product's number and its stock at this location after the movement.
  * Pack products also get pack_size and how many full packs that stock makes.
  */
-function stockSummary(product, qty) {
+function stockSummary(product, qty, refs = null) {
   const packSize = Number(product.pack_size)
+  // A variant: its product's number and its own variant number.
+  const ids = {
+    product_id: refs?.product?.product_number ?? product.product_number,
+    ...(refs?.variant ? { variant_id: refs.variant.variant_number } : {}),
+  }
   if (product.is_pack_product && packSize >= 2) {
     return {
-      product_id: product.product_number,
+      ...ids,
       pack_size: packSize,
       number_of_packs: numberOfPacks(qty, packSize),
       qty,
     }
   }
-  return { product_id: product.product_number, qty }
+  return { ...ids, qty }
 }
 
 // ---- Edit / soft delete of a movement (dashboard: Stock Movements) ----
@@ -301,6 +312,54 @@ function assertEditable(row, action) {
       409
     )
   }
+}
+
+/** A movement's lots as [{ lot_id, lot_number, qty, expiry_date }]. */
+function movementLots(row) {
+  let lots = row.lots
+  if (typeof lots === "string") {
+    try {
+      lots = JSON.parse(lots)
+    } catch {
+      lots = null
+    }
+  }
+  return Array.isArray(lots) ? lots : []
+}
+
+/**
+ * Moves diff units in the lots of the movement's product and location, and records them on the
+ * movement: more stock goes back into the movement's own lot(s); less stock comes out of them
+ * first, then from the lot that expires first.
+ */
+async function shiftLots(row, diff, transaction) {
+  const own = movementLots(row)
+  const location = { id: row.location_id, location_id_int: row.location_id_int }
+  const base = { storeId: row.store_id, storeIdInt: row.store_id_int, location, productId: row.product_id, source: "adjustment" }
+  let moved = []
+  if (diff > 0) {
+    moved = await moveLots({ ...base, delta: diff, returnTo: own.map((lot) => ({ lot_id: lot.lot_id, qty: Math.abs(lot.qty) || diff, expiry_date: lot.expiry_date })) }, transaction)
+  } else {
+    let need = -diff
+    for (const lot of own) {
+      if (need <= 0) break
+      const found = await StockLot.findOne({ where: { id: lot.lot_id, deleted_at: null }, transaction, lock: transaction.LOCK.UPDATE })
+      const qty = Math.min(need, Number(found?.qty || 0))
+      if (qty <= 0) continue
+      moved.push(...(await moveLots({ ...base, delta: -qty, lotRef: found.id }, transaction)))
+      need -= qty
+    }
+    if (need > 0) moved.push(...(await moveLots({ ...base, delta: -need }, transaction)))
+  }
+  // The movement's lots after the change (added up per lot).
+  const byLot = new Map(own.map((lot) => [lot.lot_id, { ...lot }]))
+  for (const lot of moved) {
+    const entry = byLot.get(lot.lot_id) || { ...lot, qty: 0 }
+    entry.qty = Math.round((Number(entry.qty) + Number(lot.qty)) * 10000) / 10000
+    byLot.set(lot.lot_id, entry)
+  }
+  const lots = [...byLot.values()].filter((lot) => Number(lot.qty) !== 0)
+  await row.update({ lots: lots.length ? lots : null, lot_id: lots[0]?.lot_id || null }, { transaction })
 }
 
 /**
@@ -340,8 +399,13 @@ async function shiftStock(row, diff, transaction) {
       )
     }
   }
-  // A deleted stock entry that gets stock back shows again.
-  if (stock && diff !== 0) await stock.update({ qty: next, ...(stock.deleted_at && next > 0 ? { deleted_at: null } : {}) }, { transaction })
+  // The lots move too: back into / out of the movement's own lot(s) first, then FEFO.
+  if (diff !== 0) await shiftLots(row, diff, transaction)
+  // A deleted stock entry that gets stock back shows again; its expiry = the soonest still in stock.
+  if (stock && diff !== 0) {
+    const soonest = await soonestExpiry(row.location_id, row.product_id, transaction)
+    await stock.update({ qty: next, expiry_date: soonest, ...(stock.deleted_at && next > 0 ? { deleted_at: null } : {}) }, { transaction })
+  }
   if (diff !== 0) {
     await StockMovement.increment(
       { qty_after: diff },

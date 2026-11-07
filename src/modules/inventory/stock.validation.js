@@ -54,6 +54,9 @@ function stockUnits(list, movement_type, label, variant = null) {
       qty: signedQty(movement_type, entry.qty, `${at}.qty`),
       stock_unit: parseStockUnit(entry.stock_unit, `${at}.stock_unit`),
       expiry_date: parseExpiry(entry.expiry_date, `${at}.expiry_date`),
+      // The lot to take from / add to (its number); left out: stock in = the lot of its expiry date,
+      // stock out = the lot that expires first.
+      lot: entry.lot_id == null || entry.lot_id === "" ? null : String(entry.lot_id).trim(),
     }
   })
 }

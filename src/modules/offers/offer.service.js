@@ -191,10 +191,12 @@ async function findProductOrVariant(storeId, productRef, variantRef, label) {
   const product = await findByRef(Product, "product_number", storeId, productRef, label)
   if (!variantRef) return product
   const where = /^\d+$/.test(variantRef)
-    ? { store_id: storeId, parent_product_id: product.id, variant_number: Number(variantRef) }
-    : { store_id: storeId, parent_product_id: product.id, id: variantRef }
+    ? { store_id: storeId, parent_product_id: product.id, variant_number: Number(variantRef), deleted_at: null }
+    : { store_id: storeId, parent_product_id: product.id, id: variantRef, deleted_at: null }
   const variant = await Product.findOne({ where, attributes: ["id", "product_number"] })
   if (!variant) throw new NotFoundError(`${label} ${productRef}: variant ${variantRef} not found`)
+  // A variant has no product number of its own: it is named by its product's.
+  variant.product_number = product.product_number
   return variant
 }
 

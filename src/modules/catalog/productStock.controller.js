@@ -103,8 +103,8 @@ async function stockProductId(storeId, item) {
   const value = String(variantRef).trim()
   const variant = await Product.findOne({
     where: /^\d+$/.test(value)
-      ? { store_id: storeId, parent_product_id: productId, variant_number: Number(value) }
-      : { store_id: storeId, parent_product_id: productId, id: value },
+      ? { store_id: storeId, parent_product_id: productId, variant_number: Number(value), deleted_at: null }
+      : { store_id: storeId, parent_product_id: productId, id: value, deleted_at: null },
     attributes: ["id"],
   })
   if (!variant) throw new AppError(`Variant ${value} is not a variant of product ${item.product_id ?? item.productId}`, 404)
@@ -169,7 +169,14 @@ function entryActor(req) {
 
 /** DELETE /product-stocks/:id — soft delete (qty set to 0 by an adjustment movement first). */
 export const removeEntry = asyncHandler(async (req, res) => {
-  const result = await stockService.deleteStockEntry(entryActor(req), req.params.id, parseDeleteStockEntry(req.body))
+  // A lot number is the product's own: product_id (+ variant_id) and location_id say which (body or query).
+  const from = { ...(req.query || {}), ...(req.body || {}) }
+  const productId = (from.product_id ?? from.productId) != null ? await stockProductId(req.storeId, from) : null
+  const result = await stockService.deleteStockEntry(entryActor(req), req.params.id, {
+    ...parseDeleteStockEntry(req.body),
+    productId,
+    locationRef: from.location_id ?? from.locationId ?? null,
+  })
   const [data] = await stockEditRows([result])
   return apiResponse(res, 200, "Stock Deleted", data)
 })

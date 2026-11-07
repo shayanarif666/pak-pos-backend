@@ -77,8 +77,8 @@ async function productUuids(storeId, list) {
     if (!product.has_variants) throw new AppError(`${product.title} has no variants: leave variant_id out`, 400)
     const variant = await Product.findOne({
       where: /^\d+$/.test(variant_ref)
-        ? { store_id: storeId, parent_product_id: product.id, variant_number: Number(variant_ref) }
-        : { store_id: storeId, parent_product_id: product.id, id: variant_ref },
+        ? { store_id: storeId, parent_product_id: product.id, variant_number: Number(variant_ref), deleted_at: null }
+        : { store_id: storeId, parent_product_id: product.id, id: variant_ref, deleted_at: null },
       attributes: ["id"],
     })
     if (!variant) throw new NotFoundError(`Variant ${variant_ref} of ${product.title} not found`)
