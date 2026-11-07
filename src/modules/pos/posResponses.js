@@ -734,6 +734,21 @@ export function posSupplier(view) {
   }
 }
 
+/** From publicCustomer(): short numbers, no UUIDs. Its id is the customer_id an udhaar order sends. */
+export function posCustomer(view) {
+  return {
+    id: view.customer_number,
+    name: view.name,
+    phone: view.phone || null,
+    email: view.email || null,
+    location_id: view.location_number ?? null,
+    total_debt: Number(view.total_debt || 0),
+    remaining_debt: Number(view.remaining_debt || 0),
+    debt_notes: view.debt_notes || null,
+    is_active: Boolean(view.is_active),
+  }
+}
+
 /** Offers (from publicOffer()) with what each one applies to and who added it. */
 export async function posOffers(views) {
   const targets = (view) => view.targets || []

@@ -11,6 +11,7 @@ import { Payment } from "../payments/payment.model.js"
 import { User } from "../auth/user.model.js"
 import { Product } from "../catalog/product.model.js"
 import { Location } from "../locations/location.model.js"
+import { Customer } from "../customers/customer.model.js"
 import { ProductStock } from "../catalog/productStock.model.js"
 import { StockLot } from "../catalog/stockLot.model.js"
 import { Category } from "../catalog/category.model.js"
@@ -31,6 +32,7 @@ import {
   numbersOf,
   one,
   posCategories,
+  posCustomer,
   posOffers,
   posOrderDetail,
   posOrderHistory,
@@ -401,6 +403,32 @@ export async function suppliers(req) {
   const all = await listSuppliers(scope.store_id, scope, { ...req.query, location_id: scope.location_id })
   const { items, total } = slicePage(all.filter(inWindow(req.query, (row) => row.created_at)), pageInfo)
   return paged(items.map(posSupplier), total, pageInfo)
+}
+
+// ---- 11. Customers (udhaar) ----
+// A customer with no location belongs to every location; one with a location shows there only.
+export async function customers(req) {
+  const scope = await scopeOf(req)
+  const pageInfo = pageOf(req.query)
+  const where = { store_id: scope.store_id, ...dateRange(req.query, "created_at") }
+  if (scope.location_id) where[Op.and] = [{ [Op.or]: [{ location_id: scope.location_id }, { location_id: null }] }]
+  const search = queryRef(req.query, "q")
+  if (search) {
+    const like = `%${search}%`
+    where[Op.or] = [{ name: { [Op.like]: like } }, { phone: { [Op.like]: like } }, { email: { [Op.like]: like } }]
+  }
+  const { rows, count } = await Customer.findAndCountAll({
+    where,
+    include: [{ model: Location, attributes: ["id", "name", "location_id_int"] }],
+    order: [["customer_number", "ASC"]],
+    limit: pageInfo.limit,
+    offset: pageInfo.offset,
+  })
+  return paged(
+    rows.map((row) => posCustomer({ ...row.toJSON(), location_number: row.Location?.location_id_int })),
+    count,
+    pageInfo
+  )
 }
 
 // ---- 12. Batch history (cash drawer opening / closing) ----
