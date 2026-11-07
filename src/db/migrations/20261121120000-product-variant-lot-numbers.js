@@ -39,10 +39,10 @@ export async function up(queryInterface) {
   // Out of the way first, so the new numbers never meet an old one (store_id + product_number is unique).
   await sequelize.query("UPDATE products SET product_number = product_number + 100000000 WHERE product_number IS NOT NULL")
   // The new numbers go to a work table first (a pooled connection would not see a TEMPORARY one) (MySQL does not update a table from a query on
-  // that same table).
+  // that same table). It has a primary key: hosted MySQL (Aiven) runs with sql_require_primary_key.
   await sequelize.query("DROP TABLE IF EXISTS tmp_product_numbers")
   await sequelize.query(`
-    CREATE TABLE tmp_product_numbers AS
+    CREATE TABLE tmp_product_numbers (PRIMARY KEY (id)) AS
     SELECT id, ROW_NUMBER() OVER (PARTITION BY store_id ORDER BY product_number, created_at, id) AS n
     FROM products WHERE parent_product_id IS NULL
   `)
@@ -60,7 +60,7 @@ export async function up(queryInterface) {
   }
   await sequelize.query("DROP TABLE IF EXISTS tmp_lot_numbers")
   await sequelize.query(`
-    CREATE TABLE tmp_lot_numbers AS
+    CREATE TABLE tmp_lot_numbers (PRIMARY KEY (id)) AS
     SELECT id, ROW_NUMBER() OVER (PARTITION BY product_id ORDER BY received_at, lot_number, id) AS n
     FROM stock_lots
   `)
