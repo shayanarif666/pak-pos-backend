@@ -16,6 +16,7 @@ import { RegisterSession } from "../pos/registerSession.model.js"
 import { Location } from "../locations/location.model.js"
 import { User } from "../auth/user.model.js"
 import { getStoreForManager } from "../stores/store.service.js"
+import { expiryStatus } from "../catalog/product.service.js"
 import { loadLocation } from "../catalog/productStock.service.js"
 import { money } from "../commerce/pricing.service.js"
 import { AppError } from "../../shared/errors/AppError.js"
@@ -57,9 +58,11 @@ function addTaxes(target, next) {
  * coupon) is spread over the lines by their subtotal — the same way refunds take it back.
  *   gross − line_discount − order_discount = net;  net + line taxes = total
  */
-function lineFigures(order, item) {
+function lineFigures(order, item, opts = {}) {
   const qty = Number(item.quantity || 0)
-  const share = qty > 0 ? remainingQty(item) / qty : 0
+  // opts.ignoreRefunds: the line as first sold, before any item refund.
+  const left = opts.ignoreRefunds ? qty : remainingQty(item)
+  const share = qty > 0 ? left / qty : 0
   const orderSubtotal = Number(order.subtotal || 0)
   const orderDiscount = Number(order.discount_amount || 0) + Number(order.coupon_discount_amount || 0)
   const lineSubtotal = Number(item.subtotal || 0)
@@ -72,7 +75,7 @@ function lineFigures(order, item) {
   const category_tax = money(Number(item.category_tax_amount || 0) * share)
   const tax = money(sales_tax + product_tax + category_tax)
   return {
-    units: money(remainingQty(item)),
+    units: money(left),
     gross,
     line_discount,
     order_discount,
@@ -83,7 +86,7 @@ function lineFigures(order, item) {
     category_tax,
     tax,
     total: money(net + tax),
-    cost: money(Number(item.cost_price || 0) * remainingQty(item)),
+    cost: money(Number(item.cost_price || 0) * left),
   }
 }
 
@@ -91,8 +94,8 @@ function lineFigures(order, item) {
  * What an order still counts for after its refunds. Payment-method tax kept = charged minus the
  * share the refunds gave back (a refund's tax = its line tax + its share of payment GST).
  */
-function orderFigures(order) {
-  const lines = (order.OrderItems || []).map((item) => ({ item, ...lineFigures(order, item) }))
+function orderFigures(order, opts = {}) {
+  const lines = (order.OrderItems || []).map((item) => ({ item, ...lineFigures(order, item, opts) }))
   const sum = (key) => money(lines.reduce((total, line) => total + Number(line[key] || 0), 0))
   const refunds = order.OrderRefunds || []
   const refunded = money(refunds.reduce((total, row) => total + Number(row.amount || 0), 0))
@@ -158,7 +161,7 @@ function orderFigures(order) {
   }
 }
 
-function liveOrders(orders) {
+function liveOrders(orders, opts = {}) {
   const completed = []
   let void_orders = 0
   let cancelled_orders = 0
@@ -176,7 +179,7 @@ function liveOrders(orders) {
       cancelled_orders += 1
       continue
     }
-    const figures = orderFigures(order)
+    const figures = orderFigures(order, opts)
     refunded_items = money(
       refunded_items + (order.OrderItems || []).reduce((sum, item) => sum + Number(item.refunded_qty || 0), 0)
     )
@@ -712,7 +715,7 @@ function shortSessionId(id) {
  * discounts, net, tax, refunds, total, takings per payment method, and the drawer:
  * expected cash = opening + cash in − cash out + cash taken − cash refunds; variance = counted − expected.
  */
-async function zReports(actor, query, scope) {
+async function zReports(actor, query, scope, extra = {}) {
   // Register sessions are POS-only.
   if (normalizeChannel(query) === "web") {
     return { rows: [] }
@@ -720,6 +723,9 @@ async function zReports(actor, query, scope) {
   const where = { store_id: actor.store_id }
   if (scope.location_id) where.location_id = scope.location_id
   if (scope.cashier_id) where.cashier_id = scope.cashier_id
+  // Report filters: status (open | closed), one cashier.
+  if (extra.status) where.status = extra.status
+  if (extra.cashierId) where.cashier_id = extra.cashierId
   if (query.from || query.to) {
     where.opened_at = {}
     const from = dateBound(query.from, false)
@@ -753,8 +759,7 @@ async function zReports(actor, query, scope) {
     bySession.set(order.register_session_id, list)
   }
 
-  return {
-    rows: sessions.map((row) => {
+  const built = sessions.map((row) => {
       const json = row.toJSON()
       const sold = bySession.get(json.id) || []
       const sum = (key) => money(sold.reduce((total, entry) => total + Number(entry.figures[key] || 0), 0))
@@ -799,8 +804,9 @@ async function zReports(actor, query, scope) {
         // Older field name kept for existing screens.
         sales: keptSum((f) => f.total),
       }
-    }),
-  }
+    })
+  // variance_only: closed batches whose counted cash is short or over.
+  return { rows: extra.varianceOnly ? built.filter((row) => row.counted_cash != null && Number(row.variance) !== 0) : built }
 }
 
 function movementBuckets(type, qty) {
@@ -814,21 +820,27 @@ function movementBuckets(type, qty) {
   return n >= 0 ? { inn: n, out: 0 } : { inn: 0, out: Math.abs(n) }
 }
 
-async function inventoryReport(actor, query, scope) {
+async function inventoryReport(actor, query, scope, extra = {}) {
   const where = { store_id: actor.store_id }
   if (scope.location_id) where.location_id = scope.location_id
+  // supplier: the products that came in from that supplier (their stock movements).
+  if (extra.supplierId) {
+    const bought = await StockMovement.findAll({ where: { store_id: actor.store_id, supplier_id: extra.supplierId }, attributes: ['product_id'], group: ['product_id'], raw: true })
+    where.product_id = { [Op.in]: bought.map((row) => row.product_id) }
+  }
+  const store = await getStoreForManager(actor.store_id)
   const stocks = await ProductStock.findAll({
     where,
     include: [
       {
         model: Product,
-        attributes: ["id", "title", "sku", "unit"],
+        attributes: ["id", "title", "sku", "unit", "is_pack_product", "is_weight_based", "low_stock_threshold"],
         include: [{ model: Category, attributes: ["id", "name"] }],
       },
       { model: Location, attributes: ["id", "name", "location_id_int"] },
     ],
     order: [["qty", "ASC"]],
-    limit: 400,
+    limit: 2000,
   })
 
   const moveWhere = { store_id: actor.store_id }
@@ -852,24 +864,36 @@ async function inventoryReport(actor, query, scope) {
     flow.set(key, cur)
   }
 
-  return {
-    rows: stocks.map((row) => {
+  let rows = stocks.map((row) => {
       const json = row.toJSON()
       const delta = flow.get(flowKey(json.product_id, json.location_id)) || { inn: 0, out: 0 }
+      const qty = Number(json.qty || 0)
+      const threshold = json.low_stock_threshold ?? json.Product?.low_stock_threshold
+      const product = json.Product
       return {
         id: json.id,
-        product: json.Product?.title || "—",
-        sku: json.Product?.sku || "—",
-        category: json.Product?.Category?.name || "—",
+        product: product?.title || "—",
+        sku: product?.sku || "—",
+        category: product?.Category?.name || "—",
         location: json.Location?.name || "—",
         location_id: json.Location?.location_id_int ?? null,
-        unit: json.Product?.unit || null,
+        unit: product?.unit || null,
+        // weight = sold by weight; else pack = a pack product; else loose.
+        type: product?.is_weight_based ? "weight" : product?.is_pack_product ? "pack" : "loose",
         stock_in: delta.inn,
         stock_out: delta.out,
-        current_stock: Number(json.qty || 0),
+        current_stock: qty,
+        // out = nothing left; low = at or under its low-stock alert; ok = above it.
+        stock_status: qty <= 0 ? "out" : threshold != null && qty <= Number(threshold) ? "low" : "ok",
+        // The soonest expiry of the stock: expired | critical | warning | ok, or none (no expiry date).
+        expiry_date: json.expiry_date || null,
+        expiry_status: json.expiry_date ? expiryStatus(json.expiry_date, store.expiry_warning_days, store.expiry_critical_days) : "none",
       }
-    }),
-  }
+    })
+  if (extra.stockStatus) rows = rows.filter((row) => row.stock_status === extra.stockStatus)
+  if (extra.expiryStatus) rows = rows.filter((row) => row.expiry_status === extra.expiryStatus)
+  if (extra.type) rows = rows.filter((row) => row.type === extra.type)
+  return { rows }
 }
 
 function prettyReason(reason) {
@@ -879,10 +903,15 @@ function prettyReason(reason) {
     .join(" ")
 }
 
-async function stockMovementReport(actor, query, scope) {
+async function stockMovementReport(actor, query, scope, extra = {}) {
   const where = { store_id: actor.store_id }
   if (scope.location_id) where.location_id = scope.location_id
   if (scope.cashier_id) where.staff_id = scope.cashier_id
+  if (extra.staffId) where.staff_id = extra.staffId
+  if (extra.movementType) where.movement_type = extra.movementType
+  if (extra.reason) where.reason = extra.reason
+  if (extra.supplierId) where.supplier_id = extra.supplierId
+  if (extra.productIds) where.product_id = { [Op.in]: extra.productIds }
   applyDateRange(where, query)
   if (where.placed_at) {
     where.created_at = where.placed_at
@@ -923,7 +952,7 @@ async function stockMovementReport(actor, query, scope) {
  * Stock transfers in the range (sent from or arriving at the location shown): one row per product
  * per destination, with the summary of what left, what arrived and what is still on the way.
  */
-async function transferReport(actor, query, scope) {
+async function transferReport(actor, query, scope, extra = {}) {
   const where = { store_id: actor.store_id }
   applyDateRange(where, query)
   if (where.placed_at) {
@@ -953,7 +982,11 @@ async function transferReport(actor, query, scope) {
     const json = transfer.toJSON()
     // A location's report: what it sent and what came to it.
     const items = (json.items || []).filter(
-      (item) => !scope.location_id || json.from_location_id === scope.location_id || item.to_location_id === scope.location_id
+      (item) =>
+        (!scope.location_id || json.from_location_id === scope.location_id || item.to_location_id === scope.location_id) &&
+        // status: a line still pending counts as on the way.
+        (!extra.status || (extra.status === "on_the_way" ? item.status === "on_the_way" || item.status === "pending" : item.status === extra.status)) &&
+        (!extra.productIds || extra.productIds.includes(item.product_id))
     )
     if (!items.length) continue
     summary.transfers += 1

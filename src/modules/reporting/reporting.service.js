@@ -18,6 +18,8 @@ import { reportParts as parts } from "../orders/reports.pos.service.js"
 import { dateBound, normalizeChannel, reportScope } from "../orders/reports.service.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
+import { filterLines, filterOrders, filterSpecFor, lineTest, parseFilters, resolveFilters } from "./reportFilters.js"
+import { cashierTotals, categoriesByProfit, onlyMethod, refundsCancelledSection, taxReport, zeroSalesRows } from "./reportBuilders.js"
 
 /*
  * GET /api/v1/reporting — the dashboard's reporting, by the store plan's reporting_level.
@@ -40,8 +42,9 @@ export const CARDS = [
   { id: "batches", label: "Z-Reports (Batches)", level: "basic", about: "Each batch: takings per method, expected vs counted cash." },
   { id: "top_products", label: "Top Products", level: "basic", about: "Best-selling products by sales (Basic: top 10; Standard and up: every product)." },
   { id: "top_categories", label: "Top Categories", level: "basic", about: "Best-selling categories by sales (Basic: top 10; Standard and up: every category)." },
-  { id: "refunds", label: "Refunded Orders", level: "basic", about: "Complete and partial refunds with amounts and reasons." },
-  { id: "cancelled", label: "Cancelled Orders", level: "basic", about: "Voided and cancelled sales and the sales lost." },
+  { id: "refunds_cancelled", label: "Refunds / Cancelled", level: "basic", about: "Partial and complete refunds, cancelled orders and voided orders in one list, with the amount, reason and cashier." },
+  { id: "refunds", label: "Refunded Orders", level: "basic", hidden: true, about: "Complete and partial refunds with amounts and reasons." },
+  { id: "cancelled", label: "Cancelled Orders", level: "basic", hidden: true, about: "Voided and cancelled sales and the sales lost." },
   // Standard
   { id: "locations", label: "By Location", level: "standard", about: "How much each location sold, its taxes, refunds and share.", allOnly: true },
   { id: "inventory", label: "Inventory", level: "standard", about: "Stock on hand with what came in and went out in the range." },
@@ -134,8 +137,14 @@ const pct = (part, whole) => (Number(whole) ? money((Number(part) / Number(whole
 
 // ---------- advanced sections ----------
 
+/** sort: profit (default), margin or sales — highest first. */
+function sortProfit(rows, sort) {
+  const key = { profit: "gross_profit", margin: "margin_percent", sales: "net_sales" }[sort || "profit"]
+  return [...rows].sort((a, b) => b[key] - a[key])
+}
+
 /** Profit & margin per product, category and location, from the lines kept after refunds. */
-function profitSection(completed) {
+function profitSection(completed, f = {}) {
   const groups = { product: new Map(), category: new Map(), location: new Map() }
   const add = (map, key, base, line) => {
     if (!map.has(key)) map.set(key, { ...base, units: 0, net_sales: 0, cost: 0, gross_profit: 0, margin_percent: 0 })
@@ -163,7 +172,7 @@ function profitSection(completed) {
   const cost = sum(byProduct, "cost")
   return {
     summary: { net_sales: net, cost, gross_profit: money(net - cost), margin_percent: pct(net - cost, net) },
-    tables: { by_product: byProduct, by_category: finish(groups.category), by_location: finish(groups.location) },
+    tables: { by_product: sortProfit(byProduct, f.sort), by_category: sortProfit(finish(groups.category), f.sort), by_location: sortProfit(finish(groups.location), f.sort) },
   }
 }
 
@@ -218,7 +227,7 @@ async function stockRows(actor, location) {
   return ProductStock.findAll({
     where,
     include: [
-      { model: Product, attributes: ["id", "title", "sku", "barcode", "unit", "has_variants", "variant_name", "is_active", "parent_product_id"], where: { has_variants: false } },
+      { model: Product, attributes: ["id", "title", "sku", "barcode", "unit", "has_variants", "variant_name", "is_active", "parent_product_id", "category_id"], where: { has_variants: false } },
       { model: Location, attributes: ["id", "name"] },
     ],
   })
@@ -244,9 +253,11 @@ const productName = (product) => {
 }
 
 /** In stock but not sold in the range, with the last sale ever (up to `to`). */
-async function deadStockSection(actor, location, completed, range) {
+async function deadStockSection(actor, location, completed, range, f = {}) {
   const sold = unitsSold(completed)
-  const stocks = (await stockRows(actor, location)).filter((row) => Number(row.qty) > 0 && !sold.has(row.product_id))
+  const stocks = (await stockRows(actor, location)).filter(
+    (row) => Number(row.qty) > 0 && !sold.has(row.product_id) && (!f.category_id || row.Product?.category_id === f.category_id)
+  )
   const ids = [...new Set(stocks.map((row) => row.product_id))]
   const lastSold = new Map()
   if (ids.length) {
@@ -275,15 +286,18 @@ async function deadStockSection(actor, location, completed, range) {
         days_since_sale: last ? Math.floor((end - new Date(last)) / 86400000) : null,
       }
     })
+    // min_days: not sold for at least that long (a product never sold always counts).
+    .filter((row) => f.min_days == null || row.days_since_sale == null || row.days_since_sale >= f.min_days)
     .sort((a, b) => (b.days_since_sale ?? 1e9) - (a.days_since_sale ?? 1e9))
   return { summary: { products: rows.length, units_in_stock: sum(rows, "stock"), never_sold: rows.filter((row) => !row.last_sold_at).length }, tables: { rows } }
 }
 
 /** Days left of stock at the range's average daily sale. */
-async function forecastSection(actor, location, completed, range) {
+async function forecastSection(actor, location, completed, range, f = {}) {
   const sold = unitsSold(completed)
   const byProduct = new Map()
   for (const row of await stockRows(actor, location)) {
+    if (f.category_id && row.Product?.category_id !== f.category_id) continue
     if (!byProduct.has(row.product_id)) byProduct.set(row.product_id, { product: productName(row.Product), sku: row.Product?.sku || null, unit: row.Product?.unit || null, stock: 0 })
     byProduct.get(row.product_id).stock = money(byProduct.get(row.product_id).stock + Number(row.qty || 0))
   }
@@ -295,6 +309,7 @@ async function forecastSection(actor, location, completed, range) {
       const status = row.stock <= 0 ? "out" : days_left == null ? "no_sales" : days_left <= 7 ? "critical" : days_left <= 14 ? "low" : "ok"
       return { ...row, units_sold: units, avg_daily_sales: daily, days_left, status }
     })
+    .filter((row) => !f.status || row.status === f.status)
     .sort((a, b) => (a.days_left ?? 1e9) - (b.days_left ?? 1e9))
   return {
     summary: {
@@ -340,7 +355,7 @@ function peakHoursSection(completed, timeZone) {
 }
 
 /** Customers who bought in the range, repeat buyers, and udhaar owed. */
-async function customersSection(actor, location, completed) {
+async function customersSection(actor, location, completed, f = {}) {
   const groups = new Map()
   for (const { order, figures } of completed) {
     if (!order.customer_id) continue
@@ -357,7 +372,7 @@ async function customersSection(actor, location, completed) {
     groups.size ? Customer.findAll({ where: { id: { [Op.in]: [...groups.keys()] } }, attributes: ["id", "customer_number", "name", "phone", "remaining_debt"] }) : [],
     Customer.findAll({ where: debtWhere, attributes: ["id", "customer_number", "name", "phone", "total_debt", "remaining_debt"], order: [["remaining_debt", "DESC"]] }),
   ])
-  const top = buyers
+  let top = buyers
     .map((customer) => ({
       customer: customer.name,
       customer_number: customer.customer_number,
@@ -367,7 +382,11 @@ async function customersSection(actor, location, completed) {
       udhaar_owed: money(customer.remaining_debt || 0),
     }))
     .sort((a, b) => b.total_spent - a.total_spent)
-  const udhaar = debtors.map((customer) => ({
+  // has_udhaar: only the customers who owe (false: only those who do not); sort: spent | udhaar | orders.
+  if (f.has_udhaar !== undefined) top = top.filter((row) => (row.udhaar_owed > 0) === f.has_udhaar)
+  if (f.sort === "udhaar") top = [...top].sort((a, b) => b.udhaar_owed - a.udhaar_owed)
+  else if (f.sort === "orders") top = [...top].sort((a, b) => b.orders - a.orders)
+  const udhaar = (f.has_udhaar === false ? [] : debtors).map((customer) => ({
     customer: customer.name,
     customer_number: customer.customer_number,
     phone: customer.phone,
@@ -386,10 +405,14 @@ async function customersSection(actor, location, completed) {
 }
 
 /** Purchases / returns per supplier in the range (stock movements) and the ledger. */
-async function suppliersSection(actor, location, range) {
+async function suppliersSection(actor, location, range, f = {}) {
   const created = { [Op.gte]: dateBound(range.from), [Op.lte]: dateBound(range.to, true) }
   const moveWhere = { store_id: actor.store_id, supplier_id: { [Op.ne]: null }, created_at: created }
   const ledgerWhere = { store_id: actor.store_id }
+  if (f.supplier_id) {
+    moveWhere.supplier_id = f.supplier_id
+    ledgerWhere.supplier_id = f.supplier_id
+  }
   if (location) {
     moveWhere.location_id = location.id
     ledgerWhere.location_id = location.id
@@ -397,7 +420,7 @@ async function suppliersSection(actor, location, range) {
   const [moves, ledger, suppliers] = await Promise.all([
     StockMovement.findAll({ where: moveWhere, attributes: ["supplier_id", "movement_type", "reason", "qty"] }),
     SupplierLedger.findAll({ where: ledgerWhere, attributes: ["supplier_id", "entry_type", "amount", "created_at"] }),
-    Supplier.findAll({ where: { store_id: actor.store_id }, attributes: ["id", "supplier_number", "name", "phone"] }),
+    Supplier.findAll({ where: { store_id: actor.store_id, ...(f.supplier_id ? { id: f.supplier_id } : {}) }, attributes: ["id", "supplier_number", "name", "phone"] }),
   ])
   const rows = new Map(
     suppliers.map((supplier) => [
@@ -445,10 +468,11 @@ async function suppliersSection(actor, location, range) {
 const LOSS_REASONS = ["damage", "theft", "expiry", "waste"]
 
 /** Batches whose counted cash differs from expected, and stock lost. */
-async function varianceSection(actor, scopedQuery, scope, location, range) {
-  const batches = (await parts.zReports(actor, scopedQuery, scope)).rows.filter((row) => row.status === "CLOSED" && Number(row.variance) !== 0)
-  const where = { store_id: actor.store_id, reason: { [Op.in]: LOSS_REASONS }, created_at: { [Op.gte]: dateBound(range.from), [Op.lte]: dateBound(range.to, true) } }
+async function varianceSection(actor, scopedQuery, scope, location, range, f = {}) {
+  const batches = (await parts.zReports(actor, scopedQuery, scope, { cashierId: f.staff_id })).rows.filter((row) => row.status === "CLOSED" && Number(row.variance) !== 0)
+  const where = { store_id: actor.store_id, reason: f.reason || { [Op.in]: LOSS_REASONS }, created_at: { [Op.gte]: dateBound(range.from), [Op.lte]: dateBound(range.to, true) } }
   if (location) where.location_id = location.id
+  if (f.staff_id) where.staff_id = f.staff_id
   const moves = await StockMovement.findAll({
     where,
     include: [
@@ -490,9 +514,10 @@ async function varianceSection(actor, scopedQuery, scope, location, range) {
 }
 
 /** Staff clock in / out in the range, and hours per staff member. */
-async function sessionsSection(actor, location, range) {
+async function sessionsSection(actor, location, range, f = {}) {
   const where = { store_id: actor.store_id, clock_in_at: { [Op.gte]: dateBound(range.from), [Op.lte]: dateBound(range.to, true) } }
   if (location) where.location_id = location.id
+  if (f.staff_id) where.user_id = f.staff_id
   const sessions = await StaffSession.findAll({ where, order: [["clock_in_at", "DESC"]] })
   const userIds = [...new Set(sessions.map((row) => row.user_id).filter(Boolean))]
   const locationIds = [...new Set(sessions.map((row) => row.location_id).filter(Boolean))]
@@ -504,7 +529,7 @@ async function sessionsSection(actor, location, range) {
   const locationOf = new Map(locations.map((row) => [row.id, row.name]))
   const locationNumber = new Map(locations.map((row) => [row.id, row.location_id_int]))
   const now = Date.now()
-  const rows = sessions.map((row) => {
+  let rows = sessions.map((row) => {
     const end = row.clock_out_at ? new Date(row.clock_out_at).getTime() : now
     return {
       session: row.session_number,
@@ -520,6 +545,7 @@ async function sessionsSection(actor, location, range) {
       status: row.status === "clock_in" ? "on_duty" : "clocked_out",
     }
   })
+  if (f.status) rows = rows.filter((row) => row.status === f.status)
   const perStaff = new Map()
   for (const row of rows) {
     if (!perStaff.has(row.staff)) perStaff.set(row.staff, { staff: row.staff, role: row.role, sessions: 0, hours_worked: 0 })
@@ -547,15 +573,18 @@ function split(section) {
 }
 
 async function buildSection(id, ctx) {
-  const { actor, scopedQuery, scope, location, range, level, store } = ctx
+  const { actor, scopedQuery, scope, location, range, level, store, filters: f } = ctx
   const needsOrders = !["inventory", "movements", "transfers", "sessions", "suppliers", "batches", "comparison"].includes(id)
   let orders = []
   let extras = { completed: [] }
   if (needsOrders) {
-    orders = await parts.loadOrders(actor, scopedQuery)
-    extras = parts.liveOrders(orders)
+    // The order-level filters (cashier, batch, status, discounted, custom, payment) narrow the orders first.
+    orders = filterOrders(await parts.loadOrders(actor, scopedQuery), f)
+    extras = parts.liveOrders(orders, { ignoreRefunds: f.net_of_refunds === false })
   }
   const { completed } = extras
+  // The line filters (product type, category) narrow the sold lines.
+  const lineKeep = lineTest(f)
   switch (id) {
     case "sales": {
       const { totals, trend, payments } = parts.salesSummary(completed, extras, scopedQuery)
@@ -569,13 +598,27 @@ async function buildSection(id, ctx) {
       delete shown.tax_collection
       return { summary: shown, tables: { trend, payments } }
     }
-    case "payments":
-      return split(parts.paymentBreakdown(completed))
-    case "batches":
-      return split(await parts.zReports(actor, scopedQuery, scope))
+    case "payments": {
+      const report = parts.paymentBreakdown(completed)
+      return split(f.method ? onlyMethod(report, f.method) : report)
+    }
+    case "batches": {
+      const report = await parts.zReports(actor, scopedQuery, scope, {
+        status: f.status && f.status !== "all" ? f.status : undefined,
+        cashierId: f.staff_id,
+        varianceOnly: f.variance_only,
+      })
+      return { summary: {}, tables: { rows: report.rows, by_cashier: cashierTotals(report.rows) } }
+    }
     case "top_products":
     case "top_categories": {
-      const rows = (id === "top_products" ? parts.byProduct(completed) : parts.byCategory(completed)).rows
+      const source = lineKeep ? filterLines(completed, lineKeep) : completed
+      let rows
+      if (id === "top_products") rows = f.zero_sales ? await zeroSalesRows(actor.store_id, completed, f) : parts.byProduct(source).rows
+      else {
+        rows = parts.byCategory(source).rows
+        if (f.sort === "profit") rows = categoriesByProfit(rows, source, levelRank(level) >= levelRank("advanced"))
+      }
       const limited = levelRank(level) < levelRank("standard")
       return { summary: { shown: limited ? Math.min(BASIC_TOP, rows.length) : rows.length, total: rows.length, top_only: limited }, tables: { rows: limited ? rows.slice(0, BASIC_TOP) : rows } }
     }
@@ -583,43 +626,67 @@ async function buildSection(id, ctx) {
       return split(parts.refundedOrders(orders))
     case "cancelled":
       return split(parts.cancelledOrders(orders))
-    case "locations":
-      return split(parts.byLocation(completed))
+    case "refunds_cancelled":
+      return refundsCancelledSection(orders, f)
+    case "locations": {
+      const key = { sales: "total_sales", orders: "orders", refunds: "refunds" }[f.sort]
+      const report = parts.byLocation(completed)
+      return split(key ? { rows: [...report.rows].sort((a, b) => Number(b[key]) - Number(a[key])) } : report)
+    }
     case "inventory":
-      return split(await parts.inventoryReport(actor, scopedQuery, scope))
+      return split(
+        await parts.inventoryReport(actor, scopedQuery, scope, { stockStatus: f.stock_status, expiryStatus: f.expiry_status, type: f.type, supplierId: f.supplier_id })
+      )
     case "movements":
-      return split(await parts.stockMovementReport(actor, scopedQuery, scope))
+      return split(
+        await parts.stockMovementReport(actor, scopedQuery, scope, { movementType: f.movement_type, reason: f.reason, supplierId: f.supplier_id, staffId: f.staff_id, productIds: f.product_ids })
+      )
     case "transfers":
-      return split(await parts.transferReport(actor, scopedQuery, scope))
+      return split(await parts.transferReport(actor, scopedQuery, scope, { status: f.status, productIds: f.product_ids }))
     case "discounts": {
       const report = await parts.discountReport(actor, completed)
       const { by_source, catalog, sales, rows, ...summary } = report
       return { summary, tables: { by_source, catalog, sales, lines: rows } }
     }
-    case "cashiers":
-      return split(parts.byCashier(completed))
+    case "cashiers": {
+      const key = { sales: "total_sales", refunds: "refunds", discount: "discounts" }[f.sort]
+      const report = parts.byCashier(completed)
+      return split(key ? { rows: [...report.rows].sort((a, b) => Number(b[key]) - Number(a[key])) } : report)
+    }
     case "sessions":
-      return sessionsSection(actor, location, range)
+      return sessionsSection(actor, location, range, f)
     case "profit":
-      return profitSection(completed)
-    case "tax":
-      return split(parts.taxBreakdown(completed))
+      return profitSection(lineKeep ? filterLines(completed, lineKeep) : completed, f)
+    case "tax": {
+      const base = split(parts.taxBreakdown(completed))
+      const { rules, surcharges, surchargeTotal } = await taxReport(actor.store_id, completed, f)
+      const taxes = base.summary.totals?.taxes
+      return {
+        summary: {
+          ...base.summary,
+          // The surcharge is no tax: the tax without it, and the surcharge on its own (the surcharges list).
+          tax_collected_excl_surcharge: taxes ? money(taxes.total - taxes.payment_method_tax.total) : 0,
+          surcharge_collected: surchargeTotal,
+        },
+        tables: { ...base.tables, rules, surcharges },
+      }
+    }
     case "comparison":
       return comparisonSection(actor, scopedQuery, range)
     case "offers":
       return split(parts.byOffer(completed))
     case "dead_stock":
-      return deadStockSection(actor, location, completed, range)
+      return deadStockSection(actor, location, completed, range, f)
     case "forecast":
-      return forecastSection(actor, location, completed, range)
+      return forecastSection(actor, location, completed, range, f)
     case "peak_hours":
       return peakHoursSection(completed, store.timezone || "Asia/Karachi")
     case "customers":
-      return customersSection(actor, location, completed)
+      return customersSection(actor, location, completed, f)
     case "suppliers":
-      return suppliersSection(actor, location, range)
+      return suppliersSection(actor, location, range, f)
     case "variance":
-      return varianceSection(actor, scopedQuery, scope, location, range)
+      return varianceSection(actor, scopedQuery, scope, location, range, f)
     default:
       throw new AppError("Unknown report", 404)
   }
@@ -646,6 +713,8 @@ function cardsFor(level, location) {
     about: card.about,
     level: card.level,
     locked: levelRank(card.level) > levelRank(level),
+    hidden: Boolean(card.hidden),
+    filters: filterSpecFor(card.id),
   }))
 }
 
@@ -675,7 +744,10 @@ export async function reportingSection(actor, section, query = {}) {
     err.data = { code: "plan_locked", required_level: card.level, reporting_level: ctx.level }
     throw err
   }
-  const key = [actor.store_id, actor.role, actor.location_id, section, ctx.level, ctx.location?.id || "all", ctx.range.from, ctx.range.to, ctx.channel || ""].join("|")
+  // The section's filters (a bad value is a 400; one the section does not know is ignored).
+  const applied = parseFilters(section, query)
+  ctx.filters = await resolveFilters(actor.store_id, section, applied)
+  const key = [actor.store_id, actor.role, actor.location_id, section, ctx.level, ctx.location?.id || "all", ctx.range.from, ctx.range.to, ctx.channel || "", JSON.stringify(ctx.filters)].join("|")
   const built = await cached(key, () => buildSection(section, ctx))
 
   const all = String(query.limit) === "all"
@@ -698,6 +770,7 @@ export async function reportingSection(actor, section, query = {}) {
     location: locationView(ctx.location),
     from: ctx.range.from,
     to: ctx.range.to,
+    filters: applied,
     summary: built.summary || {},
     tables,
   }
