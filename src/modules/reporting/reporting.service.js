@@ -57,7 +57,7 @@ export const CARDS = [
   { id: "profit", label: "Profit & Margin", level: "advanced", about: "Cost, gross profit and margin % by product, category and location." },
   { id: "tax", label: "Tax Breakdown", level: "advanced", about: "Sales, product, category and payment-method tax collected." },
   { id: "comparison", label: "Period Comparison", level: "advanced", about: "These dates against the same number of days just before, with the change." },
-  { id: "offers", label: "Offer Performance", level: "advanced", about: "Sales, units, free units and discount given per offer." },
+  { id: "offers", label: "Discount Performance", level: "advanced", about: "Sales, units, free units and discount given per discount." },
   { id: "dead_stock", label: "Dead Stock", level: "advanced", about: "Products in stock that did not sell in these dates, with when they last sold." },
   { id: "forecast", label: "Stock Forecast", level: "advanced", about: "Days until each product runs out, from its average daily sales." },
   { id: "peak_hours", label: "Peak Hours", level: "advanced", about: "Orders and sales by hour and weekday, for staffing." },
