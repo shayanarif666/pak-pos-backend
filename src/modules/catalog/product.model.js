@@ -2,7 +2,7 @@ import { DataTypes } from "sequelize"
 import { sequelize } from "../../db/sequelize.js"
 import { modelOptions, uuidCol, uuidPk } from "../../db/columnTypes.js"
 import { catalogChannelVisibilityFields } from "../../db/channelVisibility.js"
-import { DISCOUNT_TYPE, PRODUCT_UNIT, SUPPLIER_LOCATION_SCOPE } from "../../db/enums.js"
+import { DISCOUNT_APPLIES_TO, DISCOUNT_TYPE, PRODUCT_UNIT, SUPPLIER_LOCATION_SCOPE } from "../../db/enums.js"
 
 export const Product = sequelize.define(
   "Product",
@@ -50,6 +50,8 @@ export const Product = sequelize.define(
     discount_type: { type: DataTypes.ENUM(...DISCOUNT_TYPE), allowNull: true },
     discount_value: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
     discount_name: { type: DataTypes.STRING(255), allowNull: true },
+    // What the discount is taken off: all | pack | loose | weight.
+    discount_applies_to: { type: DataTypes.ENUM(...DISCOUNT_APPLIES_TO), allowNull: false, defaultValue: "all" },
     // Product-level taxes, any number: [{ name, type: percentage | fixed, value }]. A fixed
     // tax is per unit. Applied with the category tax and the store's sales tax at checkout.
     taxes: {

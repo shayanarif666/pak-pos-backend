@@ -37,6 +37,9 @@ import { OfferTarget } from "../modules/offers/offerTarget.model.js"
 import { StoreTax, StoreTaxProduct } from "../modules/taxes/storeTax.model.js"
 import "../modules/surcharges/paymentSurcharge.model.js"
 import { OfferLocation } from "../modules/offers/offerLocation.model.js"
+import { OrderDiscount } from "../modules/discounts/orderDiscount.model.js"
+import { BundleDiscount } from "../modules/discounts/bundleDiscount.model.js"
+import { BundleDiscountProduct } from "../modules/discounts/bundleDiscountProduct.model.js"
 import { Coupon } from "../modules/coupons/coupon.model.js"
 import { CouponRedemption } from "../modules/coupons/couponRedemption.model.js"
 import { Order } from "../modules/orders/order.model.js"
@@ -219,6 +222,11 @@ export function registerModels() {
   OfferTarget.belongsTo(Product, { foreignKey: "product_id", as: "product" })
   OfferTarget.belongsTo(Category, { foreignKey: "category_id" })
   OfferTarget.belongsTo(Product, { foreignKey: "free_product_id", as: "freeProduct" })
+  OrderDiscount.belongsTo(Store, { foreignKey: "store_id" })
+  BundleDiscount.belongsTo(Store, { foreignKey: "store_id" })
+  BundleDiscount.hasMany(BundleDiscountProduct, { foreignKey: "bundle_id" })
+  BundleDiscountProduct.belongsTo(BundleDiscount, { foreignKey: "bundle_id" })
+  BundleDiscountProduct.belongsTo(Product, { foreignKey: "product_id", as: "product" })
 
   Cart.belongsTo(Store, { foreignKey: "store_id" })
   Cart.belongsTo(User, { foreignKey: "user_id" })
@@ -298,6 +306,9 @@ export {
   Offer,
   OfferTarget,
   OfferLocation,
+  OrderDiscount,
+  BundleDiscount,
+  BundleDiscountProduct,
   Coupon,
   CouponRedemption,
   Order,

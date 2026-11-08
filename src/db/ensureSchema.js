@@ -43,6 +43,7 @@ import * as stockLots from "./migrations/20261120120000-stock-lots.js"
 import * as productVariantLotNumbers from "./migrations/20261121120000-product-variant-lot-numbers.js"
 import * as productColors from "./migrations/20261122120000-product-colors.js"
 import * as softDeleteVariants from "./migrations/20261123120000-soft-delete-variants.js"
+import * as discountLevels from "./migrations/20261124120000-discount-levels.js"
 
 // Migrations the running code cannot work without (e.g. users.token_version is read on every
 // authenticated request). Each one checks before it changes anything, so running it on a
@@ -130,6 +131,8 @@ const REQUIRED = [
   productColors,
   // products.deleted_at: soft delete of a variant (history stays).
   softDeleteVariants,
+  // The five discount levels: offers discarded, order_discounts, bundle_discounts, products.discount_applies_to.
+  discountLevels,
 ]
 
 export async function ensureSchema() {

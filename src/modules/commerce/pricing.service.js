@@ -1,5 +1,6 @@
 import { Op } from "sequelize"
 import { Offer } from "../offers/offer.model.js"
+import { discountAppliesTo, saleKind } from "../catalog/discountAppliesTo.js"
 import { OfferTarget } from "../offers/offerTarget.model.js"
 import { OfferLocation } from "../offers/offerLocation.model.js"
 import { ProductBulkTier } from "../catalog/productBulkTier.model.js"
@@ -27,15 +28,19 @@ function categoryOf(product, category) {
  * left (both apply, one after the other: 100 → 5% → 95 → 5% → 90.25). Each is capped so the
  * price never goes below 0.
  */
-export function productUnitDiscount(product, category) {
-  const { own, fromCategory } = unitDiscountParts(product, category)
+export function productUnitDiscount(product, category, kind) {
+  const { own, fromCategory } = unitDiscountParts(product, category, kind)
   return money(own + fromCategory)
 }
 
-/** The two parts of productUnitDiscount: the product's own and the category's (per unit). */
-export function unitDiscountParts(product, category) {
+/**
+ * The two parts of productUnitDiscount: the product's own and the category's (per unit). kind =
+ * how the line is sold (pack | loose | weight): the product's own discount is taken only when its
+ * discount_applies_to covers it (all, or that kind).
+ */
+export function unitDiscountParts(product, category, kind) {
   const list = Number(product.selling_price || 0)
-  const own = product.has_product_discount
+  const own = product.has_product_discount && discountAppliesTo(product.discount_applies_to, kind)
     ? applyDiscount(list, product.discount_type, product.discount_value)
     : 0
   const cat = categoryOf(product, category)
@@ -46,8 +51,26 @@ export function unitDiscountParts(product, category) {
   return { own, fromCategory, category: cat }
 }
 
-export function priceAfterProductDiscount(product, category) {
-  return money(Number(product.selling_price || 0) - productUnitDiscount(product, category))
+/**
+ * The catalog discount of one whole pack, taken off the pack price (a pack that is also sold loose
+ * has its own pack price, so a percentage is on the pack price, not on unit price x pack size).
+ * A fixed discount is per unit, so a pack gets it x pack_size. Product first, then the category.
+ */
+export function packDiscountParts(product, category, packPrice, packSize) {
+  const own =
+    product.has_product_discount && discountAppliesTo(product.discount_applies_to, "pack")
+      ? applyDiscount(packPrice, product.discount_type, product.discount_type === "fixed" ? Number(product.discount_value) * packSize : product.discount_value)
+      : 0
+  const cat = categoryOf(product, category)
+  const fromCategory =
+    cat?.discount_type && cat.discount_value != null
+      ? applyDiscount(money(packPrice - own), cat.discount_type, cat.discount_type === "fixed" ? Number(cat.discount_value) * packSize : cat.discount_value)
+      : 0
+  return { own, fromCategory, category: cat }
+}
+
+export function priceAfterProductDiscount(product, category, kind) {
+  return money(Number(product.selling_price || 0) - productUnitDiscount(product, category, kind))
 }
 
 export function bogoFreeQty(qty, buy_qty, get_qty) {
@@ -167,16 +190,25 @@ export function priceCatalogLine({
 
   const unitList = money(product.selling_price)
   const list = byPack ? money(product.pack_selling_price ?? unitList * packSize) : unitList
-  const unitAfterProduct = priceAfterProductDiscount(product, product.Category || product.category)
-  // The catalog discount per unit, on every unit of the pack.
-  const afterProduct = byPack ? money(list - (unitList - unitAfterProduct) * packSize) : unitAfterProduct
+  const kind = saleKind(product, byPack)
+  const category = product.Category || product.category
+  // The catalog discount: per unit; a pack is discounted on its own pack price. parts are per unit.
+  let parts
+  let afterProduct
+  if (byPack) {
+    const pack = packDiscountParts(product, category, list, packSize)
+    parts = { own: pack.own / packSize, fromCategory: pack.fromCategory / packSize, category: pack.category }
+    afterProduct = money(list - pack.own - pack.fromCategory)
+  } else {
+    parts = unitDiscountParts(product, category, kind)
+    afterProduct = priceAfterProductDiscount(product, category, kind)
+  }
   const live = offers.filter((offer) => offerIsLive(offer, { locationId, now }))
   const matching = live.filter((offer) =>
     matchingTargets(offer, product).some((target) => coversSaleUnit(offer, target, product, saleUnit))
   )
   // Where the catalog discount comes from — by the amounts actually taken off (a 0% discount
   // is no discount).
-  const parts = unitDiscountParts(product, product.Category || product.category)
   const catalogSource = parts.own > 0
     ? parts.fromCategory > 0
       ? "product+category"

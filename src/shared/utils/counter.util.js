@@ -105,6 +105,16 @@ export const nextOfferNumber = (storeId, transaction) =>
     restartWhenEmpty: { table: "offers", storeId },
   })
 
+export const nextOrderDiscountNumber = (storeId, transaction) =>
+  getNextSequence(`order_discount:${storeId}`, transaction, {
+    restartWhenEmpty: { table: "order_discounts", storeId },
+  })
+
+export const nextBundleNumber = (storeId, transaction) =>
+  getNextSequence(`bundle:${storeId}`, transaction, {
+    restartWhenEmpty: { table: "bundle_discounts", storeId },
+  })
+
 export const nextSurchargeNumber = (storeId, transaction) =>
   getNextSequence(`surcharge:${storeId}`, transaction, {
     restartWhenEmpty: { table: "payment_method_surcharges", storeId },

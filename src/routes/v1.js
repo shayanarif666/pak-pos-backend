@@ -22,7 +22,10 @@ import customerRoutes from "../modules/customers/customer.routes.js"
 import supplierRoutes from "../modules/inventory/supplier.routes.js"
 import stockMovementRoutes from "../modules/inventory/stock.routes.js"
 import stockTransferRoutes from "../modules/inventory/transfer.routes.js"
-import offerRoutes from "../modules/offers/offer.routes.js"
+import orderDiscountRoutes from "../modules/discounts/orderDiscount.routes.js"
+import bundleDiscountRoutes from "../modules/discounts/bundleDiscount.routes.js"
+import bulkDiscountRoutes from "../modules/discounts/bulkDiscount.routes.js"
+import cartDiscountRoutes from "../modules/discounts/cartDiscounts.routes.js"
 import taxRoutes from "../modules/taxes/tax.routes.js"
 import surchargeRoutes from "../modules/surcharges/surcharge.routes.js"
 import couponRoutes from "../modules/coupons/coupon.routes.js"
@@ -67,7 +70,13 @@ router.use("/customers", customerRoutes)
 router.use("/suppliers", supplierRoutes)
 router.use("/stock-movements", stockMovementRoutes)
 router.use("/stock-transfers", stockTransferRoutes)
-router.use("/offers", offerRoutes)
+// The five discount levels. Category and product discounts live on the category / product.
+// /discounts = order level; /bulk-discounts = buy X get Y; /bundle-discounts = a whole pack / carton;
+// /order-discounts = every discount that touches a cart, in one GET.
+router.use("/discounts", orderDiscountRoutes)
+router.use("/bulk-discounts", bulkDiscountRoutes)
+router.use("/bundle-discounts", bundleDiscountRoutes)
+router.use("/order-discounts", cartDiscountRoutes)
 // Store taxes: one tax for every product or the selected ones.
 router.use("/taxes", taxRoutes)
 // Payment method surcharges: what paying by a method adds to the bill.

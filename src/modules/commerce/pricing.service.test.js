@@ -55,6 +55,33 @@ describe("pricing.service", () => {
     assert.equal(line.pricing_source, "product+category")
   })
 
+  it("takes the product discount only where discount_applies_to says (pack / loose / weight / all)", () => {
+    const base = { id: "p1", selling_price: 80, pack_selling_price: 500, pack_size: 10, is_pack_product: true, sell_loose: true, has_product_discount: true, discount_type: "percentage", discount_value: 10 }
+    // all (default): both the loose unit and the pack get it
+    assert.equal(priceAfterProductDiscount(base, null, "loose"), 72)
+    assert.equal(priceAfterProductDiscount(base, null, "pack"), 72)
+    // pack only: the loose unit stays at its price
+    const packOnly = { ...base, discount_applies_to: "pack" }
+    assert.equal(priceAfterProductDiscount(packOnly, null, "loose"), 80)
+    assert.equal(priceAfterProductDiscount(packOnly, null, "pack"), 72)
+    const packLine = priceCatalogLine({ product: packOnly, quantity: 1, saleUnit: "pack" })
+    assert.equal(packLine.discount_amount, 50)
+    assert.equal(packLine.subtotal, 450)
+    const looseLine = priceCatalogLine({ product: packOnly, quantity: 3, saleUnit: "unit" })
+    assert.equal(looseLine.discount_amount, 0)
+    assert.equal(looseLine.subtotal, 240)
+    // loose only: the pack is sold at its full price
+    const looseOnly = { ...base, discount_applies_to: "loose" }
+    assert.equal(priceCatalogLine({ product: looseOnly, quantity: 1, saleUnit: "pack" }).discount_amount, 0)
+    // weight only
+    const weight = { id: "p2", selling_price: 150, is_weight_based: true, has_product_discount: true, discount_type: "fixed", discount_value: 10, discount_applies_to: "weight" }
+    assert.equal(priceAfterProductDiscount(weight, null, "weight"), 140)
+    assert.equal(priceAfterProductDiscount(weight, null, "loose"), 150)
+    // the category discount does not care
+    const withCategory = { ...packOnly, category: { discount_type: "percentage", discount_value: 10 } }
+    assert.equal(priceAfterProductDiscount(withCategory, null, "loose"), 72)
+  })
+
   it("applies category discount when product has none", () => {
     const product = {
       id: "p1",

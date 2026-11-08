@@ -50,7 +50,7 @@ const KINDS = {
   location: { model: Location, attributes: ["id", "location_id_int", "name"] },
   product: {
     model: Product,
-    attributes: ["id", "product_number", "title", "sku", "unit", "category_id", "parent_product_id", "variant_number", "variant_name"],
+    attributes: ["id", "product_number", "title", "sku", "unit", "category_id", "parent_product_id", "variant_number", "variant_name", "pack_size", "pack_selling_price"],
   },
   category: { model: Category, attributes: ["id", "category_number", "name", "tax_name"] },
   supplier: { model: Supplier, attributes: ["id", "supplier_number", "name", "phone"] },
@@ -892,6 +892,8 @@ export async function posProducts(views) {
     discount_type: view.discount_type || null,
     discount_value: num(view.discount_value),
     discount_name: view.discount_name || null,
+    // What the product discount is taken off: all | pack | loose | weight.
+    discount_applies_to: view.discount_applies_to || "all",
     has_product_tax: (view.taxes || []).length > 0,
     taxes: view.taxes || [],
     // Taxes page taxes that apply to this product: [{ id (tax number), name, type, value }].

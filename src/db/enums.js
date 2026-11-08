@@ -97,6 +97,8 @@ export const PAYMENT_METHOD_LABEL = {
 }
 export const PAYMENT_ROW_STATUS = ["initiated", "success", "failed"]
 export const DISCOUNT_TYPE = ["percentage", "fixed"]
+/** products.discount_applies_to: what the product discount is taken off: the pack, the loose item, the weight, or all of them. */
+export const DISCOUNT_APPLIES_TO = ["all", "pack", "loose", "weight"]
 export const TAX_AMOUNT_TYPE = ["percentage", "fixed"]
 export const PRODUCT_UNIT = [
   "piece",

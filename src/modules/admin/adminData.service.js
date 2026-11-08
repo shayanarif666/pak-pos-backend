@@ -57,6 +57,11 @@ export const DATA_MODULES = {
     table: "offers",
     cascade: [{ table: "offer_targets", fk: "offer_id" }],
   },
+  order_discounts: { table: "order_discounts", cascade: [] },
+  bundle_discounts: {
+    table: "bundle_discounts",
+    cascade: [{ table: "bundle_discount_products", fk: "bundle_id" }],
+  },
   coupons: {
     table: "coupons",
     cascade: [{ table: "coupon_redemptions", fk: "coupon_id" }],
@@ -201,6 +206,7 @@ const STORE_CHILD_TABLES = [
   ["order_items", "order_id", "orders"],
   ["order_refund_items", "refund_id", "order_refunds"],
   ["offer_targets", "offer_id", "offers"],
+  ["bundle_discount_products", "bundle_id", "bundle_discounts"],
   ["cart_items", "cart_id", "carts"],
   ["auth_tokens", "user_id", "users"],
   ["user_sessions", "user_id", "users"],
@@ -292,6 +298,7 @@ export async function clearStoreData(storeRef) {
         ["order_items", "order_id", "orders"],
         ["order_refund_items", "refund_id", "order_refunds"],
         ["offer_targets", "offer_id", "offers"],
+        ["bundle_discount_products", "bundle_id", "bundle_discounts"],
         ["cart_items", "cart_id", "carts"],
         ["store_tax_products", "tax_id", "store_taxes"],
       ]

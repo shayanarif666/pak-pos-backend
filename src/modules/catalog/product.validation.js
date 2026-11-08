@@ -2,7 +2,7 @@ import { AppError } from "../../shared/errors/AppError.js"
 import { parseCatalogVisibility } from "../../db/channelVisibility.js"
 import { parseLocationScope } from "../../shared/utils/locationScope.util.js"
 import { parseStockUnit } from "../../shared/utils/stockUnit.util.js"
-import { DISCOUNT_TYPE, PRODUCT_UNIT, TAX_AMOUNT_TYPE } from "../../db/enums.js"
+import { DISCOUNT_APPLIES_TO, DISCOUNT_TYPE, PRODUCT_UNIT, TAX_AMOUNT_TYPE } from "../../db/enums.js"
 
 /**
  * Product taxes, any number of them: taxes: [{ name, type: percentage | fixed, value }].
@@ -328,7 +328,9 @@ function parseVariants(body, { patch = false } = {}) {
       if (!(optionalNumber(row, "pack_cost_price") > 0)) throw new AppError(`${label}.pack_cost is required for a pack variant`, 400)
       if (!(optionalNumber(row, "pack_selling_price") > 0)) throw new AppError(`${label}.pack_price is required for a pack variant`, 400)
     }
-    const looseRequired = !existing && !isPack
+    const sellLoose = optionalBool(row, "sell_loose")
+    // A pack variant that is also sold loose has its own unit cost / price too.
+    const looseRequired = !existing && (!isPack || sellLoose === true)
     // Its one image: a URL (image or featured_image); null / "" removes it on PATCH.
     const rawImage = row.image !== undefined ? row.image : row.featured_image
     if (rawImage != null && typeof rawImage !== "string") throw new AppError(`${label}.image must be an image URL`, 400)
@@ -359,6 +361,16 @@ function parseVariants(body, { patch = false } = {}) {
   })
 }
 
+/** all | pack | loose | weight (what the product discount is taken off); undefined when not sent. */
+function parseAppliesTo(body) {
+  if (body.discount_applies_to === undefined || body.discount_applies_to === null || body.discount_applies_to === "") return undefined
+  const value = String(body.discount_applies_to)
+  if (!DISCOUNT_APPLIES_TO.includes(value)) {
+    throw new AppError(`discount_applies_to must be one of: ${DISCOUNT_APPLIES_TO.join(", ")}`, 400)
+  }
+  return value
+}
+
 export function parseCreateProduct(rawBody) {
   const body = withPriceAliases(rawBody)
   const unit = body.unit === undefined ? "piece" : String(body.unit)
@@ -368,6 +380,8 @@ export function parseCreateProduct(rawBody) {
 
   const imageFields = resolveProductImages(body)
   const isPack = optionalBool(body, "is_pack_product") ?? false
+  // A pack that is also sold loose has its own unit cost / price (the pack price is not unit price x size).
+  const sellLoose = optionalBool(body, "sell_loose") ?? false
   const variants = parseVariants(body)
   // With variants, each variant carries its own barcode and prices; the parent's are optional.
   const hasVariants = Boolean(variants?.length)
@@ -385,12 +399,12 @@ export function parseCreateProduct(rawBody) {
     description: optionalString(body, "description") ?? null,
     category_id: requireStringOrNumber(body, "category_id"),
     unit,
-    // Pack products may leave the per-unit prices out — createProduct() derives them from the
-    // pack price ÷ pack_size.
-    cost_price: isPack || hasVariants
+    // A pack-only product may leave the per-unit prices out: createProduct() derives them from the
+    // pack price ÷ pack_size. A pack that is also sold loose sends both (pack and unit).
+    cost_price: (isPack && !sellLoose) || hasVariants
       ? optionalNumber(body, "cost_price") ?? null
       : requireNumber(body, "cost_price", { label: "cost" }),
-    selling_price: isPack || hasVariants
+    selling_price: (isPack && !sellLoose) || hasVariants
       ? optionalNumber(body, "selling_price") ?? null
       : requireNumber(body, "selling_price", { label: "price" }),
     // Left undefined when not sent: createProduct() then derives it from discount_type/value.
@@ -398,6 +412,7 @@ export function parseCreateProduct(rawBody) {
     discount_type: body.discount_type || null,
     discount_value: optionalNumber(body, "discount_value") ?? null,
     discount_name: optionalString(body, "discount_name") ?? null,
+    discount_applies_to: parseAppliesTo(body) ?? "all",
     taxes: parseTaxes(body) ?? [],
     is_pack_product: isPack,
     pack_size: optionalInt(body, "pack_size", { min: 2 }) ?? null,
@@ -406,7 +421,7 @@ export function parseCreateProduct(rawBody) {
     // assertPackRules, same as pack_size).
     pack_cost_price: optionalNumber(body, "pack_cost_price") ?? null,
     pack_selling_price: optionalNumber(body, "pack_selling_price") ?? null,
-    sell_loose: optionalBool(body, "sell_loose") ?? false,
+    sell_loose: sellLoose,
     is_weight_based: optionalBool(body, "is_weight_based") ?? false,
     // The colours it comes in (hex codes); with variants each variant has its own.
     colors: parseColors(body) ?? [],
@@ -474,6 +489,7 @@ export function parsePatchProduct(rawBody) {
   if (body.discount_name !== undefined) {
     fields.discount_name = optionalString(body, "discount_name")
   }
+  if (body.discount_applies_to !== undefined) fields.discount_applies_to = parseAppliesTo(body) ?? "all"
   const taxes = parseTaxes(body)
   if (taxes !== undefined) fields.taxes = taxes
   if (body.is_pack_product !== undefined) {

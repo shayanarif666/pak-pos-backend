@@ -1,4 +1,5 @@
 import { Op, UniqueConstraintError } from "sequelize"
+import { discountAppliesTo } from "./discountAppliesTo.js"
 import { lotsByStock, publicLot } from "./stockLots.service.js"
 import { StockLot } from "./stockLot.model.js"
 import { sequelize } from "../../db/sequelize.js"
@@ -244,6 +245,13 @@ async function ensureUniqueSku(storeId, title, excludeId) {
 }
 
 function assertPackRules(fields, current = {}) {
+  const applies = fields.discount_applies_to !== undefined ? fields.discount_applies_to : current.discount_applies_to
+  if (applies === "pack" && !(fields.is_pack_product ?? current.is_pack_product)) {
+    throw new AppError("discount_applies_to pack needs a pack product", 400)
+  }
+  if (applies === "weight" && !(fields.is_weight_based ?? current.is_weight_based)) {
+    throw new AppError("discount_applies_to weight needs a weight based product", 400)
+  }
   const is_pack = fields.is_pack_product ?? current.is_pack_product
   const pack_size = fields.pack_size !== undefined ? fields.pack_size : current.pack_size
   const pack_cost_price =
@@ -270,21 +278,22 @@ const round2 = (n) => Math.round(Number(n) * 100) / 100
  */
 function productTotals(p) {
   const taxes = productTaxList(p)
-  const discountOn = (base, units) => {
+  const discountOn = (base, units, kind) => {
     const value = Number(p.discount_value)
+    if (!discountAppliesTo(p.discount_applies_to, kind)) return 0
     if (!p.has_product_discount || !p.discount_type || p.discount_value == null || !(value > 0))
       return 0
     return Math.min(base, p.discount_type === "percentage" ? (base * value) / 100 : value * units)
   }
-  const total = (base, units) => {
-    const net = base - discountOn(base, units)
+  const total = (base, units, kind) => {
+    const net = base - discountOn(base, units, kind)
     return round2(net + taxes.reduce((sum, tax) => sum + taxOn(net, tax.type, tax.value, units), 0))
   }
-  const unit = p.selling_price == null ? null : total(Number(p.selling_price), 1)
+  const unit = p.selling_price == null ? null : total(Number(p.selling_price), 1, p.is_weight_based ? "weight" : "loose")
   const packSize = Number(p.pack_size)
   const pack =
     p.is_pack_product && p.pack_selling_price != null && packSize >= 2
-      ? total(Number(p.pack_selling_price), packSize)
+      ? total(Number(p.pack_selling_price), packSize, "pack")
       : null
   return { total_price_each_unit: unit, total_pack_price: pack }
 }
@@ -298,10 +307,15 @@ const TOTAL_FIELDS = [
   "has_product_discount",
   "discount_type",
   "discount_value",
+  "discount_applies_to",
+  "is_weight_based",
   "taxes",
 ]
 
-/** Pack product: cost_price / selling_price of one unit = pack price ÷ pack_size. */
+/**
+ * Pack product: cost_price / selling_price of one unit = pack price ÷ pack_size. A pack that is
+ * also sold loose keeps the unit prices it was sent (a loose unit can cost more than pack ÷ size).
+ */
 function unitPricesFromPack({ pack_size, pack_cost_price, pack_selling_price }) {
   const size = Number(pack_size)
   return {
@@ -440,6 +454,7 @@ function publicProduct(product, extras = {}) {
     discount_type: json.discount_type,
     discount_value: json.discount_value,
     discount_name: json.discount_name,
+    discount_applies_to: json.discount_applies_to || "all",
     taxes: productTaxList(json),
     is_pack_product: json.is_pack_product,
     pack_size: json.pack_size,
@@ -887,9 +902,9 @@ export async function createProduct(store, input, actor = null) {
           featured_image: fields.featured_image ?? null,
           description: fields.description,
           unit: fields.unit,
-          // A pack product's per-unit prices are always pack price ÷ pack_size (assertPackRules
-          // above guarantees both are present); anything sent for them is ignored.
-          ...(fields.is_pack_product
+          // A pack-only product's per-unit prices are pack price ÷ pack_size (assertPackRules above
+          // guarantees both are present). A pack that is also sold loose has its own unit prices.
+          ...(fields.is_pack_product && !fields.sell_loose
             ? unitPricesFromPack(fields)
             : { cost_price: fields.cost_price, selling_price: fields.selling_price }),
           has_product_discount: deriveHasDiscount(
@@ -900,6 +915,7 @@ export async function createProduct(store, input, actor = null) {
           discount_type: fields.discount_type,
           discount_value: fields.discount_value,
           discount_name: fields.discount_name,
+          discount_applies_to: fields.discount_applies_to || "all",
           taxes: fields.taxes || [],
           is_pack_product: fields.is_pack_product,
           pack_size: fields.is_pack_product ? fields.pack_size : null,
@@ -1005,7 +1021,8 @@ async function saveVariants(storeId, product, variants, actor, { held, warnings,
       }
       if (variant.is_pack_product || variant.pack_size != null || variant.pack_cost_price != null || variant.pack_selling_price != null) {
         assertPackRules({ is_pack_product: true, ...pack }, row)
-        Object.assign(patch, { is_pack_product: true, ...pack, ...unitPricesFromPack(pack) })
+        Object.assign(patch, { is_pack_product: true, ...pack })
+        if (!(variant.sell_loose ?? row.sell_loose)) Object.assign(patch, unitPricesFromPack(pack))
       }
     }
     if (variant.taxes !== undefined) {
@@ -1064,9 +1081,9 @@ export async function updateProduct(storeId, id, input, actor = null) {
     patch.pack_cost_price = null
     patch.pack_selling_price = null
   }
-  // Still (or now) a pack product: keep the per-unit prices derived from the pack.
+  // Still (or now) a pack-only product: keep the per-unit prices derived from the pack.
   const isPack = fields.is_pack_product ?? product.is_pack_product
-  if (isPack) {
+  if (isPack && !(fields.sell_loose ?? product.sell_loose)) {
     Object.assign(
       patch,
       unitPricesFromPack({
