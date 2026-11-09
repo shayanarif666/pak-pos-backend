@@ -46,6 +46,7 @@ import * as softDeleteVariants from "./migrations/20261123120000-soft-delete-var
 import * as discountLevels from "./migrations/20261124120000-discount-levels.js"
 import * as stockLotSupplier from "./migrations/20261125120000-stock-lot-supplier.js"
 import * as lowStockUnit from "./migrations/20261126120000-low-stock-unit.js"
+import * as variantParentLowStockZero from "./migrations/20261127120000-variant-parent-low-stock-zero.js"
 
 // Migrations the running code cannot work without (e.g. users.token_version is read on every
 // authenticated request). Each one checks before it changes anything, so running it on a
@@ -139,6 +140,8 @@ const REQUIRED = [
   stockLotSupplier,
   // products.low_stock_unit: pack or unit, for a pack + loose product's low stock level.
   lowStockUnit,
+  // A product with variants keeps low_stock_threshold 0 (each variant has its own).
+  variantParentLowStockZero,
 ]
 
 export async function ensureSchema() {

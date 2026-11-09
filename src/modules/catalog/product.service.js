@@ -472,7 +472,8 @@ function publicProduct(product, extras = {}) {
     total_price_each_unit:
       json.total_price_each_unit == null ? null : Number(json.total_price_each_unit),
     total_pack_price: json.total_pack_price == null ? null : Number(json.total_pack_price),
-    low_stock_threshold: json.low_stock_threshold,
+    // 0 on a product with variants: each variant has its own.
+    low_stock_threshold: json.low_stock_threshold == null ? null : Number(json.low_stock_threshold),
     // What the threshold counts: pack (a pack-only product, or pack + loose set to pack) or unit.
     low_stock_unit: thresholdUnit(json),
     // "all" = every location; "selected" = only location_ids.
@@ -793,7 +794,7 @@ async function assertVariantsFree(storeId, variants, excludeIds = []) {
 const variantTaxList = (parentTaxes, own) => [...(parentTaxes || []), ...(own || [])]
 
 /** One variant of a parent: a product of its own (the parent's category, taxes, unit, scope…). */
-async function createVariant(store, parent, variant, variantNumber) {
+async function createVariant(store, parent, variant, variantNumber, defaults = {}) {
   const json = parent.toJSON ? parent.toJSON() : parent
   return createProduct(
     store,
@@ -822,8 +823,9 @@ async function createVariant(store, parent, variant, variantNumber) {
       sell_loose: Boolean(variant.sell_loose),
       is_weight_based: variant.is_weight_based ?? Boolean(json.is_weight_based),
       has_bulk_discount: false,
-      low_stock_threshold: variant.low_stock_threshold ?? json.low_stock_threshold,
-      low_stock_unit: variant.low_stock_unit ?? json.low_stock_unit ?? "unit",
+      // Its own level; else the one sent on the product (its own is 0), else the default 10.
+      low_stock_threshold: variant.low_stock_threshold ?? defaults.low_stock_threshold ?? 10,
+      low_stock_unit: variant.low_stock_unit ?? defaults.low_stock_unit ?? "unit",
       is_published: json.is_published,
       is_pos_visible: json.is_pos_visible,
       is_web_visible: json.is_web_visible,
@@ -934,7 +936,8 @@ export async function createProduct(store, input, actor = null) {
           is_weight_based: fields.is_weight_based,
           colors: fields.colors || [],
           has_bulk_discount: fields.has_bulk_discount,
-          low_stock_threshold: fields.low_stock_threshold,
+          // A product with variants keeps 0 here: each variant has its own low stock level.
+          low_stock_threshold: variants?.length ? 0 : fields.low_stock_threshold,
           low_stock_unit: fields.low_stock_unit || "unit",
           is_published: fields.is_published,
           is_pos_visible: fields.is_pos_visible,
@@ -957,7 +960,7 @@ export async function createProduct(store, input, actor = null) {
       if (variants?.length) {
         let number = 0
         for (const variant of variants) {
-          const view = await createVariant(store, parent, variant, ++number)
+          const view = await createVariant(store, parent, variant, ++number, { low_stock_threshold: fields.low_stock_threshold, low_stock_unit: fields.low_stock_unit })
           await applyProductStock({
             store, target: view, rows: variant.stock, held, actor, mode: "opening", warnings,
             label: `variant ${variant.name}`, fallbackRef: stock_location_id,
@@ -998,9 +1001,13 @@ async function saveVariants(storeId, product, variants, actor, { held, warnings,
     if (variant.sku) await assertUnique(storeId, "sku", variant.sku, row.id)
   }
   const parentTaxes = productTaxList(product)
+  // A new variant starts from the product's own level while it has none (a product with variants keeps 0).
+  const variantDefaults = product.has_variants
+    ? {}
+    : { low_stock_threshold: Number(product.low_stock_threshold), low_stock_unit: product.low_stock_unit }
   for (const variant of variants) {
     if (!variant.ref) {
-      const view = await createVariant(store, await getProduct(storeId, product.id), variant, await nextVariantNumber(product.id))
+      const view = await createVariant(store, await getProduct(storeId, product.id), variant, await nextVariantNumber(product.id), variantDefaults)
       await applyProductStock({
         store, target: view, rows: variant.stock, held, actor, mode: "opening", warnings,
         label: `variant ${variant.name}`, fallbackRef: stockLocationRef,
@@ -1052,7 +1059,7 @@ async function saveVariants(storeId, product, variants, actor, { held, warnings,
       })
     }
   }
-  if (!product.has_variants) await product.update({ has_variants: true })
+  if (!product.has_variants) await product.update({ has_variants: true, low_stock_threshold: 0 })
   return changing
 }
 
@@ -1065,6 +1072,8 @@ export async function updateProduct(storeId, id, input, actor = null) {
     productScopeForActor(actor, input, { creating: false })
   assertPackRules(fields, product)
   const patch = { ...fields }
+  // With variants the product's own level stays 0: send low_stock_threshold on each variant.
+  if (fields.low_stock_threshold !== undefined && (product.has_variants || variants?.length)) patch.low_stock_threshold = 0
   const warnings = []
   const placesChange = fields.location_scope !== undefined || stock_scope !== undefined
 
