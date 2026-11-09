@@ -18,6 +18,7 @@ import { posProduct, posProducts } from "../pos/posResponses.js"
 import * as productService from "./product.service.js"
 import { uploadImageBuffer } from "../../shared/utils/cloudinary.util.js"
 import * as posHistory from "../pos/posHistory.service.js"
+import { listStockRows } from "./stockList.service.js"
 
 export const list = asyncHandler(async (req, res) => {
   if (req.auth?.channel === "pos") return posHistory.sendPage(res, await posHistory.products(req))
@@ -155,6 +156,17 @@ export const listWeight = asyncHandler(async (req, res) => {
 export const patchWeight = asyncHandler(async (req, res) => {
   const data = await productService.patchWeight(req.storeId, req.params.id, req.body)
   return apiResponse(res, 200, "Weight setting updated", data)
+})
+
+/** GET /products/stock: the stock of every product / variant at every location, lots inside (see stockList.service.js). */
+export const listStock = asyncHandler(async (req, res) => {
+  const scope = await posHistory.scopeOf(req)
+  const { page, limit, offset } = posHistory.pageOf(req.query)
+  const { rows, total } = await listStockRows(scope, req.query)
+  return posHistory.sendPage(res, {
+    rows: rows.slice(offset, offset + limit),
+    pagination: { page, limit, total, total_pages: Math.max(1, Math.ceil(total / limit)) },
+  })
 })
 
 export const listExpiry = asyncHandler(async (req, res) => {

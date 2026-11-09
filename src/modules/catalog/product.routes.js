@@ -26,6 +26,7 @@ import {
   list,
   listBulkTiers,
   listExpiry,
+  listStock,
   listWeight,
   patch,
   patchBulk,
@@ -78,6 +79,8 @@ router.patch("/bulk/status", ...catalogWrite, patchBulkStatus)
 router.patch("/bulk/visibility", ...catalogWrite, patchBulkVisibility)
 router.get("/weight", ...catalogWrite, listWeight)
 router.get("/expiry", ...catalogWrite, listExpiry)
+// The stock of every product / variant at every location, with its lots and their expiry.
+router.get("/stock", ...catalogRead, listStock)
 router.get("/:id/bulk-tiers", ...catalogRead, listBulkTiers)
 router.put(
   "/:id/bulk-tiers",
