@@ -32,7 +32,7 @@ async function mapById(model, ids, attributes, options = {}) {
 
 const PRODUCT_ATTRS = [
   "id", "product_number", "title", "sku", "barcode", "unit", "parent_product_id", "variant_number",
-  "variant_name", "is_pack_product", "pack_size", "sell_loose", "low_stock_threshold",
+  "variant_name", "is_pack_product", "pack_size", "sell_loose", "low_stock_threshold", "low_stock_unit",
 ]
 
 function productView(row, parent) {
@@ -121,7 +121,7 @@ export async function stockEditRows(pairs) {
       expiry_date: row.expiry_date || null,
       lots: (lotsOf.get(`${row.location_id}|${row.product_id}`) || []).map((lot) => publicLot(lot, storeRow)),
       low_stock_threshold: threshold,
-      threshold_unit: thresholdUnit(item),
+      low_stock_unit: thresholdUnit(item),
       is_low: isLowStock(qty, threshold, item),
       updated_at: row.updated_at,
       ...(row.deleted_at ? { deleted_at: row.deleted_at } : {}),

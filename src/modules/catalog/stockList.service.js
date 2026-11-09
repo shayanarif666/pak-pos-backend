@@ -130,9 +130,9 @@ export async function listStockRows(scope, query = {}) {
       location: { id: location?.location_id_int ?? stock.location_id_int, name: location?.name || null },
       qty,
       qty_packs: product.is_pack_product ? packsOf(qty, product.pack_size) : null,
-      // In packs for a pack-only product, else in units (piece / gram / kg): see threshold_unit.
+      // In packs for a pack-only product, else in units (piece / gram / kg): see low_stock_unit.
       low_stock_threshold: threshold == null ? null : round4(threshold),
-      threshold_unit: thresholdUnit(product),
+      low_stock_unit: thresholdUnit(product),
       stock_status: stockStatus(qtyForThreshold(qty, product), threshold),
       nearest_expiry_date: dates[0] || null,
       lots,

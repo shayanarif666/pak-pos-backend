@@ -908,7 +908,7 @@ export async function posProducts(views) {
     is_weight_based: Boolean(view.is_weight_based),
     has_bulk_discount: Boolean(view.has_bulk_discount),
     low_stock_threshold: num(view.low_stock_threshold),
-    threshold_unit: thresholdUnit(view),
+    low_stock_unit: thresholdUnit(view),
     total_price_each_unit: num(view.total_price_each_unit),
     total_pack_price: num(view.total_pack_price),
     ...posLocationScope(view),

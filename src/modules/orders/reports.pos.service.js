@@ -835,7 +835,7 @@ async function inventoryReport(actor, query, scope, extra = {}) {
     include: [
       {
         model: Product,
-        attributes: ["id", "title", "sku", "unit", "is_pack_product", "pack_size", "sell_loose", "is_weight_based", "low_stock_threshold"],
+        attributes: ["id", "title", "sku", "unit", "is_pack_product", "pack_size", "sell_loose", "is_weight_based", "low_stock_threshold", "low_stock_unit"],
         include: [{ model: Category, attributes: ["id", "name"] }],
       },
       { model: Location, attributes: ["id", "name", "location_id_int"] },

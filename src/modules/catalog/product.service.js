@@ -78,7 +78,7 @@ const VARIANTS_INCLUDE = {
   attributes: [
     "id", "product_number", "variant_number", "variant_name", "title", "sku", "barcode", "cost_price", "selling_price", "is_active",
     "is_pack_product", "pack_size", "pack_cost_price", "pack_selling_price", "sell_loose", "variant_taxes", "taxes",
-    "low_stock_threshold", "is_weight_based", "featured_image", "colors",
+    "low_stock_threshold", "low_stock_unit", "is_weight_based", "featured_image", "colors",
   ],
   // A deleted variant (soft delete) is left out.
   where: { deleted_at: null },
@@ -374,7 +374,7 @@ function publicStock(row, product) {
     low_stock_threshold: row.low_stock_threshold,
     effective_threshold: threshold == null ? null : Number(threshold),
     // The threshold is in packs for a pack-only product, else in units (see stockThreshold.js).
-    threshold_unit: thresholdUnit(product),
+    low_stock_unit: thresholdUnit(product),
     is_low: isLowStock(qty, threshold, product),
     number_of_packs: numberOfPacks(qty, product?.pack_size),
     // Its lots, soonest expiry first: [{ id (lot number), qty, expiry_date, days_left, expiry_status, received_at, source }].
@@ -429,6 +429,8 @@ function publicProduct(product, extras = {}) {
       pack_cost_price: row.pack_cost_price == null ? null : Number(row.pack_cost_price),
       pack_selling_price: row.pack_selling_price == null ? null : Number(row.pack_selling_price),
       sell_loose: Boolean(row.sell_loose),
+      // What its low stock level counts: pack | unit.
+      low_stock_unit: thresholdUnit(row),
       is_weight_based: Boolean(row.is_weight_based),
       // Its own taxes (on top of the product's); taxes = everything it is charged.
       variant_taxes: Array.isArray(row.variant_taxes) ? row.variant_taxes : [],
@@ -470,8 +472,8 @@ function publicProduct(product, extras = {}) {
       json.total_price_each_unit == null ? null : Number(json.total_price_each_unit),
     total_pack_price: json.total_pack_price == null ? null : Number(json.total_pack_price),
     low_stock_threshold: json.low_stock_threshold,
-    // What the threshold counts: pack (a pack-only product) or unit.
-    threshold_unit: thresholdUnit(json),
+    // What the threshold counts: pack (a pack-only product, or pack + loose set to pack) or unit.
+    low_stock_unit: thresholdUnit(json),
     // "all" = every location; "selected" = only location_ids.
     ...locationScopeView(json, json.productLocations),
     // Which of those locations hold its stock: all, or selected = stock_location_ids.
@@ -820,6 +822,7 @@ async function createVariant(store, parent, variant, variantNumber) {
       is_weight_based: variant.is_weight_based ?? Boolean(json.is_weight_based),
       has_bulk_discount: false,
       low_stock_threshold: json.low_stock_threshold,
+      low_stock_unit: variant.low_stock_unit ?? json.low_stock_unit ?? "unit",
       is_published: json.is_published,
       is_pos_visible: json.is_pos_visible,
       is_web_visible: json.is_web_visible,
@@ -931,6 +934,7 @@ export async function createProduct(store, input, actor = null) {
           colors: fields.colors || [],
           has_bulk_discount: fields.has_bulk_discount,
           low_stock_threshold: fields.low_stock_threshold,
+          low_stock_unit: fields.low_stock_unit || "unit",
           is_published: fields.is_published,
           is_pos_visible: fields.is_pos_visible,
           is_web_visible: fields.is_web_visible,
@@ -1015,6 +1019,7 @@ async function saveVariants(storeId, product, variants, actor, { held, warnings,
     // image: a URL sets the variant's one image, null removes it.
     if (variant.image !== undefined) Object.assign(patch, { featured_image: variant.image, images: variant.image ? [{ url: variant.image }] : [] })
     if (variant.sell_loose !== undefined) patch.sell_loose = variant.sell_loose
+    if (variant.low_stock_unit !== undefined) patch.low_stock_unit = variant.low_stock_unit
     if (variant.is_weight_based !== undefined) patch.is_weight_based = variant.is_weight_based
     if (variant.colors !== undefined) patch.colors = variant.colors
     if (variant.is_pack_product === false) Object.assign(patch, { is_pack_product: false, pack_size: null, pack_cost_price: null, pack_selling_price: null })

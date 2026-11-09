@@ -347,6 +347,8 @@ function parseVariants(body, { patch = false } = {}) {
       pack_cost_price: optionalNumber(row, "pack_cost_price"),
       pack_selling_price: optionalNumber(row, "pack_selling_price"),
       sell_loose: optionalBool(row, "sell_loose"),
+      // What the low stock level counts on a pack + loose variant: pack | unit. undefined = as its product.
+      low_stock_unit: parseLowStockUnit(row, `${label}.low_stock_unit`),
       // Sold by weight (kg) on the scale. Left out = as its product.
       is_weight_based: optionalBool(row, "is_weight_based"),
       // This variant's own taxes, added to the product's taxes. undefined = not sent.
@@ -359,6 +361,15 @@ function parseVariants(body, { patch = false } = {}) {
       is_active: optionalBool(row, "is_active"),
     }
   })
+}
+
+/** pack | unit (what the low stock level counts on a pack + loose product); undefined when not sent. */
+function parseLowStockUnit(body, label = "low_stock_unit") {
+  const raw = body[label.split(".").pop()]
+  if (raw === undefined || raw === null || raw === "") return undefined
+  const value = String(raw).trim().toLowerCase()
+  if (value !== "pack" && value !== "unit") throw new AppError(`${label} must be pack or unit`, 400)
+  return value
 }
 
 /** all | pack | loose | weight (what the product discount is taken off); undefined when not sent. */
@@ -427,6 +438,7 @@ export function parseCreateProduct(rawBody) {
     colors: parseColors(body) ?? [],
     has_bulk_discount: optionalBool(body, "has_bulk_discount") ?? false,
     low_stock_threshold: optionalNumber(body, "low_stock_threshold") ?? 10,
+    low_stock_unit: parseLowStockUnit(body) ?? "unit",
     is_published: optionalBool(body, "is_published") ?? false,
     ...parseCatalogVisibility(body),
     // Where the product is sold: all locations (default) or selected ones.
@@ -515,6 +527,7 @@ export function parsePatchProduct(rawBody) {
   if (body.low_stock_threshold !== undefined) {
     fields.low_stock_threshold = optionalNumber(body, "low_stock_threshold")
   }
+  if (body.low_stock_unit !== undefined) fields.low_stock_unit = parseLowStockUnit(body) ?? "unit"
   if (body.is_published !== undefined) {
     fields.is_published = optionalBool(body, "is_published")
   }

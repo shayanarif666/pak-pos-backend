@@ -86,6 +86,9 @@ export const Product = sequelize.define(
       allowNull: false,
       defaultValue: 10,
     },
+    // What low_stock_threshold counts on a pack + loose product: pack | unit. Pack-only is always
+    // pack, everything else unit (see stockThreshold.js).
+    low_stock_unit: { type: DataTypes.STRING(8), allowNull: false, defaultValue: "unit" },
     // Price after this product's own discount, then its own taxes on the discounted price
     // (e.g. 100 → 5% off → 95 → +5% tax → 99.75). Category tax, sales tax, offers and payment
     // GST are applied at checkout, not here. total_pack_price does the same on
