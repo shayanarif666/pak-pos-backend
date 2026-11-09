@@ -1,4 +1,5 @@
 import {
+  applyDiscount,
   lineTaxAmount,
   money,
   packDiscountParts,
@@ -28,7 +29,7 @@ export function categoryOf(view, refs) {
 }
 
 /** What one sellable thing (a product without variants, or one variant) is charged, per unit and per pack. */
-export function figures(row, { discountRule, category, isWeightBased }) {
+export function figures(row, { discountRule, category, isWeightBased, bundles = [] }) {
   const pack = Boolean(row.is_pack_product) && Number(row.pack_size) >= 2
   const sellLoose = pack ? Boolean(row.sell_loose) : true
   const catalogCategory = category
@@ -50,7 +51,11 @@ export function figures(row, { discountRule, category, isWeightBased }) {
   if (pack && row.pack_selling_price != null) {
     const size = Number(row.pack_size)
     const parts = packDiscountParts(priced, catalogCategory, Number(row.pack_selling_price), size)
-    const discount = money(parts.own + parts.fromCategory)
+    let discount = money(parts.own + parts.fromCategory)
+    // A bundle discount is on the whole pack, taken off what is left after the product and category discounts.
+    for (const bundle of bundles) {
+      discount = money(discount + applyDiscount(money(Number(row.pack_selling_price) - discount), bundle.type, bundle.value))
+    }
     out.pack_discount_value = discount
     out.pack_tax_value = lineTaxAmount(TAX_ONLY_STORE, priced, catalogCategory, money(Number(row.pack_selling_price) - discount), size)
   }

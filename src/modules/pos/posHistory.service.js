@@ -222,7 +222,7 @@ export async function products(req) {
   query.location_id = scope.location_id
   const listed = (await listProducts(scope, query, { parentsOnly: true })).filter(inWindow(req.query, (row) => row.created_at))
   const { items, total } = slicePage(listed, pageInfo)
-  return paged(await posProducts(items), total, pageInfo)
+  return paged(await posProducts(items, { role: scope.role, location_id: scope.location_id }), total, pageInfo)
 }
 
 // ---- 4 / 13. Orders: ?status=completed | pending | cancelled (cancelled + voided) | refunded ----
