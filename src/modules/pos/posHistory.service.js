@@ -22,13 +22,12 @@ import { StaffSession } from "./staffSession.model.js"
 import { listCategories } from "../catalog/category.service.js"
 import { expiryStatus, listProducts } from "../catalog/product.service.js"
 import { Store } from "../stores/store.model.js"
-import { categoryOf, figures, posSaleProducts } from "./saleCatalog.js"
+import { categoryOf, figures } from "./saleCatalog.js"
 import { listOffers } from "../offers/offer.service.js"
 import { listSuppliers } from "../inventory/supplier.service.js"
 import { loadLocation } from "../catalog/productStock.service.js"
 import { clockStatusOf } from "./staffSession.service.js"
 import {
-  currencyOf,
   num,
   numbersOf,
   one,
@@ -213,10 +212,7 @@ export async function categories(req) {
 // A product with variants: price and stock are null (each variant has its own, in the detail) and
 // total_variants is how many it has; without variants: total_variants is null.
 export async function products(req) {
-  // view=list (default): the short list; view=sale: the register's catalog (prices, discounts, taxes);
-  // view=full: every detail of the product, its variants inside, without any stock (see GET /products/stock).
-  const view = String(req.query.view || "list")
-  if (!["list", "sale", "full"].includes(view)) throw new AppError("view must be list, sale or full", 400)
+  // Every detail of the product, its variants inside, without any stock (that is GET /products/stock).
   const scope = await scopeOf(req)
   const pageInfo = pageOf(req.query)
   const query = { ...req.query }
@@ -224,31 +220,9 @@ export async function products(req) {
   if (categoryRef) query.category_id = await idOf(Category, "category_number", scope.store_id, categoryRef, "Category")
   delete query.categoryId
   query.location_id = scope.location_id
-  // A variant is counted inside its product (its own price and stock are in the product detail).
   const listed = (await listProducts(scope, query, { parentsOnly: true })).filter(inWindow(req.query, (row) => row.created_at))
   const { items, total } = slicePage(listed, pageInfo)
-  if (view === "sale") return paged(await posSaleProducts(items, await currencyOf(scope.store_id)), total, pageInfo)
-  const shaped = await posProducts(items)
-  if (view === "full") return paged(shaped, total, pageInfo)
-  const rows = items.map((product, index) => {
-    const view = product
-    const hasVariants = Boolean(view.has_variants)
-    const stocks = view.stocks || []
-    const row = shaped[index]
-    return {
-      id: row.id,
-      title: row.title,
-      sku: row.sku,
-      barcode: row.barcode,
-      category: row.category,
-      image: row.image,
-      total_variants: hasVariants ? (view.variants || []).length : null,
-      price: hasVariants ? null : Number(view.selling_price),
-      stock: hasVariants ? null : Number(stocks.reduce((sum, stock) => sum + Number(stock.qty || 0), 0).toFixed(3)),
-      status: view.is_active ? "active" : "inactive",
-    }
-  })
-  return paged(rows, total, pageInfo)
+  return paged(await posProducts(items), total, pageInfo)
 }
 
 // ---- 4 / 13. Orders: ?status=completed | pending | cancelled (cancelled + voided) | refunded ----
