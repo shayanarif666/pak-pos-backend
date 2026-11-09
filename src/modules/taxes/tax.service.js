@@ -20,8 +20,8 @@ const productsInclude = {
 }
 
 /**
- * A tax as the API returns it: id = tax_number (the UUID is uuid), and the products it applies to
- * as { id (product number), uuid, title, variant { id, name } | null } ([] for product_scope all).
+ * A tax as the API returns it: id = tax_number (the UUID is uuid) and product_scope; the products it
+ * applies to are not listed (a product lists its own taxes), only product_ids ([] for product_scope all).
  */
 export function publicTax(row) {
   const json = row.toJSON ? row.toJSON() : row
@@ -45,7 +45,6 @@ export function publicTax(row) {
     value: Number(json.value),
     product_scope: json.product_scope,
     product_ids: products.map((row) => row.id),
-    products,
     is_active: Boolean(json.is_active),
     created_at: json.created_at,
     updated_at: json.updated_at,

@@ -182,6 +182,7 @@ export async function posOrders(orderIds) {
     ids
   )
   const credit = await creditRefundedByOrder(ids)
+  const refunded = await refundFiguresByOrder(ids)
   const items = orders.flatMap((order) => order.OrderItems || [])
   const refs = await new Refs().loadAll({
     user: orders.flatMap((order) => [order.cashier_id, order.cancelled_by]),
@@ -198,8 +199,60 @@ export async function posOrders(orderIds) {
   const currency = await currencyFor(orders.map((order) => order.store_id))
   const receipts = await saleReceiptNumbers(orders.map((order) => order.id))
   return orders.map((order) =>
-    orderView(order, refs, currency(order.store_id), remainingAmountOf(order, order.Payments, credit.get(order.id) || 0), receipts)
+    orderView(order, refs, currency(order.store_id), remainingAmountOf(order, order.Payments, credit.get(order.id) || 0), receipts, refunded.get(order.id))
   )
+}
+
+const money2 = (value) => Number(Number(value || 0).toFixed(2))
+
+/**
+ * What was given back on each order, from its refund rows (partial and complete): per order
+ * { count, amount (goods after discount), tax, discount_amount, total (money returned), items }
+ * and, in items, the same per order line (order_item_id) with the qty refunded.
+ */
+async function refundFiguresByOrder(orderIds) {
+  const refunds = await OrderRefund.findAll({
+    where: { order_id: { [Op.in]: orderIds } },
+    attributes: ["id", "order_id", "amount"],
+    include: [{ model: OrderRefundItem, attributes: ["order_item_id", "quantity", "subtotal", "tax_amount", "discount_amount"] }],
+  })
+  const out = new Map()
+  for (const refund of refunds) {
+    const entry = out.get(refund.order_id) || { count: 0, amount: 0, tax: 0, discount_amount: 0, total: 0, items: new Map() }
+    entry.count += 1
+    entry.total += Number(refund.amount) || 0
+    for (const line of refund.OrderRefundItems || []) {
+      const amount = Number(line.subtotal) || 0
+      const tax = Number(line.tax_amount) || 0
+      const discount = Number(line.discount_amount) || 0
+      entry.amount += amount
+      entry.tax += tax
+      entry.discount_amount += discount
+      const row = entry.items.get(line.order_item_id) || { qty: 0, amount: 0, tax: 0, discount_amount: 0 }
+      row.qty += Number(line.quantity) || 0
+      row.amount += amount
+      row.tax += tax
+      row.discount_amount += discount
+      entry.items.set(line.order_item_id, row)
+    }
+    out.set(refund.order_id, entry)
+  }
+  return out
+}
+
+/** The refund figures of one order line: is_refunded, refund_qty (in the line's unit), amount, tax, discount, total. */
+function lineRefundView(item, entry) {
+  const row = entry?.items.get(item.id)
+  const units = row?.qty || 0
+  const pack = item.sale_unit === "pack" && Number(item.pack_size) > 0
+  return {
+    is_refunded: units > 0 || Number(item.refunded_qty) > 0,
+    refund_qty: pack ? Number((units / Number(item.pack_size)).toFixed(4)) : Number(units.toFixed(4)),
+    refund_amount: money2(row?.amount),
+    refund_tax: money2(row?.tax),
+    refund_discount_amount: money2(row?.discount_amount),
+    refund_total: money2((row?.amount || 0) + (row?.tax || 0)),
+  }
 }
 
 export async function posOrder(orderId) {
@@ -251,7 +304,7 @@ function lineDiscountsOf(item) {
     }))
 }
 
-function orderItemView(item, refs) {
+function orderItemView(item, refs, refundEntry) {
   const subtotal = num(item.subtotal) ?? 0
   const taxAmount = num(item.tax_amount) ?? 0
   const packLine = item.sale_unit === "pack"
@@ -266,6 +319,7 @@ function orderItemView(item, refs) {
     taxes: lineTaxesOf(item),
     tax_amount: taxAmount,
     total: Number((subtotal + taxAmount).toFixed(2)),
+    ...lineRefundView(item, refundEntry),
   }
   // The lots the line was sold from (soonest expiry first): [{ id (lot number), qty, expiry_date }].
   const lots = (Array.isArray(item.lots) ? item.lots : typeof item.lots === "string" ? JSON.parse(item.lots || "[]") : []).map((lot) => ({ id: lot.lot_number, qty: Number(lot.qty), expiry_date: lot.expiry_date || null }))
@@ -308,7 +362,7 @@ function paymentSplitsOf(order) {
   return Array.isArray(breakdown?.payment_gst) ? breakdown.payment_gst : []
 }
 
-function orderView(order, refs, currency, remainingAmount = 0, receipts = new Map()) {
+function orderView(order, refs, currency, remainingAmount = 0, receipts = new Map(), refundEntry = null) {
   const items = [...(order.OrderItems || [])].sort((a, b) => a.item_number - b.item_number)
   const surcharge = num(order.payment_gst_amount) ?? 0
   const orderDiscount = num(order.discount_amount) ?? 0
@@ -324,7 +378,7 @@ function orderView(order, refs, currency, remainingAmount = 0, receipts = new Ma
     batch: refs.batch(order.register_session_id),
     currency,
     is_custom: Boolean(order.is_custom),
-    order_items: items.map((item) => orderItemView(item, refs)),
+    order_items: items.map((item) => orderItemView(item, refs, refundEntry)),
     gross_amount: num(order.gross_amount) ?? 0,
     // The lines' discounts together (each line's are in order_items[].discount).
     discount_amount: num(order.line_discount_amount) ?? 0,
@@ -353,6 +407,14 @@ function orderView(order, refs, currency, remainingAmount = 0, receipts = new Ma
     remaining_amount: remainingAmount,
     payment_status: order.payment_status,
     order_status: order.order_status,
+    // What was given back (every partial and complete refund added up); the refunds themselves are in refunds.
+    is_refunded: Boolean(refundEntry?.count),
+    refund_status: order.order_status === "refunded" ? "full" : refundEntry?.count ? "partial" : "none",
+    refund_count: refundEntry?.count || 0,
+    refund_amount: money2(refundEntry?.amount),
+    refund_tax: money2(refundEntry?.tax),
+    refund_discount_amount: money2(refundEntry?.discount_amount),
+    refund_total: money2(refundEntry?.total),
     fbr_invoice_enabled: Boolean(order.fbr_invoice_enabled),
     fbr_tax_amount: num(order.fbr_tax_amount),
     cancel_reason: order.cancel_reason || order.void_reason || null,
@@ -867,16 +929,6 @@ export async function posProducts(views) {
       image: row.image || null,
       // The colours it comes in (hex codes).
       colors: row.colors || [],
-      ...(row.stocks
-        ? {
-            qty: num(row.total_qty),
-            stocks: row.stocks.map((stock) => ({
-              location: { id: stock.location_number, name: stock.location_name || null },
-              qty: stock.qty,
-              expiry_date: stock.expiry_date,
-            })),
-          }
-        : {}),
       is_active: row.is_active,
     })),
     slug: view.slug,

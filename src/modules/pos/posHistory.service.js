@@ -307,9 +307,12 @@ function mergeRefundPayments(parts) {
 export async function refunds(req) {
   const scope = await scopeOf(req)
   const pageInfo = pageOf(req.query)
-  const type = queryRef(req.query, "type") || "partial"
-  if (!["complete", "partial"].includes(type)) throw new AppError("type must be complete or partial", 400)
-  const where = { store_id: scope.store_id, refund_type: type, ...atLocation(scope), ...dateRange(req.query, "created_at") }
+  // One list for every refund: partial and complete together, newest first; type = partial | complete narrows it.
+  const type = queryRef(req.query, "type")
+  if (type && !["complete", "partial", "all"].includes(type)) throw new AppError("type must be complete, partial or all", 400)
+  const where = { store_id: scope.store_id, ...atLocation(scope), ...dateRange(req.query, "created_at") }
+  if (type === "complete") where.refund_type = "complete"
+  else if (type === "partial") where.refund_type = { [Op.or]: ["partial", null] }
   const orderId = await idOf(Order, "order_number", scope.store_id, queryRef(req.query, "orderId", "order_id"), "Order")
   if (orderId) where.order_id = orderId
   // The batch the money left from, and who gave it back.
@@ -318,22 +321,22 @@ export async function refunds(req) {
   const staffId = await idOf(User, "user_number", scope.store_id, queryRef(req.query, "staffId", "staff_id"), "Staff")
   if (staffId) where.cashier_id = staffId
 
-  if (type === "partial") {
-    const { rows, count } = await OrderRefund.findAndCountAll({
-      where,
-      attributes: ["id"],
-      order: [["refund_number", "DESC"]],
-      limit: pageInfo.limit,
-      offset: pageInfo.offset,
-    })
-    return paged(await posRefunds(rows.map((row) => row.id)), count, pageInfo)
+  // A partial refund is one entry. A complete refund writes one row per order line: one entry per order, its lines added up.
+  const found = await OrderRefund.findAll({ where, attributes: ["id", "order_id", "refund_type"], order: [["refund_number", "DESC"]] })
+  const groups = []
+  const completeOf = new Map()
+  for (const row of found) {
+    if (row.refund_type !== "complete") {
+      groups.push([row.id])
+    } else if (completeOf.has(row.order_id)) {
+      completeOf.get(row.order_id).push(row.id)
+    } else {
+      const group = [row.id]
+      completeOf.set(row.order_id, group)
+      groups.push(group)
+    }
   }
-
-  // A complete refund writes one row per order line: one entry per order, its lines added up.
-  const lines = await OrderRefund.findAll({ where, attributes: ["id", "order_id"], order: [["refund_number", "DESC"]] })
-  const byOrder = new Map()
-  for (const line of lines) byOrder.set(line.order_id, [...(byOrder.get(line.order_id) || []), line.id])
-  const { items, total } = slicePage([...byOrder.values()], pageInfo)
+  const { items, total } = slicePage(groups, pageInfo)
   // Every refund row of this page in one go, then added up per order (items joined).
   const order = items.flatMap((ids) => [...ids].reverse())
   const shaped = await posRefunds(order) // same order as the ids
