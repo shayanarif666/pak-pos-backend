@@ -429,7 +429,8 @@ function publicProduct(product, extras = {}) {
       pack_cost_price: row.pack_cost_price == null ? null : Number(row.pack_cost_price),
       pack_selling_price: row.pack_selling_price == null ? null : Number(row.pack_selling_price),
       sell_loose: Boolean(row.sell_loose),
-      // What its low stock level counts: pack | unit.
+      // Its own low stock level and what it counts (pack | unit).
+      low_stock_threshold: row.low_stock_threshold == null ? null : Number(row.low_stock_threshold),
       low_stock_unit: thresholdUnit(row),
       is_weight_based: Boolean(row.is_weight_based),
       // Its own taxes (on top of the product's); taxes = everything it is charged.
@@ -821,7 +822,7 @@ async function createVariant(store, parent, variant, variantNumber) {
       sell_loose: Boolean(variant.sell_loose),
       is_weight_based: variant.is_weight_based ?? Boolean(json.is_weight_based),
       has_bulk_discount: false,
-      low_stock_threshold: json.low_stock_threshold,
+      low_stock_threshold: variant.low_stock_threshold ?? json.low_stock_threshold,
       low_stock_unit: variant.low_stock_unit ?? json.low_stock_unit ?? "unit",
       is_published: json.is_published,
       is_pos_visible: json.is_pos_visible,
@@ -1020,6 +1021,7 @@ async function saveVariants(storeId, product, variants, actor, { held, warnings,
     if (variant.image !== undefined) Object.assign(patch, { featured_image: variant.image, images: variant.image ? [{ url: variant.image }] : [] })
     if (variant.sell_loose !== undefined) patch.sell_loose = variant.sell_loose
     if (variant.low_stock_unit !== undefined) patch.low_stock_unit = variant.low_stock_unit
+    if (variant.low_stock_threshold !== undefined) patch.low_stock_threshold = variant.low_stock_threshold
     if (variant.is_weight_based !== undefined) patch.is_weight_based = variant.is_weight_based
     if (variant.colors !== undefined) patch.colors = variant.colors
     if (variant.is_pack_product === false) Object.assign(patch, { is_pack_product: false, pack_size: null, pack_cost_price: null, pack_selling_price: null })

@@ -349,6 +349,8 @@ function parseVariants(body, { patch = false } = {}) {
       sell_loose: optionalBool(row, "sell_loose"),
       // What the low stock level counts on a pack + loose variant: pack | unit. undefined = as its product.
       low_stock_unit: parseLowStockUnit(row, `${label}.low_stock_unit`),
+      // Its own low stock level (in low_stock_unit). undefined = as its product.
+      low_stock_threshold: row.low_stock_threshold === undefined || row.low_stock_threshold === null || row.low_stock_threshold === "" ? undefined : requireNumber(row, "low_stock_threshold", { label: `${label}.low_stock_threshold` }),
       // Sold by weight (kg) on the scale. Left out = as its product.
       is_weight_based: optionalBool(row, "is_weight_based"),
       // This variant's own taxes, added to the product's taxes. undefined = not sent.
