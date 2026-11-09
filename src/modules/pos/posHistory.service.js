@@ -213,9 +213,10 @@ export async function categories(req) {
 // A product with variants: price and stock are null (each variant has its own, in the detail) and
 // total_variants is how many it has; without variants: total_variants is null.
 export async function products(req) {
-  // view=list (default): the short list; view=sale: the register's catalog (prices, discounts, taxes).
+  // view=list (default): the short list; view=sale: the register's catalog (prices, discounts, taxes);
+  // view=full: every detail of the product, its variants inside, without any stock (see GET /products/stock).
   const view = String(req.query.view || "list")
-  if (view !== "list" && view !== "sale") throw new AppError("view must be list or sale", 400)
+  if (!["list", "sale", "full"].includes(view)) throw new AppError("view must be list, sale or full", 400)
   const scope = await scopeOf(req)
   const pageInfo = pageOf(req.query)
   const query = { ...req.query }
@@ -228,6 +229,7 @@ export async function products(req) {
   const { items, total } = slicePage(listed, pageInfo)
   if (view === "sale") return paged(await posSaleProducts(items, await currencyOf(scope.store_id)), total, pageInfo)
   const shaped = await posProducts(items)
+  if (view === "full") return paged(shaped, total, pageInfo)
   const rows = items.map((product, index) => {
     const view = product
     const hasVariants = Boolean(view.has_variants)

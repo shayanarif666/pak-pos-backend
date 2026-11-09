@@ -213,13 +213,18 @@ const money2 = (value) => Number(Number(value || 0).toFixed(2))
 async function refundFiguresByOrder(orderIds) {
   const refunds = await OrderRefund.findAll({
     where: { order_id: { [Op.in]: orderIds } },
-    attributes: ["id", "order_id", "amount"],
+    attributes: ["id", "order_id", "amount", "refund_type"],
     include: [{ model: OrderRefundItem, attributes: ["order_item_id", "quantity", "subtotal", "tax_amount", "discount_amount"] }],
   })
   const out = new Map()
   for (const refund of refunds) {
-    const entry = out.get(refund.order_id) || { count: 0, amount: 0, tax: 0, discount_amount: 0, total: 0, items: new Map() }
-    entry.count += 1
+    const entry = out.get(refund.order_id) || { count: 0, complete: false, amount: 0, tax: 0, discount_amount: 0, total: 0, items: new Map() }
+    // A complete refund is one refund (it writes a row per order line).
+    if (refund.refund_type !== "complete") entry.count += 1
+    else if (!entry.complete) {
+      entry.complete = true
+      entry.count += 1
+    }
     entry.total += Number(refund.amount) || 0
     for (const line of refund.OrderRefundItems || []) {
       const amount = Number(line.subtotal) || 0
