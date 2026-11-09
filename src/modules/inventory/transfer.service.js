@@ -344,7 +344,7 @@ export async function receiveTransfer(storeId, id, actor, { to_location_id, prod
       for (const lot of left) {
         if (toArrive <= 0) break
         const part = Math.min(lot.qty, toArrive)
-        parts.push({ qty: part, expiry_date: lot.expiry_date })
+        parts.push({ qty: part, expiry_date: lot.expiry_date, supplier_id: lot.supplier_id || null })
         toArrive = Number((toArrive - part).toFixed(4))
       }
       if (toArrive > 0) parts.push({ qty: toArrive, expiry_date: undefined })
@@ -361,6 +361,8 @@ export async function receiveTransfer(storeId, id, actor, { to_location_id, prod
             reason_note: movementNote,
             staff_id: actor.id,
             ...(part.expiry_date !== undefined ? { expiry_date: part.expiry_date } : {}),
+            // It arrives as a lot of the same supplier.
+            lot_supplier_id: part.supplier_id || null,
           },
           { transaction }
         )

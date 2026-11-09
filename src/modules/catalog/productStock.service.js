@@ -98,6 +98,8 @@ export async function applyStockDelta(
     lot_id,
     return_lots,
     received_at,
+    // A transfer in: the supplier the lot came from (the movement itself names none).
+    lot_supplier_id,
   },
   { transaction }
 ) {
@@ -137,6 +139,7 @@ export async function applyStockDelta(
         returnTo: return_lots,
         source: lotSource(movement_type, reason),
         receivedAt: received_at,
+        supplierId: signedDelta > 0 ? lot_supplier_id ?? supplier_id ?? null : undefined,
       },
       transaction
     )

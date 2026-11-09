@@ -4,6 +4,7 @@ import { Product } from "./product.model.js"
 import { ProductStock } from "./productStock.model.js"
 import { lotsByStock } from "./stockLots.service.js"
 import { Location } from "../locations/location.model.js"
+import { Supplier } from "../inventory/supplier.model.js"
 import { AppError } from "../../shared/errors/AppError.js"
 
 /*
@@ -91,6 +92,13 @@ export async function listStockRows(scope, query = {}) {
   const locations = new Map(
     (await Location.findAll({ where: { id: { [Op.in]: [...new Set(stocks.map((row) => row.location_id))] } }, attributes: ["id", "location_id_int", "name"] })).map((row) => [row.id, row])
   )
+  // The supplier a lot came from { id (supplier number), name } (a deleted supplier keeps its name); null = none.
+  const supplierIds = [...new Set([...lotMap.values()].flat().map((lot) => lot.supplier_id).filter(Boolean))]
+  const suppliers = new Map(
+    supplierIds.length
+      ? (await Supplier.findAll({ where: { id: { [Op.in]: supplierIds } }, attributes: ["id", "supplier_number", "name"] })).map((row) => [row.id, { id: row.supplier_number, name: row.name }])
+      : []
+  )
   const now = new Date()
 
   let rows = stocks.map((stock) => {
@@ -100,6 +108,7 @@ export async function listStockRows(scope, query = {}) {
     const lots = (lotMap.get(`${stock.location_id}|${stock.product_id}`) || []).map((lot) => ({
       id: lot.lot_number,
       received_at: lot.received_at,
+      supplier: suppliers.get(lot.supplier_id) || null,
       qty: round4(lot.qty),
       expiry_date: lot.expiry_date || null,
       days_to_expiry: daysToExpiry(lot.expiry_date, now),

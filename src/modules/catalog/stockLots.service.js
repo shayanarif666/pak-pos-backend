@@ -8,7 +8,9 @@ import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 /*
  * Stock lots — a product's stock at a location in parts, each with its own expiry date.
  *   stock in  → a lot: the one sent (lot_id), else the one with the same expiry date, else a new one
- *               (no expiry date given: the latest lot, else a new lot without expiry)
+ *               (no expiry date given: the latest lot, else a new lot without expiry).
+ *               A lot is its expiry date and its supplier: a stock in from another supplier (or from
+ *               none) opens a lot of its own, even with the same expiry date.
  *   stock out → from the lot sent, else the lot that expires first (FEFO: by expiry date, lots
  *               without one last, then the oldest)
  *   refund    → back into the lots the sale took from
@@ -67,7 +69,7 @@ export async function findLot(storeId, ref, { locationId, productId, transaction
   return lot
 }
 
-async function newLot({ storeId, storeIdInt, location, productId, qty, expiry, source, receivedAt }, transaction) {
+async function newLot({ storeId, storeIdInt, location, productId, qty, expiry, source, receivedAt, supplierId }, transaction) {
   return StockLot.create(
     {
       store_id: storeId,
@@ -79,6 +81,7 @@ async function newLot({ storeId, storeIdInt, location, productId, qty, expiry, s
       qty: round4(qty),
       expiry_date: expiry || null,
       received_at: receivedAt || new Date(),
+      supplier_id: supplierId || null,
       source,
     },
     { transaction }
@@ -88,7 +91,7 @@ async function newLot({ storeId, storeIdInt, location, productId, qty, expiry, s
 /** A date (Date or string) as YYYY-MM-DD; null stays null, undefined stays undefined. */
 const day = (value) => (value === undefined ? undefined : value == null || value === "" ? null : value instanceof Date ? value.toISOString().slice(0, 10) : String(value).slice(0, 10))
 
-const take = (lot, qty) => ({ lot_id: lot.id, lot_number: lot.lot_number, qty: round4(qty), expiry_date: lot.expiry_date || null })
+const take = (lot, qty) => ({ lot_id: lot.id, lot_number: lot.lot_number, qty: round4(qty), expiry_date: lot.expiry_date || null, supplier_id: lot.supplier_id || null })
 
 /**
  * Moves `delta` units in the lots of a product at a location; returns the lots moved
@@ -96,15 +99,21 @@ const take = (lot, qty) => ({ lot_id: lot.id, lot_number: lot.lot_number, qty: r
  *   lotRef      a lot to use (number or UUID)
  *   expiry      undefined = not given; null / "YYYY-MM-DD" = the lot of that expiry (stock in)
  *   returnTo    refund: [{ lot_id, qty }] the sale took — put back there first
+ *   supplierId  stock in: the supplier it came from (null = none); with an expiry date it joins the lot of
+ *               that expiry AND that supplier, else opens one
  */
 export async function moveLots(
-  { storeId, storeIdInt, location, productId, delta, lotRef, expiry, returnTo, source, receivedAt },
+  { storeId, storeIdInt, location, productId, delta, lotRef, expiry, returnTo, source, receivedAt, supplierId },
   transaction
 ) {
   const amount = round4(delta)
   expiry = day(expiry)
   const moved = []
-  const ctx = { storeId, storeIdInt, location, productId, source, receivedAt }
+  const ctx = { storeId, storeIdInt, location, productId, source, receivedAt, supplierId }
+  // A lot is its expiry date and its supplier. Without an expiry date (a count, a correction) the latest
+  // lot is used, of the supplier when one is given.
+  const lotSupplier = { supplier_id: supplierId || null }
+  const supplierWhere = supplierId ? { supplier_id: supplierId } : {}
 
   if (amount > 0) {
     let left = amount
@@ -127,7 +136,7 @@ export async function moveLots(
       if (lotRef) lot = await findLot(storeId, lotRef, { locationId: location.id, productId, transaction })
       else if (expiry !== undefined) {
         lot = await StockLot.findOne({
-          where: { location_id: location.id, product_id: productId, deleted_at: null, expiry_date: expiry || null },
+          where: { location_id: location.id, product_id: productId, deleted_at: null, expiry_date: expiry || null, ...lotSupplier },
           order: [["received_at", "DESC"]],
           transaction,
           lock: transaction.LOCK.UPDATE,
@@ -135,7 +144,7 @@ export async function moveLots(
       } else {
         // No expiry given: the latest lot (a count, a correction), else a new lot without one.
         lot = await StockLot.findOne({
-          where: { location_id: location.id, product_id: productId, deleted_at: null },
+          where: { location_id: location.id, product_id: productId, deleted_at: null, ...supplierWhere },
           order: [["received_at", "DESC"], ["lot_number", "DESC"]],
           transaction,
           lock: transaction.LOCK.UPDATE,

@@ -20,6 +20,8 @@ export const StockLot = sequelize.define(
     expiry_date: { type: DataTypes.DATEONLY, allowNull: true },
     // When it came in (FEFO breaks ties by it).
     received_at: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
+    // The supplier it came from; null = none (opening stock, an adjustment…). Another supplier = another lot.
+    supplier_id: uuidCol(true),
     // opening | purchase | stock_in | transfer | refund | adjustment
     source: { type: DataTypes.STRING(32), allowNull: false, defaultValue: "stock_in" },
     // Soft delete from Product Stock & Expiry (its qty is 0 by then).
