@@ -902,17 +902,13 @@ export async function posCategory(view) {
 
 /** From publicProduct(): every field, with the short numbers and the category's name. */
 export async function posProducts(views) {
-  const refs = await new Refs().loadAll({
-    category: views.map((view) => view.category_id),
-    product: views.map((view) => view.parent_product_id),
-  })
+  const refs = await new Refs().loadAll({ category: views.map((view) => view.category_id) })
   return views.map((view) => ({
     id: view.product_number,
     title: view.title,
-    // Variants: a parent (has_variants) lists them; a variant names its parent and its own name.
+    // Variants: a product with variants lists them (total_variants = how many); null without.
     has_variants: Boolean(view.has_variants),
-    parent: view.parent_product_id ? refs.product(view.parent_product_id) : null,
-    variant_name: view.variant_name || null,
+    total_variants: view.has_variants ? (view.variants || []).length : null,
     // id = the variant's number inside this product (1, 2, 3…), sent as variant_id with the product's id.
     variants: (view.variants || []).map((row) => ({
       id: row.variant_number,
@@ -928,8 +924,6 @@ export async function posProducts(views) {
       sell_loose: Boolean(row.sell_loose),
       is_weight_based: Boolean(row.is_weight_based),
       taxes: row.taxes || [],
-      // Taxes page taxes that apply to this variant: [{ id (tax number), name, type, value }].
-      store_taxes: row.store_taxes || [],
       // Its own image; null = use the product's image.
       image: row.image || null,
       // The colours it comes in (hex codes).
@@ -952,7 +946,7 @@ export async function posProducts(views) {
     discount_value: num(view.discount_value),
     discount_name: view.discount_name || null,
     // What the product discount is taken off: all | pack | loose | weight.
-    discount_applies_to: view.discount_applies_to || "all",
+    discount_applies_to: view.has_product_discount ? view.discount_applies_to || "all" : null,
     has_product_tax: (view.taxes || []).length > 0,
     taxes: view.taxes || [],
     // Taxes page taxes that apply to this product: [{ id (tax number), name, type, value }].
@@ -965,7 +959,8 @@ export async function posProducts(views) {
     is_weight_based: Boolean(view.is_weight_based),
     has_bulk_discount: Boolean(view.has_bulk_discount),
     low_stock_threshold: num(view.low_stock_threshold),
-    low_stock_unit: thresholdUnit(view),
+    // What the low stock level counts (pack | unit); null with variants (each variant's is in GET /products/stock).
+    low_stock_unit: view.has_variants ? null : thresholdUnit(view),
     total_price_each_unit: num(view.total_price_each_unit),
     total_pack_price: num(view.total_pack_price),
     ...posLocationScope(view),
