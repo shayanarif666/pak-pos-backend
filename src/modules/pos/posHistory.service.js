@@ -207,7 +207,10 @@ export async function categories(req) {
   return paged(await posCategories(items), total, pageInfo)
 }
 
-// ---- 3. Products (with the stock at the location read) ----
+// ---- 3. Products: a lean list (the detail, GET /products/:id, has everything else) ----
+// { id (product number), title, sku, barcode, category, image, total_variants, price, stock, status }.
+// A product with variants: price and stock are null (each variant has its own, in the detail) and
+// total_variants is how many it has; without variants: total_variants is null.
 export async function products(req) {
   const scope = await scopeOf(req)
   const pageInfo = pageOf(req.query)
@@ -216,19 +219,25 @@ export async function products(req) {
   if (categoryRef) query.category_id = await idOf(Category, "category_number", scope.store_id, categoryRef, "Category")
   delete query.categoryId
   query.location_id = scope.location_id
-  const listed = (await listProducts(scope, query)).filter(inWindow(req.query, (row) => row.created_at))
+  // A variant is counted inside its product (its own price and stock are in the product detail).
+  const listed = (await listProducts(scope, query, { parentsOnly: true })).filter(inWindow(req.query, (row) => row.created_at))
   const { items, total } = slicePage(listed, pageInfo)
   const shaped = await posProducts(items)
   const rows = items.map((view, index) => {
+    const hasVariants = Boolean(view.has_variants)
     const stocks = view.stocks || []
+    const row = shaped[index]
     return {
-      ...shaped[index],
-      qty: Number(stocks.reduce((sum, row) => sum + Number(row.qty || 0), 0).toFixed(3)),
-      stocks: stocks.map((row) => ({
-        location: { id: row.location_number, name: row.location_name || null },
-        qty: row.qty,
-        expiry_date: row.expiry_date,
-      })),
+      id: row.id,
+      title: row.title,
+      sku: row.sku,
+      barcode: row.barcode,
+      category: row.category,
+      image: row.image,
+      total_variants: hasVariants ? (view.variants || []).length : null,
+      price: hasVariants ? null : Number(view.selling_price),
+      stock: hasVariants ? null : Number(stocks.reduce((sum, stock) => sum + Number(stock.qty || 0), 0).toFixed(3)),
+      status: view.is_active ? "active" : "inactive",
     }
   })
   return paged(rows, total, pageInfo)
