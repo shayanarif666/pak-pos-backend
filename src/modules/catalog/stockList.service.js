@@ -9,9 +9,11 @@ import { Supplier } from "../inventory/supplier.model.js"
 import { AppError } from "../../shared/errors/AppError.js"
 
 /*
- * GET /products/stock: the stock of every product (or variant) at every location, with its lots.
- * One row = a product / variant at a location; its lots (the stock that came in together, each with
- * its own expiry date) are inside it, soonest expiry first. Thresholds are fixed:
+ * GET /products/stock: the stock of every product at every location, with its lots.
+ * One row = a product at a location, shown once: a product with variants lists every variant inside
+ * it, each with its stock; a product without variants carries its stock itself. A stock's lots (the
+ * stock that came in together, each with its own expiry date) are inside it, soonest expiry first.
+ * Thresholds are fixed:
  *   expiry_status of a lot: expired (past) | critical (0-7 days left) | warning (8-30) | ok | none (no expiry date)
  *   stock_status of a row:  out (0) | critical (half of low_stock_threshold or less) | warning (up to the threshold) | ok
  */
@@ -119,50 +121,68 @@ export async function listStockRows(scope, query = {}) {
     const threshold = stock.low_stock_threshold ?? product.low_stock_threshold
     const dates = lots.map((lot) => lot.expiry_date).filter(Boolean).sort()
     return {
+      key: `${parent ? parent.id : product.id}|${stock.location_id}`,
       product: {
         id: parent ? parent.product_number : product.product_number,
         title: parent ? parent.title : product.title,
         unit: product.unit,
         sku: parent ? parent.sku : product.sku,
         barcode: parent ? parent.barcode : product.barcode,
-        variant: parent ? { id: product.variant_number, name: product.variant_name, sku: product.sku, barcode: product.barcode } : null,
       },
+      variant: parent ? { id: product.variant_number, name: product.variant_name, sku: product.sku, barcode: product.barcode } : null,
       location: { id: location?.location_id_int ?? stock.location_id_int, name: location?.name || null },
-      qty,
-      qty_packs: product.is_pack_product ? packsOf(qty, product.pack_size) : null,
-      // In packs for a pack-only product, else in units (piece / gram / kg): see low_stock_unit.
-      low_stock_threshold: threshold == null ? null : round4(threshold),
-      low_stock_unit: thresholdUnit(product),
-      stock_status: stockStatus(qtyForThreshold(qty, product), threshold),
-      nearest_expiry_date: dates[0] || null,
-      lots,
+      stock: {
+        qty,
+        qty_packs: product.is_pack_product ? packsOf(qty, product.pack_size) : null,
+        pack_size: product.is_pack_product && Number(product.pack_size) >= 2 ? Number(product.pack_size) : null,
+        // In packs for a pack-only product, else in units (piece / gram / kg): see low_stock_unit.
+        low_stock_threshold: threshold == null ? null : round4(threshold),
+        low_stock_unit: thresholdUnit(product),
+        stock_status: stockStatus(qtyForThreshold(qty, product), threshold),
+        nearest_expiry_date: dates[0] || null,
+        lots,
+      },
     }
   })
 
-  if (search) {
-    rows = rows.filter((row) =>
-      [row.product.title, row.product.sku, row.product.barcode, row.product.variant?.name, row.product.variant?.sku, row.product.variant?.barcode]
-        .filter(Boolean)
-        .some((text) => String(text).toLowerCase().includes(search))
-    )
+  // A filter picks the products (at a location) with any variant that matches; all its variants are still listed.
+  const matches = (row) => {
+    if (search) {
+      const texts = [row.product.title, row.product.sku, row.product.barcode, row.variant?.name, row.variant?.sku, row.variant?.barcode]
+      if (!texts.filter(Boolean).some((text) => String(text).toLowerCase().includes(search))) return false
+    }
+    if (stockFilter && row.stock.stock_status !== stockFilter) return false
+    if (expiryFilter && !row.stock.lots.some((lot) => lot.expiry_status === expiryFilter)) return false
+    return true
   }
-  if (stockFilter) rows = rows.filter((row) => row.stock_status === stockFilter)
-  if (expiryFilter) rows = rows.filter((row) => row.lots.some((lot) => lot.expiry_status === expiryFilter))
+  const wanted = new Set(rows.filter(matches).map((row) => row.key))
 
-  // The row with the soonest expiry first, then the ones without an expiry date; then product, variant, location.
-  rows.sort((a, b) => {
-    const left = a.nearest_expiry_date
-    const right = b.nearest_expiry_date
-    if (left !== right) {
-      if (!left) return 1
-      if (!right) return -1
-      return left < right ? -1 : 1
+  // One entry per product at a location: its variants (listed by variant number).
+  const groups = new Map()
+  for (const row of rows) {
+    if (!wanted.has(row.key)) continue
+    const group = groups.get(row.key) || { product: row.product, location: row.location, own: null, variants: [] }
+    if (row.variant) group.variants.push({ ...row.variant, stock: row.stock })
+    else group.own = row.stock
+    groups.set(row.key, group)
+  }
+  const list = [...groups.values()].map((group) => {
+    group.variants.sort((a, b) => a.id - b.id)
+    const dates = [group.own, ...group.variants.map((variant) => variant.stock)].map((stock) => stock?.nearest_expiry_date).filter(Boolean).sort()
+    return {
+      nearest: dates[0] || null,
+      row: { product: { ...group.product, stock: group.own, variants: group.variants }, location: group.location },
     }
-    return (
-      a.product.id - b.product.id ||
-      (a.product.variant?.id ?? 0) - (b.product.variant?.id ?? 0) ||
-      a.location.id - b.location.id
-    )
   })
-  return { rows, total: rows.length }
+
+  // The product with the soonest expiry (any of its variants) first, then the ones without an expiry date; then product, location.
+  list.sort((a, b) => {
+    if (a.nearest !== b.nearest) {
+      if (!a.nearest) return 1
+      if (!b.nearest) return -1
+      return a.nearest < b.nearest ? -1 : 1
+    }
+    return a.row.product.id - b.row.product.id || a.row.location.id - b.row.location.id
+  })
+  return { rows: list.map((item) => item.row), total: list.length }
 }
