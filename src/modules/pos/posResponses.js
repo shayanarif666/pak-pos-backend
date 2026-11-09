@@ -653,15 +653,16 @@ export async function posStockMovements(movements) {
     ...refs.productAndVariant(movement.product_id),
     supplier: refs.supplier(movement.supplier_id),
     staff: refs.staff(movement.staff_id),
-    order: refs.order(movement.order_id),
+    // The order a sale / refund belongs to: only its number (its status changes, a movement does not).
+    order: movement.order_id && refs.number("order", movement.order_id) != null ? { id: refs.number("order", movement.order_id) } : null,
     movement_type: movement.movement_type,
     reason: movement.reason,
     reason_note: movement.reason_note || null,
     qty: num(movement.qty),
     qty_after: num(movement.qty_after),
-    // The lot(s) it moved: [{ id (lot number), qty, expiry_date }].
+    // The lot(s) it moved, always an array: [{ id (lot number), qty (signed), expiry_date }]. A stock in
+    // fills one lot; a sale, refund or transfer can touch several. The qty of the lots add up to the movement's qty.
     lots: (Array.isArray(movement.lots) ? movement.lots : typeof movement.lots === "string" ? JSON.parse(movement.lots || "[]") : []).map((lot) => ({ id: lot.lot_number, qty: Number(lot.qty), expiry_date: lot.expiry_date || null })),
-    unit_sold: num(movement.unit_sold) ?? 0,
     created_at: movement.created_at,
   }))
 }
