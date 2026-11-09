@@ -9,11 +9,11 @@ import { Supplier } from "../inventory/supplier.model.js"
 import { AppError } from "../../shared/errors/AppError.js"
 
 /*
- * GET /products/stock: the stock of every product at every location, with its lots.
- * One row = a product at a location, shown once: a product with variants lists every variant inside
- * it, each with its stock; a product without variants carries its stock itself. A stock's lots (the
- * stock that came in together, each with its own expiry date) are inside it, soonest expiry first.
- * Thresholds are fixed:
+ * GET /products/stock: the stock of every product, with its lots. One entry = one product, shown once:
+ * a product with variants lists every variant, each with its stock; a product without variants
+ * carries its stock itself. A stock is an array, one item per location (location, qty, status, lots);
+ * a stock's lots (the stock that came in together, each with its own expiry date) are inside it,
+ * soonest expiry first. Thresholds are fixed:
  *   expiry_status of a lot: expired (past) | critical (0-7 days left) | warning (8-30) | ok | none (no expiry date)
  *   stock_status of a row:  out (0) | critical (half of low_stock_threshold or less) | warning (up to the threshold) | ok
  */
@@ -121,7 +121,7 @@ export async function listStockRows(scope, query = {}) {
     const threshold = stock.low_stock_threshold ?? product.low_stock_threshold
     const dates = lots.map((lot) => lot.expiry_date).filter(Boolean).sort()
     return {
-      key: `${parent ? parent.id : product.id}|${stock.location_id}`,
+      key: parent ? parent.id : product.id,
       product: {
         id: parent ? parent.product_number : product.product_number,
         title: parent ? parent.title : product.title,
@@ -130,8 +130,8 @@ export async function listStockRows(scope, query = {}) {
         barcode: parent ? parent.barcode : product.barcode,
       },
       variant: parent ? { id: product.variant_number, name: product.variant_name, sku: product.sku, barcode: product.barcode } : null,
-      location: { id: location?.location_id_int ?? stock.location_id_int, name: location?.name || null },
       stock: {
+        location: { id: location?.location_id_int ?? stock.location_id_int, name: location?.name || null },
         qty,
         qty_packs: product.is_pack_product ? packsOf(qty, product.pack_size) : null,
         pack_size: product.is_pack_product && Number(product.pack_size) >= 2 ? Number(product.pack_size) : null,
@@ -145,7 +145,7 @@ export async function listStockRows(scope, query = {}) {
     }
   })
 
-  // A filter picks the products (at a location) with any variant that matches; all its variants are still listed.
+  // A filter picks the products with any stock that matches; all its variants and locations are still listed.
   const matches = (row) => {
     if (search) {
       const texts = [row.product.title, row.product.sku, row.product.barcode, row.variant?.name, row.variant?.sku, row.variant?.barcode]
@@ -157,32 +157,40 @@ export async function listStockRows(scope, query = {}) {
   }
   const wanted = new Set(rows.filter(matches).map((row) => row.key))
 
-  // One entry per product at a location: its variants (listed by variant number).
+  // One entry per product: its stock per location, or its variants each with their stock per location.
   const groups = new Map()
   for (const row of rows) {
     if (!wanted.has(row.key)) continue
-    const group = groups.get(row.key) || { product: row.product, location: row.location, own: null, variants: [] }
-    if (row.variant) group.variants.push({ ...row.variant, stock: row.stock })
-    else group.own = row.stock
+    const group = groups.get(row.key) || { product: row.product, own: [], variants: new Map() }
+    if (row.variant) {
+      const variant = group.variants.get(row.variant.id) || { ...row.variant, stock: [] }
+      variant.stock.push(row.stock)
+      group.variants.set(row.variant.id, variant)
+    } else {
+      group.own.push(row.stock)
+    }
     groups.set(row.key, group)
   }
+  const byLocation = (a, b) => a.location.id - b.location.id
   const list = [...groups.values()].map((group) => {
-    group.variants.sort((a, b) => a.id - b.id)
-    const dates = [group.own, ...group.variants.map((variant) => variant.stock)].map((stock) => stock?.nearest_expiry_date).filter(Boolean).sort()
+    const variants = [...group.variants.values()].sort((a, b) => a.id - b.id)
+    for (const variant of variants) variant.stock.sort(byLocation)
+    group.own.sort(byLocation)
+    const dates = [...group.own, ...variants.flatMap((variant) => variant.stock)].map((stock) => stock.nearest_expiry_date).filter(Boolean).sort()
     return {
       nearest: dates[0] || null,
-      row: { product: { ...group.product, stock: group.own, variants: group.variants }, location: group.location },
+      row: { product: { ...group.product, stock: variants.length ? null : group.own, variants } },
     }
   })
 
-  // The product with the soonest expiry (any of its variants) first, then the ones without an expiry date; then product, location.
+  // The product with the soonest expiry (any stock of it) first, then the ones without an expiry date; then product.
   list.sort((a, b) => {
     if (a.nearest !== b.nearest) {
       if (!a.nearest) return 1
       if (!b.nearest) return -1
       return a.nearest < b.nearest ? -1 : 1
     }
-    return a.row.product.id - b.row.product.id || a.row.location.id - b.row.location.id
+    return a.row.product.id - b.row.product.id
   })
   return { rows: list.map((item) => item.row), total: list.length }
 }
