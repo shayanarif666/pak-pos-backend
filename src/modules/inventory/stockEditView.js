@@ -8,6 +8,7 @@ import { StockMovement } from "./stockMovement.model.js"
 import { StockLot } from "../catalog/stockLot.model.js"
 import { Store } from "../stores/store.model.js"
 import { lotsByStock, publicLot } from "../catalog/stockLots.service.js"
+import { isLowStock, thresholdUnit } from "../catalog/stockThreshold.js"
 
 /*
  * Replies of the stock edit APIs (PATCH /stock-movements/bulk, PATCH /product-stocks/bulk and the
@@ -120,7 +121,8 @@ export async function stockEditRows(pairs) {
       expiry_date: row.expiry_date || null,
       lots: (lotsOf.get(`${row.location_id}|${row.product_id}`) || []).map((lot) => publicLot(lot, storeRow)),
       low_stock_threshold: threshold,
-      is_low: threshold == null ? false : qty <= threshold,
+      threshold_unit: thresholdUnit(item),
+      is_low: isLowStock(qty, threshold, item),
       updated_at: row.updated_at,
       ...(row.deleted_at ? { deleted_at: row.deleted_at } : {}),
     }

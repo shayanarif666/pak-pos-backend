@@ -3,6 +3,7 @@ import { Category } from "./category.model.js"
 import { Product } from "./product.model.js"
 import { ProductStock } from "./productStock.model.js"
 import { lotsByStock } from "./stockLots.service.js"
+import { qtyForThreshold, thresholdUnit } from "./stockThreshold.js"
 import { Location } from "../locations/location.model.js"
 import { Supplier } from "../inventory/supplier.model.js"
 import { AppError } from "../../shared/errors/AppError.js"
@@ -129,8 +130,10 @@ export async function listStockRows(scope, query = {}) {
       location: { id: location?.location_id_int ?? stock.location_id_int, name: location?.name || null },
       qty,
       qty_packs: product.is_pack_product ? packsOf(qty, product.pack_size) : null,
+      // In packs for a pack-only product, else in units (piece / gram / kg): see threshold_unit.
       low_stock_threshold: threshold == null ? null : round4(threshold),
-      stock_status: stockStatus(qty, threshold),
+      threshold_unit: thresholdUnit(product),
+      stock_status: stockStatus(qtyForThreshold(qty, product), threshold),
       nearest_expiry_date: dates[0] || null,
       lots,
     }

@@ -1,5 +1,6 @@
 import { Op, UniqueConstraintError } from "sequelize"
 import { discountAppliesTo } from "./discountAppliesTo.js"
+import { isLowStock, thresholdUnit } from "./stockThreshold.js"
 import { lotsByStock, publicLot } from "./stockLots.service.js"
 import { StockLot } from "./stockLot.model.js"
 import { sequelize } from "../../db/sequelize.js"
@@ -372,7 +373,9 @@ function publicStock(row, product) {
     unit_sold: Number(row.unit_sold || 0),
     low_stock_threshold: row.low_stock_threshold,
     effective_threshold: threshold == null ? null : Number(threshold),
-    is_low: threshold == null ? false : qty <= Number(threshold),
+    // The threshold is in packs for a pack-only product, else in units (see stockThreshold.js).
+    threshold_unit: thresholdUnit(product),
+    is_low: isLowStock(qty, threshold, product),
     number_of_packs: numberOfPacks(qty, product?.pack_size),
     // Its lots, soonest expiry first: [{ id (lot number), qty, expiry_date, days_left, expiry_status, received_at, source }].
     ...(row._lots ? { lots: row._lots.map((lot) => publicLot(lot)) } : {}),
@@ -467,6 +470,8 @@ function publicProduct(product, extras = {}) {
       json.total_price_each_unit == null ? null : Number(json.total_price_each_unit),
     total_pack_price: json.total_pack_price == null ? null : Number(json.total_pack_price),
     low_stock_threshold: json.low_stock_threshold,
+    // What the threshold counts: pack (a pack-only product) or unit.
+    threshold_unit: thresholdUnit(json),
     // "all" = every location; "selected" = only location_ids.
     ...locationScopeView(json, json.productLocations),
     // Which of those locations hold its stock: all, or selected = stock_location_ids.

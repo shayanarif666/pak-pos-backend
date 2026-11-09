@@ -21,6 +21,7 @@ import { loadLocation } from "../catalog/productStock.service.js"
 import { money } from "../commerce/pricing.service.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { PAYMENT_METHOD, PAYMENT_METHOD_LABEL } from "../../db/enums.js"
+import { isLowStock } from "../catalog/stockThreshold.js"
 import {
   addMoney,
   applyDateRange,
@@ -834,7 +835,7 @@ async function inventoryReport(actor, query, scope, extra = {}) {
     include: [
       {
         model: Product,
-        attributes: ["id", "title", "sku", "unit", "is_pack_product", "is_weight_based", "low_stock_threshold"],
+        attributes: ["id", "title", "sku", "unit", "is_pack_product", "pack_size", "sell_loose", "is_weight_based", "low_stock_threshold"],
         include: [{ model: Category, attributes: ["id", "name"] }],
       },
       { model: Location, attributes: ["id", "name", "location_id_int"] },
@@ -884,7 +885,7 @@ async function inventoryReport(actor, query, scope, extra = {}) {
         stock_out: delta.out,
         current_stock: qty,
         // out = nothing left; low = at or under its low-stock alert; ok = above it.
-        stock_status: qty <= 0 ? "out" : threshold != null && qty <= Number(threshold) ? "low" : "ok",
+        stock_status: qty <= 0 ? "out" : isLowStock(qty, threshold, product) ? "low" : "ok",
         // The soonest expiry of the stock: expired | critical | warning | ok, or none (no expiry date).
         expiry_date: json.expiry_date || null,
         expiry_status: json.expiry_date ? expiryStatus(json.expiry_date, store.expiry_warning_days, store.expiry_critical_days) : "none",

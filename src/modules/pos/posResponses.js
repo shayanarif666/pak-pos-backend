@@ -8,6 +8,7 @@
  * look ids up one by one. The lookups are batched: a list loads every referenced row of a table
  * with one IN (...) query (see Refs), never one query per row.
  */
+import { thresholdUnit } from "../catalog/stockThreshold.js"
 import { Op } from "sequelize"
 import { Order } from "../orders/order.model.js"
 import { OrderItem } from "../orders/orderItem.model.js"
@@ -907,6 +908,7 @@ export async function posProducts(views) {
     is_weight_based: Boolean(view.is_weight_based),
     has_bulk_discount: Boolean(view.has_bulk_discount),
     low_stock_threshold: num(view.low_stock_threshold),
+    threshold_unit: thresholdUnit(view),
     total_price_each_unit: num(view.total_price_each_unit),
     total_pack_price: num(view.total_pack_price),
     ...posLocationScope(view),
