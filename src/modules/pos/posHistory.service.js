@@ -20,9 +20,9 @@ import { StockTransfer } from "../inventory/stockTransfer.model.js"
 import { RegisterSession } from "./registerSession.model.js"
 import { StaffSession } from "./staffSession.model.js"
 import { listCategories } from "../catalog/category.service.js"
-import { expiryStatus, listProducts, listWeightProducts } from "../catalog/product.service.js"
+import { expiryStatus, listProducts } from "../catalog/product.service.js"
 import { Store } from "../stores/store.model.js"
-import { posSaleProducts } from "./saleCatalog.js"
+import { categoryOf, figures, posSaleProducts } from "./saleCatalog.js"
 import { listOffers } from "../offers/offer.service.js"
 import { listSuppliers } from "../inventory/supplier.service.js"
 import { loadLocation } from "../catalog/productStock.service.js"
@@ -633,9 +633,57 @@ export async function expiryList(req) {
 export async function weightList(req) {
   const scope = await scopeOf(req)
   const pageInfo = pageOf(req.query)
-  const listed = (await listWeightProducts(scope.store_id)).filter(inWindow(req.query, (row) => row.created_at))
-  const { items, total } = slicePage(listed, pageInfo)
-  return paged(await posProducts(items), total, pageInfo)
+  // The Weight Based Products tab as a short list: one row per product (or variant) sold by weight. A
+  // product with variants is not a row itself, its weight variants are. Prices are per ONE unit (kg /
+  // gram); stock is at the location read; price_with_tax is what one unit is charged: the price after
+  // the product and category discounts, plus every tax (the product's, the Taxes page's, the category's).
+  const products = (await listProducts(scope, { location_id: scope.location_id }, { parentsOnly: true })).filter(inWindow(req.query, (row) => row.created_at))
+  const refs = await new Refs().loadAll({ category: products.map((view) => view.category_id) })
+  const flat = []
+  for (const view of products) {
+    const category = categoryOf(view, refs)
+    const categoryRef = refs.category(view.category_id)
+    if (view.has_variants) {
+      for (const row of view.variants || []) {
+        if (row.is_weight_based) flat.push({ product: view, row, variant: true, category, categoryRef })
+      }
+    } else if (view.is_weight_based) {
+      flat.push({ product: view, row: view, variant: false, category, categoryRef })
+    }
+  }
+  flat.sort((a, b) => a.product.title.localeCompare(b.product.title) || (a.row.variant_number ?? 0) - (b.row.variant_number ?? 0))
+  const { items, total } = slicePage(flat, pageInfo)
+  const rows = items.map(({ product, row, variant, category, categoryRef }) => {
+    const stock = Number(Number(row.total_qty || 0).toFixed(3))
+    const pack = Boolean(row.is_pack_product) && Number(row.pack_size) >= 2
+    const unit = figures(row, {
+      discountRule: variant || !(product.has_product_discount && product.discount_type && product.discount_value != null)
+        ? {}
+        : { has_product_discount: true, discount_type: product.discount_type, discount_value: product.discount_value, discount_applies_to: product.discount_applies_to || "all", is_weight_based: true },
+      category,
+      isWeightBased: true,
+    })
+    const price = row.selling_price == null ? null : Number(row.selling_price)
+    return {
+      id: product.product_number,
+      title: product.title,
+      variant: variant ? { id: row.variant_number, name: row.name } : null,
+      sku: row.sku,
+      category: categoryRef,
+      image: (variant ? row.image : null) || product.featured_image || null,
+      unit: product.unit,
+      price,
+      // The cost is for the store admin / manager, not the till.
+      cost_price: scope.role === "cashier" || row.cost_price == null ? null : Number(row.cost_price),
+      price_with_tax:
+        price == null || unit.unit_tax_value == null ? null : Number((price - unit.unit_discount_value + unit.unit_tax_value).toFixed(2)),
+      pack: pack ? { size: Number(row.pack_size), price: Number(row.pack_selling_price) } : null,
+      stock,
+      qty_packs: pack ? Math.floor(stock / Number(row.pack_size)) : null,
+      status: row.is_active === false || (!variant && product.is_active === false) ? "inactive" : "active",
+    }
+  })
+  return paged(rows, total, pageInfo)
 }
 
 // ---- Orders: one order by its number (or UUID) ----

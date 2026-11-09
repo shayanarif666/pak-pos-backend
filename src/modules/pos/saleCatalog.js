@@ -19,7 +19,7 @@ import {
 // The taxes of the Taxes page and of the product: only what the POS needs to name them on a line.
 const TAX_ONLY_STORE = { charge_tax_on_sales: true, sales_tax_enabled: false }
 
-function categoryOf(view, refs) {
+export function categoryOf(view, refs) {
   const row = view.category
   if (!row) return null
   const ref = refs.category(view.category_id)
@@ -40,7 +40,7 @@ function taxList(row) {
 }
 
 /** What one sellable thing (a product without variants, or one variant) is charged, per unit and per pack. */
-function figures(row, { discountRule, category, isWeightBased }) {
+export function figures(row, { discountRule, category, isWeightBased }) {
   const pack = Boolean(row.is_pack_product) && Number(row.pack_size) >= 2
   const sellLoose = pack ? Boolean(row.sell_loose) : true
   const catalogCategory = category
