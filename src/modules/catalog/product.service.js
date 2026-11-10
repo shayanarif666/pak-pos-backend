@@ -823,9 +823,9 @@ async function createVariant(store, parent, variant, variantNumber, defaults = {
       sell_loose: Boolean(variant.sell_loose),
       is_weight_based: variant.is_weight_based ?? Boolean(json.is_weight_based),
       has_bulk_discount: false,
-      // Its own level; else the one sent on the product (its own is 0), else the default 10.
-      low_stock_threshold: variant.low_stock_threshold ?? defaults.low_stock_threshold ?? 10,
-      low_stock_unit: variant.low_stock_unit ?? defaults.low_stock_unit ?? "unit",
+      // Its own level and unit (the product's own level is 0): default 1 and unit.
+      low_stock_threshold: variant.low_stock_threshold ?? 1,
+      low_stock_unit: variant.low_stock_unit ?? "unit",
       is_published: json.is_published,
       is_pos_visible: json.is_pos_visible,
       is_web_visible: json.is_web_visible,

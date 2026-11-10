@@ -143,7 +143,26 @@ const PRICE_ALIASES = {
   pack_selling_price: ["pack_price"],
 }
 
-function withPriceAliases(body) {
+/**
+ * The product discount may come as one object, discount: { name, type, value, applies_to? }, or as the
+ * flat discount_name / discount_type / discount_value / discount_applies_to. The object wins; the type
+ * is read in any case ("Percentage" = percentage).
+ */
+function withDiscountObject(body) {
+  const out = { ...body }
+  const object = body.discount
+  if (object && typeof object === "object" && !Array.isArray(object)) {
+    if (object.name !== undefined) out.discount_name = object.name
+    if (object.type !== undefined) out.discount_type = object.type
+    if (object.value !== undefined) out.discount_value = object.value
+    if (object.applies_to !== undefined) out.discount_applies_to = object.applies_to
+  }
+  if (typeof out.discount_type === "string") out.discount_type = out.discount_type.trim().toLowerCase() || null
+  return out
+}
+
+function withPriceAliases(rawBody) {
+  const body = withDiscountObject(rawBody)
   const out = { ...body }
   for (const [column, aliases] of Object.entries(PRICE_ALIASES)) {
     if (out[column] !== undefined) continue
@@ -439,7 +458,8 @@ export function parseCreateProduct(rawBody) {
     // The colours it comes in (hex codes); with variants each variant has its own.
     colors: parseColors(body) ?? [],
     has_bulk_discount: optionalBool(body, "has_bulk_discount") ?? false,
-    low_stock_threshold: optionalNumber(body, "low_stock_threshold") ?? 10,
+    // 0 with variants (each variant has its own), else 1.
+    low_stock_threshold: optionalNumber(body, "low_stock_threshold") ?? 1,
     low_stock_unit: parseLowStockUnit(body) ?? "unit",
     is_published: optionalBool(body, "is_published") ?? false,
     ...parseCatalogVisibility(body),
