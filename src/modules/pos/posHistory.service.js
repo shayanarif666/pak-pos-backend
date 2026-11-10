@@ -35,7 +35,7 @@ import {
   posCustomer,
   posOffers,
   posOrderDetail,
-  posOrderHistory,
+  posOrders,
   posProducts,
   posReceipt,
   posRefundReceipt,
@@ -260,7 +260,8 @@ export async function orders(req) {
     limit: pageInfo.limit,
     offset: pageInfo.offset,
   })
-  return paged(await posOrderHistory(rows.map((row) => row.id)), count, pageInfo)
+  // Every order in full (lines, taxes, discounts, payments, refund figures): this list is the only way to read orders.
+  return paged(await posOrders(rows.map((row) => row.id)), count, pageInfo)
 }
 
 // ---- 5 / 6. Refunds: ?type=complete (whole orders) | partial (some items) ----

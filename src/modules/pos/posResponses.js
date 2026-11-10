@@ -650,41 +650,6 @@ export async function posOrderDetail(orderId) {
   }
 }
 
-/**
- * GET /orders (POS lists / order history): one short row per order —
- * { id, is_custom, location_name, items, currency, total_amount, status, payment_status,
- *   remaining_amount, placed_at, channel }. GET /orders/:id has the full detail.
- */
-export async function posOrderHistory(orderIds) {
-  const ids = [...new Set(orderIds.filter(Boolean))]
-  if (!ids.length) return []
-  const orders = byIds(
-    await Order.findAll({
-      where: { id: { [Op.in]: ids } },
-      include: [{ model: OrderItem, attributes: ["id"] }, { model: Payment, attributes: ["amount", "status"] }],
-    }),
-    ids
-  )
-  const [refs, credit] = await Promise.all([
-    new Refs().loadAll({ location: orders.map((order) => order.location_id) }),
-    creditRefundedByOrder(orders.map((order) => order.id)),
-  ])
-  const currency = await currencyFor(orders.map((order) => order.store_id))
-  return orders.map((order) => ({
-    id: order.order_number,
-    is_custom: Boolean(order.is_custom),
-    location_name: refs.location(order.location_id)?.name || null,
-    items: (order.OrderItems || []).length,
-    currency: currency(order.store_id),
-    total_amount: num(order.total_amount),
-    status: order.order_status,
-    payment_status: order.payment_status,
-    remaining_amount: remainingAmountOf(order, order.Payments, credit.get(order.id) || 0),
-    placed_at: order.placed_at,
-    channel: order.channel,
-  }))
-}
-
 export async function posRefundReceipt(refund, receipt) {
   const [lines, order, store, refs] = await Promise.all([
     OrderRefundItem.findAll({ where: { refund_id: refund.id } }),
