@@ -40,6 +40,8 @@ import { OfferLocation } from "../modules/offers/offerLocation.model.js"
 import { OrderDiscount } from "../modules/discounts/orderDiscount.model.js"
 import { BundleDiscount } from "../modules/discounts/bundleDiscount.model.js"
 import { BundleDiscountProduct } from "../modules/discounts/bundleDiscountProduct.model.js"
+import { BundleDiscountReward } from "../modules/discounts/bundleDiscountReward.model.js"
+import { BulkDiscount, BulkDiscountTier } from "../modules/discounts/bulkDiscount.model.js"
 import { Coupon } from "../modules/coupons/coupon.model.js"
 import { CouponRedemption } from "../modules/coupons/couponRedemption.model.js"
 import { Order } from "../modules/orders/order.model.js"
@@ -227,6 +229,13 @@ export function registerModels() {
   BundleDiscount.hasMany(BundleDiscountProduct, { foreignKey: "bundle_id" })
   BundleDiscountProduct.belongsTo(BundleDiscount, { foreignKey: "bundle_id" })
   BundleDiscountProduct.belongsTo(Product, { foreignKey: "product_id", as: "product" })
+  BundleDiscount.hasMany(BundleDiscountReward, { foreignKey: "bundle_id" })
+  BundleDiscountReward.belongsTo(BundleDiscount, { foreignKey: "bundle_id" })
+  BundleDiscountReward.belongsTo(Product, { foreignKey: "product_id", as: "product" })
+  BulkDiscount.belongsTo(Store, { foreignKey: "store_id" })
+  BulkDiscount.belongsTo(Product, { foreignKey: "product_id", as: "product" })
+  BulkDiscount.hasMany(BulkDiscountTier, { foreignKey: "bulk_id" })
+  BulkDiscountTier.belongsTo(BulkDiscount, { foreignKey: "bulk_id" })
 
   Cart.belongsTo(Store, { foreignKey: "store_id" })
   Cart.belongsTo(User, { foreignKey: "user_id" })
@@ -309,6 +318,9 @@ export {
   OrderDiscount,
   BundleDiscount,
   BundleDiscountProduct,
+  BundleDiscountReward,
+  BulkDiscount,
+  BulkDiscountTier,
   Coupon,
   CouponRedemption,
   Order,

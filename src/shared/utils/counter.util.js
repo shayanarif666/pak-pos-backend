@@ -110,6 +110,11 @@ export const nextOrderDiscountNumber = (storeId, transaction) =>
     restartWhenEmpty: { table: "order_discounts", storeId },
   })
 
+export const nextBulkNumber = (storeId, transaction) =>
+  getNextSequence(`bulk:${storeId}`, transaction, {
+    restartWhenEmpty: { table: "bulk_discounts", storeId },
+  })
+
 export const nextBundleNumber = (storeId, transaction) =>
   getNextSequence(`bundle:${storeId}`, transaction, {
     restartWhenEmpty: { table: "bundle_discounts", storeId },

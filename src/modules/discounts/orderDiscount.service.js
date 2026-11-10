@@ -14,7 +14,6 @@ export function publicOrderDiscount(row) {
     name: json.name,
     discount_type: json.discount_type,
     discount_value: Number(json.discount_value),
-    apply_to_all_orders: Boolean(json.apply_to_all_orders),
     is_active: Boolean(json.is_active),
     created_by: json.created_by,
     created_at: json.created_at,
@@ -66,13 +65,4 @@ export async function deleteOrderDiscount(storeId, id) {
   await row.destroy()
   const gone = await OrderDiscount.findOne({ where: { id: row.id }, paranoid: false, attributes: ["deleted_at"] })
   return { ...view, deleted_at: gone?.deleted_at || new Date() }
-}
-
-/** The active discount that goes on every order (the newest one when several are set). */
-export async function autoOrderDiscount(storeId) {
-  const row = await OrderDiscount.findOne({
-    where: { store_id: storeId, is_active: true, apply_to_all_orders: true },
-    order: [["created_at", "DESC"]],
-  })
-  return row ? publicOrderDiscount(row) : null
 }

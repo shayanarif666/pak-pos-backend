@@ -8,31 +8,51 @@ export function posOrderDiscount(view) {
     name: view.name,
     discount_type: view.discount_type,
     discount_value: num(view.discount_value),
-    apply_to_all_orders: Boolean(view.apply_to_all_orders),
     is_active: view.is_active,
     status: view.is_active ? "active" : "inactive",
   }
 }
 
-/** Bundle discount as the POS reads it: id = its short number, products = the cartons it covers. */
-export async function posBundles(views) {
+/** Bulk discounts as the POS reads them: id = short number, product (with its variant), the tiers. */
+export async function posBulks(views) {
   const refs = await new Refs().loadAll({
-    product: views.flatMap((view) => view.product_ids || []),
+    product: views.map((view) => view.product_id),
     user: views.map((view) => view.created_by),
   })
   return views.map((view) => ({
+    id: view.bulk_number,
+    name: view.name,
+    product: refs.product(view.product_id),
+    // What min_qty counts: unit | pack. From min_qty on, every unit is cut: a percentage of its price, or Rs off each unit.
+    sale_unit: view.sale_unit,
+    tiers: view.tiers,
+    start_at: view.start_at,
+    end_at: view.end_at,
+    is_active: view.is_active,
+    status: view.is_active ? "active" : "inactive",
+    staff: refs.staff(view.created_by),
+  }))
+}
+
+/**
+ * Bundle discounts as the POS reads them: id = short number; components = what is bought together
+ * (product with its variant, qty, unit); reward = free items, or a percentage / fixed amount off.
+ */
+export async function posBundles(views) {
+  const lineIds = (view) => [...view.components, ...view.rewards].map((line) => line.product_id)
+  const refs = await new Refs().loadAll({
+    product: views.flatMap(lineIds),
+    user: views.map((view) => view.created_by),
+  })
+  const line = (row) => ({ product: refs.product(row.product_id), qty: row.qty, sale_unit: row.sale_unit })
+  return views.map((view) => ({
     id: view.bundle_number,
     name: view.name,
-    discount_type: view.discount_type,
-    discount_value: num(view.discount_value),
-    products: (view.product_ids || []).map((id) => {
-      const product = refs.get("product", id)
-      return {
-        ...refs.product(id),
-        pack_size: product?.pack_size ?? null,
-        pack_price: num(product?.pack_selling_price),
-      }
-    }),
+    components: view.components.map(line),
+    reward:
+      view.reward_type === "free_item"
+        ? { type: "free_item", items: view.rewards.map(line) }
+        : { type: view.reward_type, value: num(view.discount_value) },
     start_at: view.start_at,
     end_at: view.end_at,
     is_active: view.is_active,

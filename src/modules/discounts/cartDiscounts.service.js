@@ -1,11 +1,11 @@
 import { Op } from "sequelize"
 import { Product } from "../catalog/product.model.js"
 import { Category } from "../catalog/category.model.js"
-import { listOffers } from "../offers/offer.service.js"
-import { posOffers, num } from "../pos/posResponses.js"
-import { autoOrderDiscount } from "./orderDiscount.service.js"
+import { num } from "../pos/posResponses.js"
+import { listOrderDiscounts } from "./orderDiscount.service.js"
 import { bundlesForProducts } from "./bundleDiscount.service.js"
-import { posBundles, posOrderDiscount } from "./discountResponses.js"
+import { bulksForProducts } from "./bulkDiscount.service.js"
+import { posBulks, posBundles, posOrderDiscount } from "./discountResponses.js"
 
 /** Refs (short numbers or UUIDs) as rows of a model; a ref that matches nothing is skipped. */
 async function rowsOf(model, numberColumn, storeId, refs, attributes, extraWhere = {}) {
@@ -40,7 +40,10 @@ const categoryDiscount = (row) => ({
  * Every discount that can touch a cart, in one reply. product_ids / category_ids are the products
  * and categories in the cart (short numbers or UUIDs); the categories of the cart's products are
  * added to the categories by themselves. A level with no discount comes back empty.
- *   { categories: [], products: [], order: {}, bundle: [], bulkDiscount: [] }
+ *   categories / products: the category and product discounts of the cart,
+ *   bulkDiscount: the live bulk discounts (buy more of one product) on the cart's products,
+ *   bundle: the live bundles with one of the cart's products among their components,
+ *   order: every active order discount (the cashier picks one).
  */
 export async function cartDiscounts(scope, { productRefs, categoryRefs }) {
   const storeId = scope.store_id
@@ -49,6 +52,11 @@ export async function cartDiscounts(scope, { productRefs, categoryRefs }) {
     "discount_type", "discount_value", "discount_name", "discount_applies_to",
   ], { parent_product_id: null })
   const productIds = products.map((row) => row.id)
+  // Bulk discounts and bundles may sit on one variant: look at the variants too.
+  const variants = productIds.length
+    ? await Product.findAll({ where: { parent_product_id: { [Op.in]: productIds }, deleted_at: null }, attributes: ["id"] })
+    : []
+  const rowIds = [...productIds, ...variants.map((row) => row.id)]
 
   const categoryIds = new Set()
   const askedCategories = await rowsOf(Category, "category_number", storeId, categoryRefs, ["id"])
@@ -62,23 +70,19 @@ export async function cartDiscounts(scope, { productRefs, categoryRefs }) {
       })
     : []
 
-  const [order, bundles, bulk] = await Promise.all([
-    autoOrderDiscount(storeId),
-    bundlesForProducts(storeId, productIds),
-    listOffers({ store_id: storeId, role: scope.role, location_id: scope.location_id }, { type: "bogo", active: "1", location_id: scope.location_id }),
+  const [orderDiscounts, bundles, bulks] = await Promise.all([
+    listOrderDiscounts(storeId, { active: "1" }),
+    bundlesForProducts(storeId, rowIds),
+    bulksForProducts(storeId, rowIds),
   ])
-
-  const bulkInCart = bulk.filter(
-    (offer) => offer.product_ids.some((id) => productIds.includes(id)) || offer.category_ids.some((id) => categoryIds.has(id))
-  )
 
   return {
     categories: categories.filter((row) => row.discount_type && row.discount_value != null).map(categoryDiscount),
     products: products
       .filter((row) => row.has_product_discount && row.discount_type && row.discount_value != null)
       .map(productDiscount),
-    order: order ? posOrderDiscount(order) : {},
+    order: orderDiscounts.map(posOrderDiscount),
     bundle: await posBundles(bundles),
-    bulkDiscount: await posOffers(bulkInCart),
+    bulkDiscount: await posBulks(bulks),
   }
 }

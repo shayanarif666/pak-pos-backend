@@ -80,3 +80,11 @@ export function refList(value, label) {
   const list = Array.isArray(value) ? value : String(value).split(",")
   return [...new Set(list.flatMap((entry) => String(entry).split(",")).map((entry) => entry.trim()).filter(Boolean).map((entry) => ref(entry, label)))]
 }
+
+/** The live window: active, started and not ended (view.is_active, view.start_at, view.end_at). */
+export function windowIsLive(view, now = new Date()) {
+  if (!view.is_active) return false
+  if (view.start_at && now < new Date(view.start_at)) return false
+  if (view.end_at && now > new Date(view.end_at)) return false
+  return true
+}

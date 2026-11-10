@@ -3,7 +3,7 @@ import { sequelize } from "../../db/sequelize.js"
 import { modelOptions, uuidCol, uuidPk } from "../../db/columnTypes.js"
 import { DISCOUNT_TYPE } from "../../db/enums.js"
 
-/** A discount on the whole order: name, type, amount, and whether it goes on every order. */
+/** A discount on the whole order: name, type, amount. The cashier picks it on an order. */
 export const OrderDiscount = sequelize.define(
   "OrderDiscount",
   {
@@ -14,8 +14,6 @@ export const OrderDiscount = sequelize.define(
     name: { type: DataTypes.TEXT, allowNull: false },
     discount_type: { type: DataTypes.ENUM(...DISCOUNT_TYPE), allowNull: false },
     discount_value: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
-    // true = the POS puts it on every order by itself; false = the cashier picks it.
-    apply_to_all_orders: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
     is_active: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
     created_by: uuidCol(true),
     deleted_at: { type: DataTypes.DATE, allowNull: true },

@@ -47,6 +47,7 @@ import * as discountLevels from "./migrations/20261124120000-discount-levels.js"
 import * as stockLotSupplier from "./migrations/20261125120000-stock-lot-supplier.js"
 import * as lowStockUnit from "./migrations/20261126120000-low-stock-unit.js"
 import * as variantParentLowStockZero from "./migrations/20261127120000-variant-parent-low-stock-zero.js"
+import * as bulkBundleDiscounts from "./migrations/20261128120000-bulk-bundle-discounts.js"
 
 // Migrations the running code cannot work without (e.g. users.token_version is read on every
 // authenticated request). Each one checks before it changes anything, so running it on a
@@ -142,6 +143,8 @@ const REQUIRED = [
   lowStockUnit,
   // A product with variants keeps low_stock_threshold 0 (each variant has its own).
   variantParentLowStockZero,
+  // bulk_discounts + tiers, bundle components / rewards, no order_discounts.apply_to_all_orders.
+  bulkBundleDiscounts,
 ]
 
 export async function ensureSchema() {
