@@ -21,7 +21,8 @@ const productsInclude = {
 
 /**
  * A tax as the API returns it: id = tax_number (the UUID is uuid) and product_scope; the products it
- * applies to are not listed (a product lists its own taxes), only product_ids ([] for product_scope all).
+ * applies to are not listed (a product lists its own taxes), only product_ids ([] for product_scope all):
+ * a product number (the whole product, all its variants) or { product_id, variant_id } for one variant.
  */
 export function publicTax(row) {
   const json = row.toJSON ? row.toJSON() : row
@@ -30,13 +31,9 @@ export function publicTax(row) {
     .filter(Boolean)
     .map((product) => {
       const parent = product.parent || null
-      return {
-        id: parent ? parent.product_number : product.product_number,
-        uuid: product.id,
-        title: parent ? parent.title : product.title,
-        variant: parent ? { id: product.variant_number, name: product.variant_name } : null,
-      }
+      return { product: parent ? parent.product_number : product.product_number, variant: parent ? product.variant_number : 0 }
     })
+    .sort((a, b) => a.product - b.product || a.variant - b.variant)
   return {
     id: json.tax_number,
     uuid: json.id,
@@ -44,7 +41,7 @@ export function publicTax(row) {
     type: json.type,
     value: Number(json.value),
     product_scope: json.product_scope,
-    product_ids: products.map((row) => row.id),
+    product_ids: products.map((row) => (row.variant ? { product_id: row.product, variant_id: row.variant } : row.product)),
     is_active: Boolean(json.is_active),
     created_at: json.created_at,
     updated_at: json.updated_at,
