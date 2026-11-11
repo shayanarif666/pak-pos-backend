@@ -52,6 +52,8 @@ export const Product = sequelize.define(
     discount_name: { type: DataTypes.STRING(255), allowNull: true },
     // What the discount is taken off: all | pack | loose | weight.
     discount_applies_to: { type: DataTypes.ENUM(...DISCOUNT_APPLIES_TO), allowNull: false, defaultValue: "all" },
+    // A variant without a discount of its own takes its product's (true) or none (false, it opted out).
+    uses_product_discount: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: true },
     // Product-level taxes, any number: [{ name, type: percentage | fixed, value }]. A fixed
     // tax is per unit. Applied with the category tax and the store's sales tax at checkout.
     taxes: {

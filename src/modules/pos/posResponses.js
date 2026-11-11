@@ -12,6 +12,7 @@ import { thresholdUnit } from "../catalog/stockThreshold.js"
 import { movementLot } from "../inventory/movementLot.js"
 import { categoryOf, figures } from "./saleCatalog.js"
 import { bulksForProducts } from "../discounts/bulkDiscount.service.js"
+import { effectiveDiscount } from "../catalog/variantDiscount.js"
 import { Op } from "sequelize"
 import { Order } from "../orders/order.model.js"
 import { OrderItem } from "../orders/orderItem.model.js"
@@ -900,10 +901,16 @@ async function levelsOf(views, refs) {
         sale_unit: bulk.sale_unit,
         tiers: bulk.tiers,
       }))
+    // A variant with a discount of its own is listed with its variant_id; the product's one is for every
+    // variant that has none of its own (and did not opt out).
+    const variantDiscounts = (view.variants || [])
+      .filter((variant) => variant.discount)
+      .map((variant) => ({ level: "product", variant_id: variant.variant_number, name: variant.discount.name, type: variant.discount.type, value: variant.discount.value, applies_to: variant.discount.applies_to }))
     const discounts = [
       ...(view.has_product_discount && view.discount_type && view.discount_value != null
         ? [{ level: "product", name: view.discount_name || null, type: view.discount_type, value: num(view.discount_value), applies_to: view.discount_applies_to || "all" }]
         : []),
+      ...variantDiscounts,
       ...(category?.discount ? [{ level: "category", name: category.discount.name, type: category.discount.type, value: category.discount.value }] : []),
       ...bulkList,
     ]
@@ -926,17 +933,21 @@ async function levelsOf(views, refs) {
 export async function posProducts(views) {
   const refs = await new Refs().loadAll({ category: views.map((view) => view.category_id) })
   const levels = await levelsOf(views, refs)
-  const figuresOf = (row, view, own) =>
+  // discount = { type, value, applies_to } this row is sold with (a variant: its own or its product's), or null.
+  const figuresOf = (row, view, discount) =>
     figures(row, {
-      discountRule: own
-        ? { has_product_discount: true, discount_type: view.discount_type, discount_value: view.discount_value, discount_applies_to: view.discount_applies_to || "all", is_weight_based: view.is_weight_based }
+      discountRule: discount
+        ? { has_product_discount: true, discount_type: discount.type, discount_value: discount.value, discount_applies_to: discount.applies_to || "all", is_weight_based: row.is_weight_based }
         : {},
       category: levels.get(view.id).category,
       isWeightBased: Boolean(row.is_weight_based),
     })
+  const variantDiscount = (row, view) => effectiveDiscount(row, view)
   return views.map((view) => {
     const level = levels.get(view.id)
-    const ownDiscount = Boolean(view.has_product_discount) && Boolean(view.discount_type) && view.discount_value != null
+    const ownDiscount = view.has_product_discount && view.discount_type && view.discount_value != null
+      ? { type: view.discount_type, value: view.discount_value, applies_to: view.discount_applies_to || "all" }
+      : null
     const productFigures = view.has_variants ? null : figuresOf(view, view, ownDiscount)
     return {
       id: view.product_number,
@@ -963,8 +974,10 @@ export async function posProducts(views) {
         image: row.image || null,
         // The colours it comes in (hex codes).
         colors: row.colors || [],
-        // Per ONE pack / ONE unit, every discount and tax that applies worked out (a variant has no product discount of its own).
-        ...figuresOf(row, view, false),
+        // The discount it is sold with (its own, else its product's) and where it came from, or null.
+        discount: variantDiscount(row, view),
+        // Per ONE pack / ONE unit, every discount and tax that applies worked out.
+        ...figuresOf(row, view, variantDiscount(row, view)),
         is_active: row.is_active,
       })),
       slug: view.slug,

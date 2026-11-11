@@ -34,6 +34,7 @@ import {
 import { ProductLocation } from "./catalogLocation.model.js"
 import { toItemQty } from "../../shared/utils/stockUnit.util.js"
 import { applyStockDelta, loadLocation } from "./productStock.service.js"
+import { ownDiscountOf } from "./variantDiscount.js"
 import { freeBarcode } from "../../shared/utils/barcode.util.js"
 import { storeTaxMatcher } from "../taxes/tax.service.js"
 import {
@@ -79,6 +80,7 @@ const VARIANTS_INCLUDE = {
     "id", "product_number", "variant_number", "variant_name", "title", "sku", "barcode", "cost_price", "selling_price", "is_active",
     "is_pack_product", "pack_size", "pack_cost_price", "pack_selling_price", "sell_loose", "variant_taxes", "taxes",
     "low_stock_threshold", "low_stock_unit", "is_weight_based", "featured_image", "colors",
+    "has_product_discount", "discount_type", "discount_value", "discount_name", "discount_applies_to", "uses_product_discount",
   ],
   // A deleted variant (soft delete) is left out.
   where: { deleted_at: null },
@@ -440,6 +442,9 @@ function publicProduct(product, extras = {}) {
       image: row.featured_image || null,
       // The colours it comes in (hex codes).
       colors: jsonList(row.colors),
+      // Its own discount { name, type, value, applies_to } or null; without one it takes its product's unless uses_product_discount is false.
+      discount: ownDiscountOf({ has_product_discount: row.has_product_discount, discount_type: row.discount_type, discount_value: row.discount_value, discount_name: row.discount_name, discount_applies_to: row.discount_applies_to }),
+      uses_product_discount: row.uses_product_discount !== false,
       is_active: row.is_active,
     })),
     variant_taxes: Array.isArray(json.variant_taxes) ? json.variant_taxes : [],
@@ -823,6 +828,11 @@ async function createVariant(store, parent, variant, variantNumber, defaults = {
       sell_loose: Boolean(variant.sell_loose),
       is_weight_based: variant.is_weight_based ?? Boolean(json.is_weight_based),
       has_bulk_discount: false,
+      // Its own discount, if any; else it takes its product's unless uses_product_discount is false.
+      ...(variant.discount
+        ? { discount_type: variant.discount.type, discount_value: variant.discount.value, discount_name: variant.discount.name, discount_applies_to: variant.discount.applies_to }
+        : {}),
+      uses_product_discount: variant.uses_product_discount ?? true,
       // Its own level and unit (the product's own level is 0): default 1 and unit.
       low_stock_threshold: variant.low_stock_threshold ?? 1,
       low_stock_unit: variant.low_stock_unit ?? "unit",
@@ -927,6 +937,8 @@ export async function createProduct(store, input, actor = null) {
           discount_value: fields.discount_value,
           discount_name: fields.discount_name,
           discount_applies_to: fields.discount_applies_to || "all",
+          // A variant: false = it takes no discount from its product.
+          uses_product_discount: fields.uses_product_discount ?? true,
           taxes: fields.taxes || [],
           is_pack_product: fields.is_pack_product,
           pack_size: fields.is_pack_product ? fields.pack_size : null,
@@ -1044,6 +1056,22 @@ async function saveVariants(storeId, product, variants, actor, { held, warnings,
         if (!(variant.sell_loose ?? row.sell_loose)) Object.assign(patch, unitPricesFromPack(pack))
       }
     }
+    // discount: its own (null removes it); uses_product_discount: take the product's discount or not.
+    if (variant.discount !== undefined) {
+      if (variant.discount === null) {
+        Object.assign(patch, { has_product_discount: false, discount_type: null, discount_value: null, discount_name: null, discount_applies_to: "all" })
+      } else {
+        Object.assign(patch, {
+          has_product_discount: true,
+          discount_type: variant.discount.type,
+          discount_value: variant.discount.value,
+          discount_name: variant.discount.name,
+          discount_applies_to: variant.discount.applies_to,
+        })
+        assertPackRules({ discount_applies_to: variant.discount.applies_to, is_pack_product: patch.is_pack_product ?? row.is_pack_product, is_weight_based: patch.is_weight_based ?? row.is_weight_based }, row)
+      }
+    }
+    if (variant.uses_product_discount !== undefined) patch.uses_product_discount = variant.uses_product_discount
     if (variant.taxes !== undefined) {
       patch.variant_taxes = variant.taxes
       patch.taxes = variantTaxList(parentTaxes, variant.taxes)

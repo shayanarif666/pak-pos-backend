@@ -10,6 +10,7 @@ import { CouponRedemption } from "../coupons/couponRedemption.model.js"
 import { Product } from "../catalog/product.model.js"
 import { Category } from "../catalog/category.model.js"
 import { Offer } from "../offers/offer.model.js"
+import { withEffectiveDiscounts } from "../catalog/variantDiscount.js"
 import { getStoreForManager } from "../stores/store.service.js"
 import { getLocation } from "../locations/location.service.js"
 import { Customer } from "../customers/customer.model.js"
@@ -474,6 +475,8 @@ export async function createOrder(actor, input) {
           transaction,
         })
       : []
+    // A variant is priced with the discount it is sold with (its own, else its product's).
+    await withEffectiveDiscounts(products, { transaction })
     // The Taxes page taxes of each product (a variant: its own and its parent's).
     const taxesFor = await storeTaxMatcher(store.id)
     for (const product of products) product.store_taxes = taxesFor(product, product.parent_product_id)

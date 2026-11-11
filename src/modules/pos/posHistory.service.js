@@ -23,6 +23,7 @@ import { listCategories } from "../catalog/category.service.js"
 import { expiryStatus, listProducts } from "../catalog/product.service.js"
 import { Store } from "../stores/store.model.js"
 import { categoryOf, figures } from "./saleCatalog.js"
+import { effectiveDiscount, ownDiscountOf } from "../catalog/variantDiscount.js"
 import { listOffers } from "../offers/offer.service.js"
 import { listSuppliers } from "../inventory/supplier.service.js"
 import { loadLocation } from "../catalog/productStock.service.js"
@@ -637,9 +638,10 @@ export async function weightList(req) {
     const stock = Number(Number(row.total_qty || 0).toFixed(3))
     const pack = Boolean(row.is_pack_product) && Number(row.pack_size) >= 2
     const unit = figures(row, {
-      discountRule: variant || !(product.has_product_discount && product.discount_type && product.discount_value != null)
-        ? {}
-        : { has_product_discount: true, discount_type: product.discount_type, discount_value: product.discount_value, discount_applies_to: product.discount_applies_to || "all", is_weight_based: true },
+      discountRule: (() => {
+        const found = variant ? effectiveDiscount(row, product) : ownDiscountOf(product)
+        return found ? { has_product_discount: true, discount_type: found.type, discount_value: found.value, discount_applies_to: found.applies_to || "all", is_weight_based: true } : {}
+      })(),
       category,
       isWeightBased: true,
     })

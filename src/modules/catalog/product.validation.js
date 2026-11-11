@@ -315,6 +315,28 @@ function parseStockScope(body) {
 }
 
 /**
+ * A variant's own discount: discount { name, type (percentage | fixed, any case), value, applies_to? } (or
+ * the flat discount_name / discount_type / discount_value / discount_applies_to); discount null removes it
+ * (PATCH). uses_product_discount: true (default) = without its own discount it takes its product's; false = none.
+ */
+function parseVariantDiscount(row, label) {
+  const flat = withDiscountObject(row)
+  const uses = optionalBool(row, "uses_product_discount")
+  if (row.discount === null) return { discount: null, uses_product_discount: uses }
+  const sent = flat.discount_type !== undefined || flat.discount_value !== undefined || flat.discount_name !== undefined || (row.discount && typeof row.discount === "object")
+  if (!sent) return { discount: undefined, uses_product_discount: uses }
+  const type = flat.discount_type
+  if (!type || !DISCOUNT_TYPE.includes(type)) throw new AppError(`${label}.discount.type must be percentage or fixed`, 400)
+  const value = flat.discount_value === undefined || flat.discount_value === null || flat.discount_value === "" ? NaN : Number(flat.discount_value)
+  if (Number.isNaN(value) || value <= 0) throw new AppError(`${label}.discount.value must be a number greater than 0`, 400)
+  if (type === "percentage" && value > 100) throw new AppError(`${label}.discount.value cannot be more than 100 for a percentage`, 400)
+  return {
+    discount: { name: optionalString(flat, "discount_name") ?? null, type, value, applies_to: parseAppliesTo(flat) ?? "all" },
+    uses_product_discount: uses,
+  }
+}
+
+/**
  * variants: [{ name, sku?, barcode, cost, price, stock?, location_id?, id? }] — each one becomes a
  * product of its own (same category, taxes, unit… as the parent). id (PATCH only) = an existing
  * variant's product number or UUID, to change it instead of adding one.
@@ -348,6 +370,7 @@ function parseVariants(body, { patch = false } = {}) {
       if (!(optionalNumber(row, "pack_selling_price") > 0)) throw new AppError(`${label}.pack_price is required for a pack variant`, 400)
     }
     const sellLoose = optionalBool(row, "sell_loose")
+    const { discount, uses_product_discount } = parseVariantDiscount(row, label)
     // A pack variant that is also sold loose has its own unit cost / price too.
     const looseRequired = !existing && (!isPack || sellLoose === true)
     // Its one image: a URL (image or featured_image); null / "" removes it on PATCH.
@@ -366,6 +389,10 @@ function parseVariants(body, { patch = false } = {}) {
       pack_cost_price: optionalNumber(row, "pack_cost_price"),
       pack_selling_price: optionalNumber(row, "pack_selling_price"),
       sell_loose: optionalBool(row, "sell_loose"),
+      // Its own discount { name, type, value, applies_to }; null (PATCH) removes it; undefined = not sent.
+      discount,
+      // false = no discount at all (it does not take its product's). Default true.
+      uses_product_discount,
       // What the low stock level counts on a pack + loose variant: pack | unit. undefined = as its product.
       low_stock_unit: parseLowStockUnit(row, `${label}.low_stock_unit`),
       // Its own low stock level (in low_stock_unit). undefined = as its product.

@@ -49,6 +49,7 @@ import * as lowStockUnit from "./migrations/20261126120000-low-stock-unit.js"
 import * as variantParentLowStockZero from "./migrations/20261127120000-variant-parent-low-stock-zero.js"
 import * as bulkBundleDiscounts from "./migrations/20261128120000-bulk-bundle-discounts.js"
 import * as transferLossNote from "./migrations/20261129120000-transfer-loss-note.js"
+import * as variantDiscount from "./migrations/20261130120000-variant-discount.js"
 
 // Migrations the running code cannot work without (e.g. users.token_version is read on every
 // authenticated request). Each one checks before it changes anything, so running it on a
@@ -148,6 +149,8 @@ const REQUIRED = [
   bulkBundleDiscounts,
   // stock_transfer_items.loss_reason_note: why a received qty was less than the qty sent.
   transferLossNote,
+  // products.uses_product_discount: a variant with no discount of its own takes its product's, unless it opted out.
+  variantDiscount,
 ]
 
 export async function ensureSchema() {
