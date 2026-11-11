@@ -485,8 +485,19 @@ export async function offers(req) {
 export async function suppliers(req) {
   const scope = await scopeOf(req)
   const pageInfo = pageOf(req.query)
-  const all = await listSuppliers(scope.store_id, scope, { ...req.query, location_id: scope.location_id })
-  const { items, total } = slicePage(all.filter(inWindow(req.query, (row) => row.created_at)), pageInfo)
+  // locations: a list (store admin only) — the suppliers that serve any of those locations; isActive: true | false |
+  // not sent (every one); q: a text in the name, email, phone, address or payment terms.
+  const wanted = scope.role === "store_admin" ? listOf(req.query, "locations", "location_ids", "locationIds") : []
+  const wantedIds = []
+  for (const ref of wanted) wantedIds.push(await idOf(Location, "location_id_int", scope.store_id, ref, "Location"))
+  const active = activeOf(req.query)
+  const text = (queryRef(req.query, "q") || "").toLowerCase()
+  const all = (await listSuppliers(scope.store_id, scope, { ...req.query, location_id: scope.location_id }))
+    .filter(inWindow(req.query, (row) => row.created_at))
+    .filter((row) => active === undefined || Boolean(row.is_active) === active)
+    .filter((row) => !wantedIds.length || row.location_scope === "all" || (row.location_ids || []).some((id) => wantedIds.includes(id)))
+    .filter((row) => !text || [row.name, row.email, row.phone, row.address, row.payment_terms].some((value) => String(value || "").toLowerCase().includes(text)))
+  const { items, total } = slicePage(all, pageInfo)
   return paged(items.map(posSupplier), total, pageInfo)
 }
 
