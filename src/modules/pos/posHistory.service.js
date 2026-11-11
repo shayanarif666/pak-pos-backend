@@ -281,7 +281,18 @@ export async function staffSessions(req) {
 export async function categories(req) {
   const scope = await scopeOf(req)
   const pageInfo = pageOf(req.query)
-  const listed = (await listCategories(scope.store_id, scope, { location_id: scope.location_id })).filter(inWindow(req.query, (row) => row.created_at))
+  // locations: a list (store admin only) — the categories sold at any of those locations; isActive: true |
+  // false | not sent (every one); q: a text in the name, slug or description.
+  const wanted = scope.role === "store_admin" ? listOf(req.query, "locations", "location_ids", "locationIds") : []
+  const wantedIds = []
+  for (const ref of wanted) wantedIds.push(await idOf(Location, "location_id_int", scope.store_id, ref, "Location"))
+  const active = activeOf(req.query)
+  const text = (queryRef(req.query, "q") || "").toLowerCase()
+  const listed = (await listCategories(scope.store_id, scope, { location_id: scope.location_id }))
+    .filter(inWindow(req.query, (row) => row.created_at))
+    .filter((row) => active === undefined || Boolean(row.is_active) === active)
+    .filter((row) => !wantedIds.length || row.location_scope === "all" || (row.location_ids || []).some((id) => wantedIds.includes(id)))
+    .filter((row) => !text || [row.name, row.slug, row.description].some((value) => String(value || "").toLowerCase().includes(text)))
   const { items, total } = slicePage(listed, pageInfo)
   return paged(await posCategories(items), total, pageInfo)
 }
