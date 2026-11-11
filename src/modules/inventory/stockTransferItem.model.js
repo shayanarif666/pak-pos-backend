@@ -17,6 +17,8 @@ export const StockTransferItem = sequelize.define(
     qty: { type: DataTypes.DECIMAL(12, 4), allowNull: false },
     // What arrived (null until received; less than qty = short on the way).
     received_qty: { type: DataTypes.DECIMAL(12, 4), allowNull: true },
+    // Why part of it did not arrive (received_qty less than qty): damaged, lost on the way…
+    loss_reason_note: { type: DataTypes.TEXT, allowNull: true },
     status: { type: DataTypes.ENUM(...TRANSFER_STATUS), allowNull: false, defaultValue: "on_the_way" },
     received_at: { type: DataTypes.DATE, allowNull: true },
     received_by: uuidCol(true),

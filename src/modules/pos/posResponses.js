@@ -735,6 +735,8 @@ export async function posTransfers(transfers) {
         product: refs.product(line.product_id),
         qty: line.qty,
         received_qty: line.received_qty,
+        // Why less arrived than was sent ("" when nothing is missing).
+        loss_reason_note: line.loss_reason_note || "",
         status: line.status,
         // The lots it left from (once received): [{ id (lot number), qty, expiry_date }].
         lots: (line.lots || []).map((lot) => ({ id: lot.lot_number, qty: num(lot.qty), expiry_date: lot.expiry_date || null })),

@@ -116,10 +116,13 @@ export function parsePatchTransfer(body) {
 }
 
 /**
- * Receiving at a destination: { to_location_id?, products?: [{ product_id, received_qty }],
- * received_qty?, note? }. No products = everything still on the way there arrived in full;
- * received_qty alone is for a transfer with one product.
+ * Receiving at a destination: { to_location_id?, products?: [{ product_id, received_qty, loss_reason_note? }],
+ * received_qty?, loss_reason_note?, note? }. No products = everything still on the way there arrived in
+ * full; received_qty (and loss_reason_note) alone are for a transfer with one product. loss_reason_note says
+ * why less arrived than was sent.
  */
+const lossNoteOf = (value) => (value === undefined || value === null ? undefined : String(value).trim())
+
 export function parseReceive(fields = {}) {
   const toRef = refOf(fields, ["to_location_id", "toLocationId", "location_id", "locationId"])
   const products = Array.isArray(fields.products)
@@ -132,6 +135,7 @@ export function parseReceive(fields = {}) {
           product_id: requireRef({ id: refOf(row, ["product_id", "productId"]) }, "id", `products[${p}].product_id`),
           variant_id: optionalVariant(row, `products[${p}]`),
           received_qty: received,
+          loss_reason_note: lossNoteOf(row?.loss_reason_note),
         }
       })
     : null
@@ -139,6 +143,7 @@ export function parseReceive(fields = {}) {
     to_location_id: toRef == null ? null : String(toRef).trim(),
     products,
     received_qty: fields.received_qty === undefined || fields.received_qty === null ? undefined : Number(fields.received_qty),
+    loss_reason_note: lossNoteOf(fields.loss_reason_note),
     note: fields.note === undefined || fields.note === null ? null : String(fields.note).trim(),
   }
 }

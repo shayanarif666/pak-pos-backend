@@ -39,6 +39,7 @@ export function publicTransfer(row) {
       product_id: item.product_id,
       qty: num(item.qty),
       received_qty: num(item.received_qty),
+      loss_reason_note: item.loss_reason_note || "",
       status: item.status,
       received_at: item.received_at,
       received_by: item.received_by,
@@ -296,7 +297,7 @@ export async function completeTransfer(storeId, id, actor) {
  * of it); the source gives up the full qty that left, so a shortfall shows as the difference and is
  * noted on the transfer.
  */
-export async function receiveTransfer(storeId, id, actor, { to_location_id, products, received_qty, note } = {}) {
+export async function receiveTransfer(storeId, id, actor, { to_location_id, products, received_qty, loss_reason_note, note } = {}) {
   const store = await getStoreForManager(storeId)
   const row = await getTransfer(storeId, id)
   const picked = await pickLines(storeId, row, { to_location_id, products }, actor)
@@ -319,7 +320,9 @@ export async function receiveTransfer(storeId, id, actor, { to_location_id, prod
       }
       const to = await loadLocation(storeId, line.to_location_id)
       const short = Number((qty - received).toFixed(4))
-      const lineNote = short > 0 ? `Line ${line.item_number}: received ${received} of ${qty} (${short} short)` : null
+      // Why it fell short: the line's own note, or the one for a transfer with a single product.
+      const lossNote = short > 0 ? (entry ? entry.loss_reason_note : loss_reason_note) || null : null
+      const lineNote = short > 0 ? `Line ${line.item_number}: received ${received} of ${qty} (${short} short${lossNote ? `: ${lossNote}` : ""})` : null
       if (lineNote) shortNotes.push(lineNote)
       const movementNote = [row.note, note, lineNote].filter(Boolean).join(" — ") || null
       // It leaves the source from the lots that expire first (FEFO)…
@@ -368,7 +371,7 @@ export async function receiveTransfer(storeId, id, actor, { to_location_id, prod
         )
       }
       await line.update(
-        { status: "completed", received_qty: received, received_at: new Date(), received_by: actor.id, lots: left.length ? left : null },
+        { status: "completed", received_qty: received, loss_reason_note: lossNote, received_at: new Date(), received_by: actor.id, lots: left.length ? left : null },
         { transaction }
       )
     }
