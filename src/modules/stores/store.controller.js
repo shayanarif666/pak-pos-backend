@@ -1,13 +1,31 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js"
 import { asyncHandler } from "../../shared/utils/asyncHandler.js"
 import * as storeService from "./store.service.js"
-import { posView } from "../pos/posHistory.service.js"
 
 export const getMyStore = asyncHandler(async (req, res) => {
   const store = await storeService.getMyStoreView(req.storeId)
-  if (req.auth?.channel === "pos") return apiResponse(res, 200, "OK", posView(store, "store_number"))
+  if (req.auth?.channel === "pos") return apiResponse(res, 200, "OK", posStore(store))
   return apiResponse(res, 200, "OK", store)
 })
+
+/** The store as the POS reads it: its number, name, business, currency, tax numbers, switches and status. */
+function posStore(store) {
+  return {
+    id: store.store_number,
+    name: store.name,
+    business_type: store.business_type,
+    currency: store.currency,
+    timezone: store.timezone,
+    ntn: store.ntn ?? null,
+    strn: store.strn ?? null,
+    fbr_invoice_enabled: Boolean(store.fbr_invoice_enabled),
+    pos_enabled: Boolean(store.pos_enabled),
+    web_enabled: Boolean(store.web_enabled),
+    is_active: Boolean(store.is_active),
+    status: store.status,
+    created_at: store.created_at,
+  }
+}
 
 export const patchMyStore = asyncHandler(async (req, res) => {
   const store = await storeService.updateStoreForManager(req.storeId, req.body)

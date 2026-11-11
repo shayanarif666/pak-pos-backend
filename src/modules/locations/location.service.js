@@ -197,6 +197,31 @@ async function resolveManagersForLocations(storeId, locations) {
   }
 }
 
+/**
+ * A page of the branches, each with its staff (managers and cashiers): the POS list. A store admin sees every
+ * branch (and the staff PINs), a manager only their own; a cashier sees the branches without the staff.
+ * Returns { rows: [{ location, users }], total }.
+ */
+export async function listLocationsPage(storeId, actor, { limit, offset }) {
+  const where = { store_id: storeId, deleted_at: null }
+  if (actor?.role === "manager" || actor?.role === "cashier") {
+    if (!actor.location_id) return { rows: [], total: 0 }
+    where.id = actor.location_id
+  }
+  const { rows, count } = await Location.findAndCountAll({ where, order: [["location_id_int", "ASC"]], limit, offset })
+  const withStaff = actor?.role === "store_admin" || actor?.role === "manager"
+  const staff = withStaff && rows.length
+    ? await User.findAll({
+        where: { store_id: storeId, location_id: { [Op.in]: rows.map((row) => row.id) }, role: { [Op.in]: ["manager", "cashier"] }, deleted_at: null },
+        order: [["role", "ASC"], ["user_number", "ASC"]],
+      })
+    : []
+  return {
+    rows: rows.map((location) => ({ location, users: withStaff ? staff.filter((user) => user.location_id === location.id) : null })),
+    total: count,
+  }
+}
+
 export async function listLocations(storeId, actor = null) {
   // A deleted branch is left out (its history still loads it by id).
   const where = { store_id: storeId, deleted_at: null }

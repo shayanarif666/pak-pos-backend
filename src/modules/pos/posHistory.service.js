@@ -142,6 +142,75 @@ function inWindow(query, dateOf) {
 }
 
 const atLocation = (scope) => (scope.location_id ? { location_id: scope.location_id } : {})
+
+/** A list in a query: "1,2" | [1, 2] | a key repeated (?locations=1&locations=2) | locations[]=1 — as strings, no repeats. */
+function listOf(query, ...keys) {
+  const out = []
+  for (const key of keys) {
+    const value = query[key]
+    if (value === undefined || value === null) continue
+    for (const part of (Array.isArray(value) ? value : [value]).flatMap((item) => String(item).split(","))) {
+      const text = part.trim()
+      if (text && !out.includes(text)) out.push(text)
+    }
+  }
+  return out
+}
+
+/**
+ * The locations of a list: a store admin names any number of them with locations (numbers or UUIDs:
+ * ?locations=1,2); without it every location (or the one location_id). A manager / cashier always only their own.
+ */
+async function locationWhere(scope, query) {
+  if (scope.role !== "store_admin") return atLocation(scope)
+  const refs = listOf(query, "locations", "location_ids", "locationIds")
+  if (!refs.length) return atLocation(scope)
+  const ids = []
+  for (const ref of refs) ids.push(await idOf(Location, "location_id_int", scope.store_id, ref, "Location"))
+  return { location_id: { [Op.in]: ids } }
+}
+
+/** roles: ?roles=manager,cashier (a list); each must be one of the allowed ones. [] = not sent. */
+function rolesOf(query, allowed) {
+  const roles = listOf(query, "roles", "role")
+  const bad = roles.find((role) => !allowed.includes(role))
+  if (bad) throw new AppError(`roles must be ${allowed.join(", ")}`, 400)
+  return roles
+}
+
+/** isActive: true = active only, false = inactive only, not sent (or null) = every one. */
+function activeOf(query) {
+  const raw = queryRef(query, "isActive", "is_active")
+  if (raw === null || raw === "null") return undefined
+  if (["true", "1"].includes(raw.toLowerCase())) return true
+  if (["false", "0"].includes(raw.toLowerCase())) return false
+  throw new AppError("isActive must be true, false or left out", 400)
+}
+
+/**
+ * Staff filters of a list whose rows belong to a user (column = the user's column on the row): roles
+ * of that user, and q = a text found in the user's name, email or phone, or the row's own number.
+ */
+async function staffConditions(scope, query, { column, numberColumn, roles }) {
+  const conditions = []
+  const wanted = rolesOf(query, roles)
+  if (wanted.length) {
+    const users = await User.findAll({ where: { store_id: scope.store_id, role: { [Op.in]: wanted } }, attributes: ["id"] })
+    conditions.push({ [column]: { [Op.in]: users.map((row) => row.id) } })
+  }
+  const text = queryRef(query, "q")
+  if (text) {
+    const like = `%${text}%`
+    const users = await User.findAll({
+      where: { store_id: scope.store_id, [Op.or]: [{ name: { [Op.like]: like } }, { email: { [Op.like]: like } }, { phone: { [Op.like]: like } }] },
+      attributes: ["id"],
+    })
+    const any = [{ [column]: { [Op.in]: users.map((row) => row.id) } }]
+    if (isNumber(text) && numberColumn) any.push({ [numberColumn]: Number(text) })
+    conditions.push({ [Op.or]: any })
+  }
+  return conditions.length ? { [Op.and]: conditions } : {}
+}
 const staffOf = (scope, query) =>
   idOf(User, "user_number", scope.store_id, queryRef(query, "staffId", "staff_id"), "Staff member")
 
@@ -173,11 +242,20 @@ export function sendPage(res, result, message = "OK") {
 export async function staffSessions(req) {
   const scope = await scopeOf(req)
   const pageInfo = pageOf(req.query)
-  const where = { store_id: scope.store_id, ...atLocation(scope), ...dateRange(req.query, "clock_in_at") }
+  const where = {
+    store_id: scope.store_id,
+    ...(await locationWhere(scope, req.query)),
+    ...dateRange(req.query, "clock_in_at"),
+    ...(await staffConditions(scope, req.query, { column: "user_id", numberColumn: "session_number", roles: ["store_admin", "manager", "cashier"] })),
+  }
   const staffId = await staffOf(scope, req.query)
   if (staffId) where.user_id = staffId
+  // status: clock_in | clock_out; not sent = every session.
   const status = queryRef(req.query, "status")
-  if (status) where.status = status
+  if (status) {
+    if (!["clock_in", "clock_out"].includes(status)) throw new AppError("status must be clock_in or clock_out", 400)
+    where.status = status
+  }
   const { rows, count } = await StaffSession.findAndCountAll({
     where,
     order: [["clock_in_at", "DESC"]],
@@ -431,11 +509,20 @@ export async function customers(req) {
 export async function batches(req) {
   const scope = await scopeOf(req)
   const pageInfo = pageOf(req.query)
-  const where = { store_id: scope.store_id, ...atLocation(scope), ...dateRange(req.query, "opened_at") }
+  const where = {
+    store_id: scope.store_id,
+    ...(await locationWhere(scope, req.query)),
+    ...dateRange(req.query, "opened_at"),
+    ...(await staffConditions(scope, req.query, { column: "cashier_id", numberColumn: "session_number", roles: ["store_admin", "manager", "cashier"] })),
+  }
   const staffId = await staffOf(scope, req.query)
   if (staffId) where.cashier_id = staffId
+  // status: open | closed; not sent = every batch.
   const status = queryRef(req.query, "status")
-  if (status) where.status = status
+  if (status) {
+    if (!["open", "closed"].includes(status)) throw new AppError("status must be open or closed", 400)
+    where.status = status
+  }
   const { rows, count } = await RegisterSession.findAndCountAll({
     where,
     order: [["opened_at", "DESC"]],
@@ -443,7 +530,23 @@ export async function batches(req) {
     offset: pageInfo.offset,
   })
   const refs = await batchRefs(rows)
-  return paged(rows.map((row) => batchRow(row, refs)), count, pageInfo)
+  return paged(rows.map((row) => batchListRow(row, refs)), count, pageInfo)
+}
+
+/** A batch in the history list: the drawer only — what it opened with, the cash sales, what was counted at closing. */
+function batchListRow(row, refs) {
+  return {
+    id: row.session_number,
+    staff: refs.staff(row.cashier_id),
+    location: refs.location(row.location_id),
+    status: row.status,
+    opening_amount: num(row.opening_cash),
+    cash_sales: num(row.cash_sales),
+    total_cash: num(row.counted_cash),
+    cash_variance: num(row.cash_variance),
+    opening_at: row.opened_at,
+    closing_at: row.closed_at || null,
+  }
 }
 
 const batchRefs = (rows) =>
@@ -486,9 +589,18 @@ export async function currentBatch(req) {
 export async function staff(req) {
   const scope = await scopeOf(req)
   const pageInfo = pageOf(req.query)
-  const where = { store_id: scope.store_id, role: { [Op.in]: ["manager", "cashier"] }, deleted_at: null, ...atLocation(scope), ...dateRange(req.query, "created_at") }
-  const role = queryRef(req.query, "role")
-  if (role) where.role = role
+  const where = { store_id: scope.store_id, role: { [Op.in]: ["manager", "cashier"] }, deleted_at: null, ...(await locationWhere(scope, req.query)), ...dateRange(req.query, "created_at") }
+  // roles: manager and / or cashier (a list); isActive: true | false, not sent = every staff member.
+  const roles = rolesOf(req.query, ["manager", "cashier"])
+  if (roles.length) where.role = { [Op.in]: roles }
+  const active = activeOf(req.query)
+  if (active !== undefined) where.is_active = active
+  // q: a text in the name, email or phone, or the staff number.
+  const text = queryRef(req.query, "q")
+  if (text) {
+    const like = `%${text}%`
+    where[Op.or] = [{ name: { [Op.like]: like } }, { email: { [Op.like]: like } }, { phone: { [Op.like]: like } }, ...(isNumber(text) ? [{ user_number: Number(text) }] : [])]
+  }
   const { rows, count } = await User.findAndCountAll({
     where,
     order: [["user_number", "ASC"]],
