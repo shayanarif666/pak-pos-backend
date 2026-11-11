@@ -4,6 +4,7 @@ import { sequelize } from "../../db/sequelize.js"
 import { StoreLicense } from "./storeLicense.model.js"
 import { Store } from "./store.model.js"
 import { Plan } from "../plans/plan.model.js"
+import { planFeatures } from "../plans/plan.service.js"
 import { PosDevice } from "../pos/posDevice.model.js"
 import { Location } from "../locations/location.model.js"
 import { addOneMonth, isExpired } from "../../shared/utils/date.util.js"
@@ -178,7 +179,7 @@ function licenseExtras(license) {
 // carries the license_key and the plan — POST /auth/login dropped both to keep the login payload
 // small.
 // POS shape of a license check: device_id is the till's short device number (as the POS stores
-// it), planId the plan number.
+// it), plan the plan itself (its number, name, limits and features), not just an id.
 function posLicenseView(license, extras = {}) {
   return {
     license_key: license.license_key,
@@ -190,7 +191,16 @@ function posLicenseView(license, extras = {}) {
     suspended_at: license.suspended_at ?? null,
     suspended_reason: license.suspended_reason ?? null,
     valid: extras.valid !== false,
-    planId: license.Plan?.plan_number ?? null,
+    plan: license.Plan
+      ? {
+          id: license.Plan.plan_number,
+          code: license.Plan.code,
+          name: license.Plan.name,
+          max_devices: license.Plan.max_devices,
+          max_locations: license.Plan.max_locations,
+          features: planFeatures(license.Plan),
+        }
+      : null,
   }
 }
 
@@ -613,6 +623,10 @@ export async function renewLicense(id, input = {}, actor = null) {
     if (!nextPlan || !nextPlan.is_active) throw new NotFoundError("Plan not found")
     const store = await Store.findByPk(row.store_id, { transaction })
     if (!store) throw new NotFoundError("Store not found")
+    // storeId (the store number) is optional: when it is sent it must be this license's store.
+    if (input.storeId !== undefined && Number(input.storeId) !== Number(store.store_id_int)) {
+      throw new AppError(`License ${row.license_key} does not belong to store ${input.storeId}`, 400)
+    }
 
     // A smaller plan must still fit what the store already uses.
     const [devices, locations] = await Promise.all([

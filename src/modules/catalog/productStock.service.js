@@ -173,36 +173,46 @@ export async function applyStockDelta(
     await row.update(patch, { transaction })
   }
 
-  let movement = null
+  // One movement per lot it moved: a stock out that takes from two lots is two movements, each with its
+  // own lot, qty and qty_after. Without lots (nothing to move them in) it is one movement.
+  const movements = []
   const signed = Number(delta)
   if (signed !== 0) {
-    movement = await StockMovement.create(
-      {
-        store_id: storeId,
-        store_id_int: storeIdInt,
-        movement_number: await nextStockMovementNumber(storeId, transaction),
-        location_id: location.id,
-        location_id_int: location.location_id_int,
-        product_id: productId,
-        movement_type,
-        reason,
-        reason_note: reason_note || null,
-        qty: signed,
-        qty_after: newQty,
-        unit_sold: newSold,
-        staff_id: staff_id || null,
-        supplier_id: supplier_id || null,
-        order_id: order_id || null,
-        lot_id: lots.length === 1 ? lots[0].lot_id : lots[0]?.lot_id || null,
-        lots: lots.length ? lots : null,
-        // A manual movement may name its own visibility; otherwise it follows the stock row.
-        ...(visibility || copyVisibility(row)),
-      },
-      { transaction }
-    )
+    let running = oldQty
+    for (const lot of lots.length ? lots : [null]) {
+      const part = lot ? Number(lot.qty) : signed
+      running = Number((running + part).toFixed(4))
+      movements.push(
+        await StockMovement.create(
+          {
+            store_id: storeId,
+            store_id_int: storeIdInt,
+            movement_number: await nextStockMovementNumber(storeId, transaction),
+            location_id: location.id,
+            location_id_int: location.location_id_int,
+            product_id: productId,
+            movement_type,
+            reason,
+            reason_note: reason_note || null,
+            qty: part,
+            qty_after: running,
+            unit_sold: newSold,
+            staff_id: staff_id || null,
+            supplier_id: supplier_id || null,
+            order_id: order_id || null,
+            lot_id: lot?.lot_id || null,
+            lots: lot ? [lot] : null,
+            // A manual movement may name its own visibility; otherwise it follows the stock row.
+            ...(visibility || copyVisibility(row)),
+          },
+          { transaction }
+        )
+      )
+    }
   }
 
-  return { stock: row, movement, qty: newQty, lots }
+  // movement = the first one (movements has them all).
+  return { stock: row, movement: movements[0] || null, movements, qty: newQty, lots }
 }
 
 export async function putStock(actor, productId, fields) {

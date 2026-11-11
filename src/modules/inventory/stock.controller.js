@@ -31,9 +31,12 @@ async function prepare(req, base, { staff_ref, supplier_ref, ...fields }, fallba
   return { actor: { ...actingAs(base, staff), role: base.role }, fields: { ...fields, supplier_id } }
 }
 
-async function movementSummary(result) {
-  const row = result.movement ? await StockMovement.findByPk(result.movement.id) : null
-  return row ? posStockMovement(row) : null
+/** The movements of these results (one per lot moved), in the POS shape, in order. */
+async function movementRows(results) {
+  const ids = results.flatMap((result) => (result.movements?.length ? result.movements : [result.movement]).map((row) => row?.id)).filter(Boolean)
+  const rows = ids.length ? await StockMovement.findAll({ where: { id: ids } }) : []
+  const byId = new Map(rows.map((row) => [row.id, row]))
+  return posStockMovements(ids.map((id) => byId.get(id)).filter(Boolean))
 }
 
 export const list = asyncHandler(async (req, res) => {
@@ -50,7 +53,7 @@ export const create = asyncHandler(async (req, res) => {
     return res.status(first?.status || 400).json({ success: false, message: first?.message || "Failed", failed })
   }
   if (req.auth?.channel === "pos") {
-    const rows = await Promise.all(created.map((result) => movementSummary(result)))
+    const rows = await movementRows(created)
     return apiResponse(res, 201, "Stock Movement Created", rows.length === 1 && !failed.length ? rows[0] : rows)
   }
   const data = created.map(({ summary: _summary, ...row }) => row)
@@ -97,11 +100,7 @@ export const createBulk = asyncHandler(async (req, res) => {
   const data = { created: moved, failed, created_count: moved.length, failed_count: failed.length }
   if (req.auth?.channel === "pos") {
     // Every created movement in one query, shaped together.
-    const ids = moved.map((row) => row.movement?.id).filter(Boolean)
-    const rows = ids.length ? await StockMovement.findAll({ where: { id: ids } }) : []
-    const byId = new Map(rows.map((row) => [row.id, row]))
-    const shaped = await posStockMovements(ids.map((id) => byId.get(id)).filter(Boolean))
-    return posBulkResponse(res, data, "Stock Movement Created", shaped)
+    return posBulkResponse(res, data, "Stock Movement Created", await movementRows(moved))
   }
   const created = moved.map(({ summary: _summary, ...row }) => row)
   return apiResponse(res, bulkStatus(data), "Bulk stock movements processed", { ...data, created })

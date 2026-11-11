@@ -56,7 +56,7 @@ function parseName(body) {
 }
 
 function parseActive(body) {
-  const value = body.is_active
+  const value = body.is_active ?? body.isActive
   if (value === undefined || value === null) return undefined
   if (value === "false" || value === 0 || value === "0") return false
   return Boolean(value)

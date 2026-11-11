@@ -9,6 +9,7 @@
  * with one IN (...) query (see Refs), never one query per row.
  */
 import { thresholdUnit } from "../catalog/stockThreshold.js"
+import { movementLot } from "../inventory/movementLot.js"
 import { categoryOf, figures } from "./saleCatalog.js"
 import { bulksForProducts } from "../discounts/bulkDiscount.service.js"
 import { Op } from "sequelize"
@@ -53,7 +54,7 @@ const KINDS = {
   location: { model: Location, attributes: ["id", "location_id_int", "name"] },
   product: {
     model: Product,
-    attributes: ["id", "product_number", "title", "sku", "unit", "category_id", "parent_product_id", "variant_number", "variant_name", "pack_size", "pack_selling_price"],
+    attributes: ["id", "product_number", "title", "sku", "barcode", "unit", "category_id", "parent_product_id", "variant_number", "variant_name", "pack_size", "pack_selling_price"],
   },
   category: { model: Category, attributes: ["id", "category_number", "name", "tax_name"] },
   supplier: { model: Supplier, attributes: ["id", "supplier_number", "name", "phone"] },
@@ -677,27 +678,32 @@ export async function posStockMovements(movements) {
     product: movements.map((row) => row.product_id),
     supplier: movements.map((row) => row.supplier_id),
     user: movements.map((row) => row.staff_id),
-    order: movements.map((row) => row.order_id),
     location: movements.map((row) => row.location_id),
   })
   // A variant's product.
   await refs.load("product", movements.map((row) => refs.get("product", row.product_id)?.parent_product_id))
+  // product { id, title, sku, barcode, unit } and, for a variant, variant { id, name, sku, barcode }.
+  const productOf = (id) => {
+    const row = refs.get("product", id)
+    const { product, variant } = refs.productAndVariant(id)
+    const parent = row?.parent_product_id ? refs.get("product", row.parent_product_id) : row
+    return {
+      product: product ? { ...product, barcode: parent?.barcode || null } : null,
+      variant: variant ? { ...variant, barcode: row?.barcode || null } : null,
+    }
+  }
   return movements.map((movement) => ({
     id: movement.movement_number,
     location: refs.location(movement.location_id),
-    ...refs.productAndVariant(movement.product_id),
+    ...productOf(movement.product_id),
     supplier: refs.supplier(movement.supplier_id),
     staff: refs.staff(movement.staff_id),
-    // The order a sale / refund belongs to: only its number (its status changes, a movement does not).
-    order: movement.order_id && refs.number("order", movement.order_id) != null ? { id: refs.number("order", movement.order_id) } : null,
     movement_type: movement.movement_type,
     reason: movement.reason,
     reason_note: movement.reason_note || null,
+    // The quantity moved (signed: out is negative), and the one lot it moved: { id (lot number), qty, expiry_date }.
     qty: num(movement.qty),
-    qty_after: num(movement.qty_after),
-    // The lot(s) it moved, always an array: [{ id (lot number), qty (signed), expiry_date }]. A stock in
-    // fills one lot; a sale, refund or transfer can touch several. The qty of the lots add up to the movement's qty.
-    lots: (Array.isArray(movement.lots) ? movement.lots : typeof movement.lots === "string" ? JSON.parse(movement.lots || "[]") : []).map((lot) => ({ id: lot.lot_number, qty: Number(lot.qty), expiry_date: lot.expiry_date || null })),
+    lot: movementLot(movement),
     created_at: movement.created_at,
   }))
 }

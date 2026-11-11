@@ -299,6 +299,12 @@ export function parseRevoke(body) {
 export function parseRenewLicense(body) {
   // plan_id: the plan number (e.g. 1) or UUID; left out = renew on the current plan.
   const out = {}
+  // storeId: the store number the license belongs to (a check; the :id in the path names the license).
+  const storeId = body.storeId ?? body.store_id
+  if (storeId !== undefined && storeId !== null && storeId !== "") {
+    if (!/^[1-9]\d*$/.test(String(storeId).trim())) throw new AppError("storeId must be the store number", 400)
+    out.storeId = Number(storeId)
+  }
   if (body.plan_id !== undefined && body.plan_id !== null && body.plan_id !== "") {
     const ref = String(body.plan_id).trim()
     if (!/^[1-9]\d*$/.test(ref) && !UUID_RE.test(ref)) {

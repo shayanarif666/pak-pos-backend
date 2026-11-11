@@ -9,13 +9,14 @@ import { StockLot } from "../catalog/stockLot.model.js"
 import { Store } from "../stores/store.model.js"
 import { lotsByStock, publicLot } from "../catalog/stockLots.service.js"
 import { isLowStock, thresholdUnit } from "../catalog/stockThreshold.js"
+import { movementLot } from "./movementLot.js"
 
 /*
  * Replies of the stock edit APIs (PATCH /stock-movements/bulk, PATCH /product-stocks/bulk and the
  * deletes): short numbers only, never UUIDs — each reference is { id (its number), name… }.
  *
  *   movement: { id (movement number), location, product, staff, supplier, movement_type, reason,
- *               reason_note, qty, qty_after, created_at, updated_at[, deleted_at] }
+ *               reason_note, qty, lot, created_at, updated_at[, deleted_at] }
  *   stock:    { location, product, qty, pack_size, number_of_packs, loose_units, sell_loose,
  *               expiry_date, low_stock_threshold, is_low, updated_at[, deleted_at] }
  *   product:  { id, title, sku, barcode, unit, variant: null | { id, title, sku, barcode } }
@@ -91,9 +92,8 @@ export async function stockEditRows(pairs) {
       reason: row.reason,
       reason_note: row.reason_note || null,
       qty: num(row.qty),
-      qty_after: num(row.qty_after),
-      // The lot(s) it moved: [{ id (lot number), qty, expiry_date }].
-      lots: (Array.isArray(row.lots) ? row.lots : typeof row.lots === "string" ? JSON.parse(row.lots || "[]") : []).map((lot) => ({ id: lot.lot_number, qty: num(lot.qty), expiry_date: lot.expiry_date || null })),
+      // The lot it moved: { id (lot number), qty, expiry_date }.
+      lot: movementLot(row),
       created_at: row.created_at,
       updated_at: row.updated_at || null,
       ...(row.deleted_at ? { deleted_at: row.deleted_at } : {}),

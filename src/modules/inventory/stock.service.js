@@ -179,7 +179,7 @@ export async function createMovements(actor, fields) {
 async function moveOne(actor, product, location, fields) {
   const store = await Store.findByPk(actor.store_id)
   return sequelize.transaction(async (transaction) => {
-    const { stock, movement } = await applyStockDelta(
+    const { stock, movement, movements } = await applyStockDelta(
       {
         storeId: actor.store_id,
         storeIdInt: actor.store_id_int,
@@ -198,15 +198,17 @@ async function moveOne(actor, product, location, fields) {
       { transaction }
     )
     const refs = (await productRefs([product.id])).get(product.id)
+    const view = (row) =>
+      publicMovement(row, {
+        store_name: store?.name || null,
+        location_name: location.name,
+        location_number: location.location_id_int,
+        refs,
+      })
     return {
-      movement: movement
-        ? publicMovement(movement, {
-            store_name: store?.name || null,
-            location_name: location.name,
-            location_number: location.location_id_int,
-            refs,
-          })
-        : null,
+      movement: movement ? view(movement) : null,
+      // One per lot it moved (a stock out over two lots is two movements).
+      movements: movements.map(view),
       stock: publicStock(stock, product),
       summary: stockSummary(product, Number(stock.qty), refs),
     }
@@ -231,7 +233,7 @@ export async function createMovement(actor, fields) {
   const store = await Store.findByPk(actor.store_id)
 
   return sequelize.transaction(async (transaction) => {
-    const { stock, movement } = await applyStockDelta(
+    const { stock, movement, movements } = await applyStockDelta(
       {
         storeId: actor.store_id,
         storeIdInt: actor.store_id_int,
@@ -249,14 +251,11 @@ export async function createMovement(actor, fields) {
       },
       { transaction }
     )
+    const view = (row) => publicMovement(row, { store_name: store?.name || null, location_name: location.name })
 
     return {
-      movement: movement
-        ? publicMovement(movement, {
-            store_name: store?.name || null,
-            location_name: location.name,
-          })
-        : null,
+      movement: movement ? view(movement) : null,
+      movements: movements.map(view),
       stock: publicStock(stock, product),
       summary: stockSummary(product, Number(stock.qty), (await productRefs([product.id])).get(product.id)),
     }
