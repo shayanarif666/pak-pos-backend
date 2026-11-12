@@ -52,10 +52,20 @@ export function stockStatus(qty, threshold) {
   return "ok"
 }
 
-const packsOf = (qty, packSize) => {
-  const size = Number(packSize)
-  return size >= 2 ? Math.floor(Number(qty) / size) : null
+/** { number_of_packs, loose_items } of a qty of a pack product (whole packs and what is left over); both null otherwise. */
+function packCountsOf(qty, product) {
+  const size = Number(product.pack_size)
+  if (!(product.is_pack_product && size >= 2)) return { number_of_packs: null, loose_items: null }
+  const packs = Math.floor(Number(qty) / size)
+  return { number_of_packs: packs, loose_items: round4(Number(qty) - packs * size) }
 }
+
+/** What a stock row says about how the thing is sold: pack or not, and whether single units are sold too. */
+const flagsOf = (product) => ({
+  is_pack_product: Boolean(product.is_pack_product),
+  // Without a pack every unit is sold loose.
+  sell_loose: product.is_pack_product ? Boolean(product.sell_loose) : true,
+})
 
 const pickEnum = (value, allowed, label) => {
   if (value === undefined || value === null || value === "") return null
@@ -129,12 +139,14 @@ export async function listStockRows(scope, query = {}) {
         sku: parent ? parent.sku : product.sku,
         barcode: parent ? parent.barcode : product.barcode,
       },
-      variant: parent ? { id: product.variant_number, name: product.variant_name, sku: product.sku, barcode: product.barcode } : null,
+      variant: parent ? { id: product.variant_number, name: product.variant_name, sku: product.sku, barcode: product.barcode, ...flagsOf(product) } : null,
+      // The flags of a product without variants (a variant carries its own).
+      flags: parent ? null : flagsOf(product),
       stock: {
         location: { id: location?.location_id_int ?? stock.location_id_int, name: location?.name || null },
         qty,
-        qty_packs: product.is_pack_product ? packsOf(qty, product.pack_size) : null,
         pack_size: product.is_pack_product && Number(product.pack_size) >= 2 ? Number(product.pack_size) : null,
+        ...packCountsOf(qty, product),
         // In packs for a pack-only product, else in units (piece / gram / kg): see low_stock_unit.
         low_stock_threshold: threshold == null ? null : round4(threshold),
         low_stock_unit: thresholdUnit(product),
@@ -161,26 +173,33 @@ export async function listStockRows(scope, query = {}) {
   const groups = new Map()
   for (const row of rows) {
     if (!wanted.has(row.key)) continue
-    const group = groups.get(row.key) || { product: row.product, own: [], variants: new Map() }
+    const group = groups.get(row.key) || { product: row.product, flags: null, own: [], variants: new Map() }
     if (row.variant) {
       const variant = group.variants.get(row.variant.id) || { ...row.variant, stock: [] }
       variant.stock.push(row.stock)
       group.variants.set(row.variant.id, variant)
     } else {
+      group.flags = row.flags
       group.own.push(row.stock)
     }
     groups.set(row.key, group)
   }
   const byLocation = (a, b) => a.location.id - b.location.id
+  const totalOf = (stocks) => round4(stocks.reduce((sum, stock) => sum + stock.qty, 0))
   const list = [...groups.values()].map((group) => {
     const variants = [...group.variants.values()].sort((a, b) => a.id - b.id)
     for (const variant of variants) variant.stock.sort(byLocation)
     group.own.sort(byLocation)
     const dates = [...group.own, ...variants.flatMap((variant) => variant.stock)].map((stock) => stock.nearest_expiry_date).filter(Boolean).sort()
-    return {
-      nearest: dates[0] || null,
-      row: { product: { ...group.product, stock: variants.length ? null : group.own, variants } },
-    }
+    // The flags and the total qty sit on the object that has the stock: each variant, or the product without variants.
+    const shownVariants = variants.map((variant) => {
+      const { stock, ...rest } = variant
+      return { ...rest, total_qty: totalOf(stock), stock }
+    })
+    const product = variants.length
+      ? { ...group.product, stock: null, variants: shownVariants }
+      : { ...group.product, ...group.flags, total_qty: totalOf(group.own), stock: group.own, variants: [] }
+    return { nearest: dates[0] || null, row: { product } }
   })
 
   // The product with the soonest expiry (any stock of it) first, then the ones without an expiry date; then product.
