@@ -47,6 +47,7 @@ import {
   posTransfers,
 } from "./posResponses.js"
 import { AppError } from "../../shared/errors/AppError.js"
+import { STOCK_MOVEMENT_REASON, STOCK_MOVEMENT_TYPE } from "../../db/enums.js"
 import { StockTransferItem } from "../inventory/stockTransferItem.model.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 
@@ -471,13 +472,31 @@ export async function refunds(req) {
 export async function stockMovements(req) {
   const scope = await scopeOf(req)
   const pageInfo = pageOf(req.query)
-  const where = { store_id: scope.store_id, ...atLocation(scope), ...dateRange(req.query, "created_at") }
+  const where = { store_id: scope.store_id, ...(await locationWhere(scope, req.query)), ...dateRange(req.query, "created_at") }
   const productId = await idOf(Product, "product_number", scope.store_id, queryRef(req.query, "productId", "product_id"), "Product")
   if (productId) where.product_id = productId
-  const type = queryRef(req.query, "movement_type")
-  if (type) where.movement_type = type
-  const reason = queryRef(req.query, "reason")
-  if (reason) where.reason = reason
+  // type (movement_type also works) and reason: each may be a list (type=stock_in,stock_out).
+  const types = listOf(req.query, "type", "types", "movement_type")
+  const badType = types.find((value) => !STOCK_MOVEMENT_TYPE.includes(value))
+  if (badType) throw new AppError(`type must be ${STOCK_MOVEMENT_TYPE.join(", ")}`, 400)
+  if (types.length) where.movement_type = { [Op.in]: types }
+  const reasons = listOf(req.query, "reason", "reasons")
+  const badReason = reasons.find((value) => !STOCK_MOVEMENT_REASON.includes(value))
+  if (badReason) throw new AppError(`reason must be ${STOCK_MOVEMENT_REASON.join(", ")}`, 400)
+  if (reasons.length) where.reason = { [Op.in]: reasons }
+  // q: a text in the product's title, SKU or barcode (or its variant's name, SKU, barcode), in the note, or the movement number.
+  const text = queryRef(req.query, "q")
+  if (text) {
+    const like = `%${text}%`
+    const found = await Product.findAll({
+      where: { store_id: scope.store_id, [Op.or]: [{ title: { [Op.like]: like } }, { sku: { [Op.like]: like } }, { barcode: { [Op.like]: like } }, { variant_name: { [Op.like]: like } }] },
+      attributes: ["id"],
+    })
+    // The variants of a product found by its own title / barcode.
+    const children = found.length ? await Product.findAll({ where: { parent_product_id: { [Op.in]: found.map((row) => row.id) } }, attributes: ["id"] }) : []
+    const ids = [...new Set([...found, ...children].map((row) => row.id))]
+    where[Op.and] = [{ [Op.or]: [...(ids.length ? [{ product_id: { [Op.in]: ids } }] : []), { reason_note: { [Op.like]: like } }, ...(isNumber(text) ? [{ movement_number: Number(text) }] : [])] }]
+  }
   const { rows, count } = await StockMovement.findAndCountAll({
     where,
     order: [
