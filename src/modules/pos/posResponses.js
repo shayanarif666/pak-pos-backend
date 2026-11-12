@@ -877,10 +877,10 @@ export async function posCategory(view) {
 }
 
 /**
- * What applies to the products, level by level: [{ level, ... }] per product id (UUID).
- * discounts: product, category and bulk (the live bulk discount on the product, or on one of its variants:
- * its tiers). A bundle is across products, so it is not here (GET /bundle-discounts).
- * taxes: store (Taxes page), category, product.
+ * The live bulk discounts of the products and their category, for posProducts: per product id (UUID)
+ * { category, bulks } with each bulk as { level: "bulk", id, name, sale_unit, tiers, variant_number } —
+ * variant_number null = on the product (every variant), else the one variant it is on.
+ * A bundle is across products and an order discount is the cashier's pick, so neither is here.
  */
 async function levelsOf(views, refs) {
   const storeId = views[0]?.store_id
@@ -888,47 +888,51 @@ async function levelsOf(views, refs) {
   const bulks = await bulksForProducts(storeId, rowIds)
   const out = new Map()
   for (const view of views) {
-    const category = categoryOf(view, refs)
     const ids = new Set([view.id, ...(view.variants || []).map((variant) => variant.id)])
-    const bulkList = bulks
-      .filter((bulk) => ids.has(bulk.product_id))
-      .map((bulk) => ({
-        level: "bulk",
-        id: bulk.bulk_number,
-        name: bulk.name,
-        // A bulk discount on one variant says which; on the product it covers every variant (each counted on its own).
-        variant_id: bulk.product_id === view.id ? null : (view.variants || []).find((variant) => variant.id === bulk.product_id)?.variant_number ?? null,
-        sale_unit: bulk.sale_unit,
-        tiers: bulk.tiers,
-      }))
-    // A variant with a discount of its own is listed with its variant_id; the product's one is for every
-    // variant that has none of its own (and did not opt out).
-    const variantDiscounts = (view.variants || [])
-      .filter((variant) => variant.discount)
-      .map((variant) => ({ level: "product", variant_id: variant.variant_number, name: variant.discount.name, type: variant.discount.type, value: variant.discount.value, applies_to: variant.discount.applies_to }))
-    const discounts = [
-      ...(view.has_product_discount && view.discount_type && view.discount_value != null
-        ? [{ level: "product", name: view.discount_name || null, type: view.discount_type, value: num(view.discount_value), applies_to: view.discount_applies_to || "all" }]
-        : []),
-      ...variantDiscounts,
-      ...(category?.discount ? [{ level: "category", name: category.discount.name, type: category.discount.type, value: category.discount.value }] : []),
-      ...bulkList,
-    ]
-    const taxes = [
-      ...(view.store_taxes || []).map((tax) => ({ level: "store", id: tax.id ?? null, name: tax.name, type: tax.type, value: Number(tax.value) })),
-      ...(category?.tax ? [{ level: "category", name: category.tax.name, type: category.tax.type, value: category.tax.value }] : []),
-      ...(view.taxes || []).map((tax) => ({ level: "product", name: tax.name || null, type: tax.type, value: Number(tax.value) })),
-    ]
-    out.set(view.id, { discounts, taxes, category })
+    out.set(view.id, {
+      category: categoryOf(view, refs),
+      bulks: bulks
+        .filter((bulk) => ids.has(bulk.product_id))
+        .map((bulk) => ({
+          level: "bulk",
+          id: bulk.bulk_number,
+          name: bulk.name,
+          sale_unit: bulk.sale_unit,
+          tiers: bulk.tiers,
+          variant_number: bulk.product_id === view.id ? null : (view.variants || []).find((variant) => variant.id === bulk.product_id)?.variant_number ?? null,
+        })),
+    })
   }
   return out
 }
 
+/** One discount of a list: { level, name, type, value } (applies_to only when it is not all). */
+const discountEntry = (level, discount) => ({
+  level,
+  name: discount.name || null,
+  type: discount.type,
+  value: Number(discount.value),
+  ...(discount.applies_to && discount.applies_to !== "all" ? { applies_to: discount.applies_to } : {}),
+})
+
+/** One tax of a list: { level, [id,] name, type, value } (id is the tax number of a store tax). */
+const taxEntry = (level, tax) => ({
+  level,
+  ...(level === "store" ? { id: tax.id ?? null } : {}),
+  name: tax.name || null,
+  type: tax.type,
+  value: Number(tax.value),
+})
+
 /**
- * GET /products: every detail of a product, its variants inside, without any stock. discounts and
- * taxes list every level that applies; pack_/unit_ discount_value and tax_value are what ONE pack /
- * ONE unit is cut / charged once the product and category discounts (a bulk discount depends on the
- * qty, a bundle on the cart, so they are not in them) and then all the taxes are worked out.
+ * GET /products: every detail of a product, its variants inside, without any stock. Every discount and
+ * tax that applies is listed on the thing that is sold: on each variant (a product with variants has no
+ * discounts / taxes of its own), or on the product when it has no variants.
+ *   discounts: variant (its own, replaces the product's) | product | category | bulk
+ *   taxes: store (Taxes page) | category | product | variant
+ * pack_/unit_ discount_value and tax_value are what ONE pack / ONE unit is cut / charged once the
+ * product / variant and category discounts (a bulk discount depends on the qty, so it is not in them)
+ * and then all the taxes are worked out.
  */
 export async function posProducts(views) {
   const refs = await new Refs().loadAll({ category: views.map((view) => view.category_id) })
@@ -943,6 +947,20 @@ export async function posProducts(views) {
       isWeightBased: Boolean(row.is_weight_based),
     })
   const variantDiscount = (row, view) => effectiveDiscount(row, view)
+  const bulkOf = (level, variantNumber) =>
+    level.bulks.filter((bulk) => bulk.variant_number == null || bulk.variant_number === variantNumber).map(({ variant_number: _variant, ...bulk }) => bulk)
+  // Every discount / tax of a product without variants, or of one variant (its own row, its product's view).
+  const discountsOf = (level, own, bulks) => [
+    ...(own ? [discountEntry(own.source || "product", own)] : []),
+    ...(level.category?.discount ? [discountEntry("category", level.category.discount)] : []),
+    ...bulks,
+  ]
+  const taxesOf = (level, store, product, variant) => [
+    ...(store || []).map((tax) => taxEntry("store", tax)),
+    ...(level.category?.tax ? [taxEntry("category", level.category.tax)] : []),
+    ...(product || []).map((tax) => taxEntry("product", tax)),
+    ...(variant || []).map((tax) => taxEntry("variant", tax)),
+  ]
   return views.map((view) => {
     const level = levels.get(view.id)
     const ownDiscount = view.has_product_discount && view.discount_type && view.discount_value != null
@@ -969,14 +987,14 @@ export async function posProducts(views) {
         pack_selling_price: num(row.pack_selling_price),
         sell_loose: Boolean(row.sell_loose),
         is_weight_based: Boolean(row.is_weight_based),
-        taxes: row.taxes || [],
         // Its own image; null = use the product's image.
         image: row.image || null,
         // The colours it comes in (hex codes).
         colors: row.colors || [],
-        // The discount it is sold with (its own, else its product's) and where it came from, or null.
-        discount: variantDiscount(row, view),
-        // Per ONE pack / ONE unit, every discount and tax that applies worked out.
+        // Every discount and tax this variant is sold with, by level (see above).
+        discounts: discountsOf(level, variantDiscount(row, view), bulkOf(level, row.variant_number)),
+        taxes: taxesOf(level, row.store_taxes, view.taxes, Array.isArray(row.variant_taxes) ? row.variant_taxes : []),
+        // Per ONE pack / ONE unit, every discount and tax above worked out.
         ...figuresOf(row, view, variantDiscount(row, view)),
         is_active: row.is_active,
       })),
@@ -997,7 +1015,8 @@ export async function posProducts(views) {
       pack_selling_price: num(view.pack_selling_price),
       sell_loose: Boolean(view.sell_loose),
       is_weight_based: Boolean(view.is_weight_based),
-      has_bulk_discount: Boolean(view.has_bulk_discount),
+      // true when a live bulk discount is on it (or on one of its variants).
+      has_bulk_discount: level.bulks.length > 0,
       low_stock_threshold: num(view.low_stock_threshold),
       // What the low stock level counts (pack | unit); null with variants (each variant's is in GET /products/stock).
       low_stock_unit: view.has_variants ? null : thresholdUnit(view),
@@ -1006,11 +1025,11 @@ export async function posProducts(views) {
       // A product without variants carries its own figures (per one pack / one unit); with variants each variant does.
       ...(productFigures || {}),
       has_product_discount: Boolean(view.has_product_discount),
-      // Every discount that applies: product, category, bulk (see level).
-      discounts: level.discounts,
+      // A product without variants: every discount that applies to it (product, category, bulk). With variants: on each variant.
+      ...(view.has_variants ? {} : { discounts: discountsOf(level, ownDiscount ? { ...ownDiscount, name: view.discount_name, source: "product" } : null, bulkOf(level, null)) }),
       has_product_tax: (view.taxes || []).length > 0,
-      // Every tax that applies: store (Taxes page), category, product (see level).
-      taxes: level.taxes,
+      // A product without variants: every tax that applies to it (store, category, product). With variants: on each variant.
+      ...(view.has_variants ? {} : { taxes: taxesOf(level, view.store_taxes, view.taxes, []) }),
       ...posLocationScope(view),
       // The locations holding its stock: all (every one it is sold at) or selected + their numbers.
       stock_scope: view.stock_scope || "all",
