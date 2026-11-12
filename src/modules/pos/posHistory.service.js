@@ -47,7 +47,7 @@ import {
   posTransfers,
 } from "./posResponses.js"
 import { AppError } from "../../shared/errors/AppError.js"
-import { STOCK_MOVEMENT_REASON, STOCK_MOVEMENT_TYPE } from "../../db/enums.js"
+import { STOCK_MOVEMENT_REASON, STOCK_MOVEMENT_TYPE, TRANSFER_STATUS } from "../../db/enums.js"
 import { StockTransferItem } from "../inventory/stockTransferItem.model.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 
@@ -514,19 +514,49 @@ export async function stockTransfers(req) {
   const scope = await scopeOf(req)
   const pageInfo = pageOf(req.query)
   const where = { store_id: scope.store_id, ...dateRange(req.query, "created_at") }
-  if (scope.location_id) {
-    // Sent from this location, or with a line going to it.
+  const conditions = []
+  // locations: a list (store admin only) of the locations a transfer is sent from or has a line going to; a
+  // manager / cashier only their own.
+  const locationIds = (await locationIdsOf(scope, req.query)) ?? (scope.location_id ? [scope.location_id] : null)
+  if (locationIds) {
     const incoming = await StockTransferItem.findAll({
-      where: { store_id: scope.store_id, to_location_id: scope.location_id },
+      where: { store_id: scope.store_id, to_location_id: { [Op.in]: locationIds } },
       attributes: ["transfer_id"],
     })
-    where[Op.or] = [
-      { from_location_id: scope.location_id },
-      { id: [...new Set(incoming.map((row) => row.transfer_id))] },
-    ]
+    conditions.push({ [Op.or]: [{ from_location_id: { [Op.in]: locationIds } }, { id: { [Op.in]: [...new Set(incoming.map((row) => row.transfer_id))] } }] })
   }
-  const status = queryRef(req.query, "status")
-  if (status) where.status = status
+  // status: pending | on_the_way | completed | cancelled (a list is allowed); left out = every transfer.
+  const statuses = listOf(req.query, "status", "statuses")
+  const badStatus = statuses.find((value) => !TRANSFER_STATUS.includes(value))
+  if (badStatus) throw new AppError(`status must be ${TRANSFER_STATUS.join(", ")}`, 400)
+  if (statuses.length) where.status = { [Op.in]: statuses }
+  // q: a text in a product's title, SKU or barcode (or its variant's), in a location's name, in the note, or the transfer number.
+  const text = queryRef(req.query, "q")
+  if (text) {
+    const like = `%${text}%`
+    const products = await Product.findAll({
+      where: { store_id: scope.store_id, [Op.or]: [{ title: { [Op.like]: like } }, { sku: { [Op.like]: like } }, { barcode: { [Op.like]: like } }, { variant_name: { [Op.like]: like } }] },
+      attributes: ["id"],
+    })
+    const children = products.length ? await Product.findAll({ where: { parent_product_id: { [Op.in]: products.map((row) => row.id) } }, attributes: ["id"] }) : []
+    const productIds = [...new Set([...products, ...children].map((row) => row.id))]
+    const places = (await Location.findAll({ where: { store_id: scope.store_id, name: { [Op.like]: like } }, attributes: ["id"] })).map((row) => row.id)
+    const lines = productIds.length || places.length
+      ? await StockTransferItem.findAll({
+          where: { store_id: scope.store_id, [Op.or]: [...(productIds.length ? [{ product_id: { [Op.in]: productIds } }] : []), ...(places.length ? [{ to_location_id: { [Op.in]: places } }] : [])] },
+          attributes: ["transfer_id"],
+        })
+      : []
+    conditions.push({
+      [Op.or]: [
+        { note: { [Op.like]: like } },
+        ...(isNumber(text) ? [{ transfer_number: Number(text) }] : []),
+        ...(places.length ? [{ from_location_id: { [Op.in]: places } }] : []),
+        ...(lines.length ? [{ id: { [Op.in]: [...new Set(lines.map((row) => row.transfer_id))] } }] : []),
+      ],
+    })
+  }
+  if (conditions.length) where[Op.and] = conditions
   const { rows, count } = await StockTransfer.findAndCountAll({
     where,
     include: [{ model: StockTransferItem, as: "items" }],
