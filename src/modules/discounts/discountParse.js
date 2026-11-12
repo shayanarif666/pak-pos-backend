@@ -88,3 +88,16 @@ export function windowIsLive(view, now = new Date()) {
   if (view.end_at && now > new Date(view.end_at)) return false
   return true
 }
+
+/**
+ * ?active= of a discount list: true (or 1) = the live ones (active, started, not ended), false (or 0) = the
+ * ones that are not live, left out = every one. ?pos=1 (older clients) = the live ones. undefined = not sent.
+ */
+export function liveFlag(query = {}) {
+  const raw = query.active ?? (query.pos === "1" ? "true" : undefined)
+  if (raw === undefined || raw === null || raw === "" || raw === "null") return undefined
+  const text = String(raw).toLowerCase()
+  if (text === "true" || text === "1") return true
+  if (text === "false" || text === "0") return false
+  throw new AppError("active must be true, false or left out", 400)
+}

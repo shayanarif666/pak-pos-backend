@@ -3,7 +3,7 @@ import { sequelize } from "../../db/sequelize.js"
 import { BulkDiscount, BulkDiscountTier } from "./bulkDiscount.model.js"
 import { Product } from "../catalog/product.model.js"
 import { resolveSellable } from "./discountTargets.js"
-import { windowIsLive } from "./discountParse.js"
+import { liveFlag, windowIsLive } from "./discountParse.js"
 import { nextBulkNumber } from "../../shared/utils/counter.util.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
@@ -40,15 +40,16 @@ async function setTiers(bulkId, tiers, transaction) {
 
 export async function listBulks(storeId, query = {}) {
   const where = { store_id: storeId }
-  const liveOnly = query.active === "1" || query.pos === "1"
-  if (liveOnly) where.is_active = true
+  // active: true = the live ones, false = the ones that are not live, left out = every one.
+  const live = liveFlag(query)
+  if (live === true) where.is_active = true
   if (query.product_id) {
     const sellable = await resolveSellable(storeId, query.product_id, query.variant_id, { label: "product_id" })
     where.product_id = sellable.id
   }
   const rows = await BulkDiscount.findAll({ where, include: [tiersInclude], order: [["created_at", "DESC"]] })
   const views = rows.map(publicBulk)
-  return liveOnly ? views.filter((view) => windowIsLive(view)) : views
+  return live === undefined ? views : views.filter((view) => windowIsLive(view) === live)
 }
 
 export async function getBulk(storeId, id) {

@@ -3,7 +3,7 @@ import { sequelize } from "../../db/sequelize.js"
 import { BundleDiscount } from "./bundleDiscount.model.js"
 import { BundleDiscountProduct } from "./bundleDiscountProduct.model.js"
 import { BundleDiscountReward } from "./bundleDiscountReward.model.js"
-import { windowIsLive } from "./discountParse.js"
+import { liveFlag, windowIsLive } from "./discountParse.js"
 import { resolveSellable } from "./discountTargets.js"
 import { nextBundleNumber } from "../../shared/utils/counter.util.js"
 import { AppError } from "../../shared/errors/AppError.js"
@@ -69,11 +69,12 @@ async function setLines(model, bundleId, rows, transaction) {
 
 export async function listBundles(storeId, query = {}) {
   const where = { store_id: storeId }
-  const liveOnly = query.active === "1" || query.pos === "1"
-  if (liveOnly) where.is_active = true
+  // active: true = the live ones, false = the ones that are not live, left out = every one.
+  const live = liveFlag(query)
+  if (live === true) where.is_active = true
   const rows = await BundleDiscount.findAll({ where, include: childrenInclude, order: [["created_at", "DESC"]] })
   const views = rows.map(publicBundle)
-  return liveOnly ? views.filter((view) => bundleIsLive(view)) : views
+  return live === undefined ? views : views.filter((view) => bundleIsLive(view) === live)
 }
 
 export async function getBundle(storeId, id) {

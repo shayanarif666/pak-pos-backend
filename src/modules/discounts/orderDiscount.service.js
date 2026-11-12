@@ -1,5 +1,5 @@
 import { OrderDiscount } from "./orderDiscount.model.js"
-import { assertDiscountFits } from "./discountParse.js"
+import { assertDiscountFits, liveFlag } from "./discountParse.js"
 import { nextOrderDiscountNumber } from "../../shared/utils/counter.util.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { sequelize } from "../../db/sequelize.js"
@@ -23,7 +23,9 @@ export function publicOrderDiscount(row) {
 
 export async function listOrderDiscounts(storeId, query = {}) {
   const where = { store_id: storeId }
-  if (query.active === "1" || query.pos === "1") where.is_active = true
+  // active: true = the live ones, false = the inactive ones, left out = every one.
+  const live = liveFlag(query)
+  if (live !== undefined) where.is_active = live
   const rows = await OrderDiscount.findAll({ where, order: [["created_at", "DESC"]] })
   return rows.map(publicOrderDiscount)
 }
