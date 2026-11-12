@@ -162,7 +162,8 @@ export const patchWeight = asyncHandler(async (req, res) => {
 export const listStock = asyncHandler(async (req, res) => {
   const scope = await posHistory.scopeOf(req)
   const { page, limit, offset } = posHistory.pageOf(req.query)
-  const { rows, total } = await listStockRows(scope, req.query)
+  // locations (store admin: a list), from / to (the product's created date) go with the scope.
+  const { rows, total } = await listStockRows({ ...scope, location_ids: await posHistory.locationIdsOf(scope, req.query), window: posHistory.dateWindow(req.query) }, req.query)
   return posHistory.sendPage(res, {
     rows: rows.slice(offset, offset + limit),
     pagination: { page, limit, total, total_pages: Math.max(1, Math.ceil(total / limit)) },

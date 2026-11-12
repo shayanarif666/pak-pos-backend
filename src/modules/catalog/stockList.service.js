@@ -76,12 +76,14 @@ const pickEnum = (value, allowed, label) => {
 
 /** { rows (every row that matches, in order), total } for the actor's location scope. */
 export async function listStockRows(scope, query = {}) {
-  const stockFilter = pickEnum(query.stock_status, STOCK_STATUSES, "stock_status")
+  // status: out | critical | warning | ok (stock_status also works).
+  const stockFilter = pickEnum(query.status ?? query.stock_status, STOCK_STATUSES, "status")
   const expiryFilter = pickEnum(query.expiry_status, LOT_EXPIRY_STATUSES, "expiry_status")
   const search = String(query.q || "").trim().toLowerCase()
 
   const where = { store_id: scope.store_id, deleted_at: null }
-  if (scope.location_id) where.location_id = scope.location_id
+  if (scope.location_ids?.length) where.location_id = { [Op.in]: scope.location_ids }
+  else if (scope.location_id) where.location_id = scope.location_id
 
   const productWhere = { deleted_at: null, has_variants: false }
   const categoryRef = String(query.category_id ?? query.categoryId ?? "").trim()
@@ -97,7 +99,7 @@ export async function listStockRows(scope, query = {}) {
 
   const stocks = await ProductStock.findAll({
     where,
-    include: [{ model: Product, where: productWhere, include: [{ model: Product, as: "parent", attributes: ["id", "product_number", "title", "sku", "barcode"] }] }],
+    include: [{ model: Product, where: productWhere, include: [{ model: Product, as: "parent", attributes: ["id", "product_number", "title", "sku", "barcode", "created_at"] }] }],
   })
   if (!stocks.length) return { rows: [], total: 0 }
 
@@ -132,6 +134,7 @@ export async function listStockRows(scope, query = {}) {
     const dates = lots.map((lot) => lot.expiry_date).filter(Boolean).sort()
     return {
       key: parent ? parent.id : product.id,
+      created_at: (parent || product).created_at,
       product: {
         id: parent ? parent.product_number : product.product_number,
         title: parent ? parent.title : product.title,
@@ -158,7 +161,11 @@ export async function listStockRows(scope, query = {}) {
   })
 
   // A filter picks the products with any stock that matches; all its variants and locations are still listed.
+  const { from, to } = scope.window || {}
   const matches = (row) => {
+    // from / to: the product's created date.
+    if (from && new Date(row.created_at) < from) return false
+    if (to && new Date(row.created_at) > to) return false
     if (search) {
       const texts = [row.product.title, row.product.sku, row.product.barcode, row.variant?.name, row.variant?.sku, row.variant?.barcode]
       if (!texts.filter(Boolean).some((text) => String(text).toLowerCase().includes(search))) return false

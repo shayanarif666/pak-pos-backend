@@ -170,6 +170,16 @@ async function locationWhere(scope, query) {
   return { location_id: { [Op.in]: ids } }
 }
 
+/** The location UUIDs of ?locations= (store admin only), or null when not sent. */
+export async function locationIdsOf(scope, query) {
+  if (scope.role !== "store_admin") return null
+  const refs = listOf(query, "locations", "location_ids", "locationIds")
+  if (!refs.length) return null
+  const ids = []
+  for (const ref of refs) ids.push(await idOf(Location, "location_id_int", scope.store_id, ref, "Location"))
+  return ids
+}
+
 /** roles: ?roles=manager,cashier (a list); each must be one of the allowed ones. [] = not sent. */
 function rolesOf(query, allowed) {
   const roles = listOf(query, "roles", "role")
@@ -305,12 +315,49 @@ export async function products(req) {
   // Every detail of the product, its variants inside, without any stock (that is GET /products/stock).
   const scope = await scopeOf(req)
   const pageInfo = pageOf(req.query)
+  // The categories are filtered below (a list), q is searched by listProducts.
   const query = { ...req.query }
-  const categoryRef = queryRef(req.query, "categoryId", "category_id")
-  if (categoryRef) query.category_id = await idOf(Category, "category_number", scope.store_id, categoryRef, "Category")
   delete query.categoryId
-  query.location_id = scope.location_id
-  const listed = (await listProducts(scope, query, { parentsOnly: true })).filter(inWindow(req.query, (row) => row.created_at))
+  delete query.category_id
+  // locations: a list (store admin only) — the products sold at any of those locations.
+  const wanted = scope.role === "store_admin" ? listOf(req.query, "locations", "location_ids", "locationIds") : []
+  let listed
+  if (wanted.length) {
+    const found = new Map()
+    for (const ref of wanted) {
+      const locationId = await idOf(Location, "location_id_int", scope.store_id, ref, "Location")
+      for (const row of await listProducts(scope, { ...query, location_id: locationId }, { parentsOnly: true })) found.set(row.id, row)
+    }
+    listed = [...found.values()].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+  } else {
+    query.location_id = scope.location_id
+    listed = await listProducts(scope, query, { parentsOnly: true })
+  }
+  listed = listed.filter(inWindow(req.query, (row) => row.created_at))
+
+  // categories: a list of category numbers (or UUIDs); a number that matches no category matches nothing.
+  const categoryRefs = listOf(req.query, "categories", "category_ids", "categoryIds", "categoryId", "category_id")
+  if (categoryRefs.length) {
+    const numbers = categoryRefs.filter(isNumber).map(Number)
+    const uuids = categoryRefs.filter((ref) => !isNumber(ref))
+    const found = await Category.findAll({
+      where: { store_id: scope.store_id, [Op.or]: [...(numbers.length ? [{ category_number: { [Op.in]: numbers } }] : []), ...(uuids.length ? [{ id: { [Op.in]: uuids } }] : [])] },
+      attributes: ["id"],
+    })
+    const ids = new Set(found.map((row) => row.id))
+    listed = listed.filter((row) => ids.has(row.category_id))
+  }
+
+  // type: pack (sold in packs), loose (a plain item: neither pack nor weight based), weight (sold by weight); a
+  // list is allowed. A product with variants matches when any of its variants does.
+  const types = listOf(req.query, "type", "types")
+  const badType = types.find((type) => !["pack", "loose", "weight"].includes(type))
+  if (badType) throw new AppError("type must be pack, loose or weight", 400)
+  if (types.length) {
+    const isType = (type, row) => (type === "pack" ? Boolean(row.is_pack_product) : type === "weight" ? Boolean(row.is_weight_based) : !row.is_pack_product && !row.is_weight_based)
+    listed = listed.filter((view) => (view.has_variants ? view.variants || [] : [view]).some((row) => types.some((type) => isType(type, row))))
+  }
+
   const { items, total } = slicePage(listed, pageInfo)
   return paged(await posProducts(items), total, pageInfo)
 }
