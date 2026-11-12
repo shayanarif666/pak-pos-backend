@@ -937,6 +937,7 @@ const taxEntry = (level, tax) => ({
 export async function posProducts(views) {
   const refs = await new Refs().loadAll({ category: views.map((view) => view.category_id) })
   const levels = await levelsOf(views, refs)
+  const currency = await currencyFor(views.map((view) => view.store_id))
   // discount = { type, value, applies_to } this row is sold with (a variant: its own or its product's), or null.
   const figuresOf = (row, view, discount) =>
     figures(row, {
@@ -1007,6 +1008,8 @@ export async function posProducts(views) {
       colors: view.colors || [],
       description: view.description || null,
       unit: view.unit,
+      // The store's currency (code, e.g. PKR): every price and amount of the product is in it.
+      currency: currency(view.store_id),
       cost_price: num(view.cost_price),
       selling_price: num(view.selling_price),
       is_pack_product: Boolean(view.is_pack_product),
