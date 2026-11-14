@@ -602,7 +602,8 @@ export async function suppliers(req) {
 export async function customers(req) {
   const scope = await scopeOf(req)
   const pageInfo = pageOf(req.query)
-  const where = { store_id: scope.store_id, ...dateRange(req.query, "created_at") }
+  // Dates: from / to only (the created date).
+  const where = { store_id: scope.store_id, ...dateRange({ from: req.query.from, to: req.query.to }, "created_at") }
   if (scope.location_id) where[Op.and] = [{ [Op.or]: [{ location_id: scope.location_id }, { location_id: null }] }]
   const search = queryRef(req.query, "q")
   if (search) {
