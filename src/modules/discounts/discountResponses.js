@@ -35,8 +35,9 @@ export async function posBulks(views) {
 }
 
 /**
- * Bundle discounts as the POS reads them: id = short number; components = what is bought together
- * (product with its variant, qty, unit); reward = free items, or a percentage / fixed amount off.
+ * Bundle discounts as the POS reads them: id = short number; products = what has to be bought together, each
+ * product (or variant) with its barcode, the qty and the unit; reward = free items, or a percentage / fixed
+ * amount off.
  */
 export async function posBundles(views) {
   const lineIds = (view) => [...view.components, ...view.rewards].map((line) => line.product_id)
@@ -44,19 +45,32 @@ export async function posBundles(views) {
     product: views.flatMap(lineIds),
     user: views.map((view) => view.created_by),
   })
-  const line = (row) => ({ product: refs.product(row.product_id), qty: row.qty, sale_unit: row.sale_unit })
+  // A product to buy: { id, title, sku, unit, barcode, variant { id, name, sku, barcode } | null, qty, sale_unit }.
+  const bought = (row) => {
+    const picked = refs.get("product", row.product_id)
+    const { product, variant } = refs.productAndVariant(row.product_id)
+    const parent = picked?.parent_product_id ? refs.get("product", picked.parent_product_id) : picked
+    return {
+      ...(product || { id: null, title: null, sku: null, unit: null }),
+      barcode: parent?.barcode || null,
+      variant: variant ? { ...variant, barcode: picked?.barcode || null } : null,
+      qty: row.qty,
+      sale_unit: row.sale_unit,
+    }
+  }
+  // A free item: { product { id, title, sku, unit, variant { id, name } | null }, qty, sale_unit }.
+  const free = (row) => ({ product: refs.product(row.product_id), qty: row.qty, sale_unit: row.sale_unit })
   return views.map((view) => ({
     id: view.bundle_number,
     name: view.name,
-    components: view.components.map(line),
+    products: view.components.map(bought),
     reward:
       view.reward_type === "free_item"
-        ? { type: "free_item", items: view.rewards.map(line) }
+        ? { type: "free_item", items: view.rewards.map(free) }
         : { type: view.reward_type, value: num(view.discount_value) },
     start_at: view.start_at,
     end_at: view.end_at,
     is_active: view.is_active,
-    status: view.is_active ? "active" : "inactive",
     staff: refs.staff(view.created_by),
   }))
 }

@@ -40,6 +40,12 @@ async function setTiers(bulkId, tiers, transaction) {
 
 export async function listBulks(storeId, query = {}) {
   const where = { store_id: storeId }
+  // status: active | inactive (the status of a row), left out = every one.
+  const status = String(query.status ?? "").trim()
+  if (status) {
+    if (!["active", "inactive"].includes(status)) throw new AppError("status must be active or inactive", 400)
+    where.is_active = status === "active"
+  }
   // active: true = the live ones, false = the ones that are not live, left out = every one.
   const live = liveFlag(query)
   if (live === true) where.is_active = true
