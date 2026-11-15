@@ -334,8 +334,6 @@ function orderItemView(item, refs, refundEntry) {
     ...(item.bundle_id != null ? { bundle_id: item.bundle_id, bundle_role: item.bundle_role || null } : {}),
     ...lineRefundView(item, refundEntry),
   }
-  // The lots the line was sold from (soonest expiry first): [{ id (lot number), qty, expiry_date }].
-  const lots = (Array.isArray(item.lots) ? item.lots : typeof item.lots === "string" ? JSON.parse(item.lots || "[]") : []).map((lot) => ({ id: lot.lot_number, qty: Number(lot.qty), expiry_date: lot.expiry_date || null }))
   if (item.product_id) {
     const categoryId = item.category_id || refs.get("product", item.product_id)?.category_id
     const category = refs.category(categoryId)
@@ -350,7 +348,6 @@ function orderItemView(item, refs, refundEntry) {
       // One pack's price on a pack line, one unit's otherwise.
       unit_price: packLine ? num(item.pack_price) : num(item.unit_price),
       ...figures,
-      lots,
     }
   }
   return {
