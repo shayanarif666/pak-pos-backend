@@ -11,14 +11,17 @@ test("the four sample refunds parse", () => {
     const input = parseRefundV2(clone(refund))
     assert.equal(input.total_amount, refund.total_refunded_amount)
     assert.equal(input.refund_type, refund.refund_type)
-    assert.equal(input.payments.length, refund.payments.length)
+    assert.deepEqual(input.payments, [])
   }
 })
 
-test("a split payment refund pays each method", () => {
+test("payments is not needed; when sent it is checked", () => {
   const input = parseRefundV2(clone(SAMPLE_REFUNDS[3]))
-  assert.deepEqual(input.payments.map((row) => [row.method, row.return_amount]), [["cash", 1160], ["card", 50.05]])
   assert.equal(input.surcharge_total, 160)
+  assert.equal(input.total_amount, 1210.05)
+  const sent = clone(SAMPLE_REFUNDS[3])
+  sent.payments = [{ method: "cash", return_amount: 1160 }, { method: "card", return_amount: 50.05 }]
+  assert.deepEqual(parseRefundV2(sent).payments.map((row) => [row.method, row.return_amount]), [["cash", 1160], ["card", 50.05]])
 })
 
 test("refund_type, reason and local_id are required", () => {
@@ -42,8 +45,9 @@ test("a line that does not add up is refused", () => {
   fails(total, /\.total/)
 })
 
-test("the payments must add up to total_refunded_amount", () => {
+test("payments sent must add up to total_refunded_amount", () => {
   const refund = clone(SAMPLE_REFUNDS[3])
+  refund.payments = [{ method: "cash", return_amount: 1160 }, { method: "card", return_amount: 50.05 }]
   refund.total_refunded_amount = 370
   fails(refund, /not the sum of the payments/)
 })
@@ -53,6 +57,6 @@ test("a line or a method listed twice is refused", () => {
   line.refund_items.push(clone(line.refund_items[0]))
   fails(line, /listed twice/)
   const method = clone(SAMPLE_REFUNDS[3])
-  method.payments[1].method = "cash"
+  method.payments = [{ method: "cash", return_amount: 1160 }, { method: "cash", return_amount: 50.05 }]
   fails(method, /twice/)
 })

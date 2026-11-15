@@ -1273,7 +1273,8 @@ export async function refundOrderV2(actor, id, v2) {
   }
   const payments = []
   for (const row of expectedPayments) {
-    const sent = sentBy.get(row.method)
+    // payments left out: every method gets its share back.
+    const sent = v2.payments.length ? sentBy.get(row.method) : row.bill < 0.005 ? null : row.expected
     if (row.bill < 0.005) {
       if (sent != null) throw new AppError(`payments: ${row.method} gets nothing back from this refund`, 400)
       continue
@@ -1286,6 +1287,12 @@ export async function refundOrderV2(actor, id, v2) {
       throw new AppError(`payments: ${row.method} would get back more than it paid (${row.amount})`, 400)
     }
     payments.push({ method: row.method, bill_share: row.bill, surcharge_type: row.surcharge > 0 ? row.surcharge_type : null, surcharge_value: row.surcharge > 0 ? row.surcharge_value : null, surcharge_amount: row.surcharge, amount: money(sent) })
+  }
+  // The whole refund: what the payments give back together (cash in whole rupees).
+  const returnedTotal = money(payments.reduce((total, row) => total + row.amount, 0))
+  const cashRows = payments.filter((row) => row.method === "cash").length
+  if (!near(v2.total_amount, returnedTotal, 0.5 * cashRows + 0.02)) {
+    throw new AppError(`total_refunded_amount ${v2.total_amount} is not what this refund pays back (${returnedTotal})`, 400)
   }
   const surchargeBack = money(payments.reduce((total, row) => total + row.surcharge_amount, 0))
   if (!near(v2.surcharge_total, surchargeBack)) {
@@ -1312,7 +1319,7 @@ export async function refundOrderV2(actor, id, v2) {
       })),
       payments,
       order_discount_amount: v2.order_discount_amount,
-      total_amount: v2.total_amount,
+      total_amount: returnedTotal,
     },
     { complete: v2.refund_type === "complete" }
   )

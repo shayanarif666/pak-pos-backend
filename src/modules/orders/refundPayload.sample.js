@@ -1,8 +1,8 @@
 /**
  * The four refunds of the POST /orders/refunds/bulk documentation (they refund the four orders of
- * orderPayload.sample.js): 1) partial, one cash payment; 2) partial, one card payment; 3) complete, one cash
- * payment with the order discount; 4) complete, a split payment (cash + card). The tests parse them and the
- * docs show them.
+ * orderPayload.sample.js): 1) partial, paid cash; 2) partial, paid by card; 3) complete, paid cash, with the order
+ * discount; 4) complete, a split payment (cash 1160 + card 50.05: the server splits it, no payments[] is sent).
+ * The tests parse them and the docs show them.
  */
 export const SAMPLE_REFUNDS = [
   {
@@ -16,7 +16,6 @@ export const SAMPLE_REFUNDS = [
       { order_item_id: 1, qty: 1, gross_amount: 300, discount_amount: 30, subtotal: 270, tax_amount: 48.6, total: 318.6 },
     ],
     order_discount_amount: 0,
-    payments: [{ method: "cash", return_amount: 370 }],
     total_payment_surcharge_refunded: 50.98,
     total_refunded_amount: 370,
   },
@@ -31,7 +30,6 @@ export const SAMPLE_REFUNDS = [
       { order_item_id: 4, qty: 1, gross_amount: 200, discount_amount: 100, subtotal: 100, tax_amount: 23, total: 123 },
     ],
     order_discount_amount: 0,
-    payments: [{ method: "card", return_amount: 132.84 }],
     total_payment_surcharge_refunded: 9.84,
     total_refunded_amount: 132.84,
   },
@@ -46,7 +44,6 @@ export const SAMPLE_REFUNDS = [
       { order_item_id: 1, qty: 1, gross_amount: 100, discount_amount: 5, subtotal: 95, tax_amount: 17.1, total: 112.1 },
     ],
     order_discount_amount: 11.21,
-    payments: [{ method: "cash", return_amount: 117 }],
     total_payment_surcharge_refunded: 16.14,
     total_refunded_amount: 117,
   },
@@ -61,10 +58,6 @@ export const SAMPLE_REFUNDS = [
       { order_item_id: 1, qty: 1, gross_amount: 1100, discount_amount: 165, subtotal: 935, tax_amount: 215.05, total: 1150.05 },
     ],
     order_discount_amount: 100,
-    payments: [
-      { method: "cash", return_amount: 1160 },
-      { method: "card", return_amount: 50.05 },
-    ],
     total_payment_surcharge_refunded: 160,
     total_refunded_amount: 1210.05,
   },

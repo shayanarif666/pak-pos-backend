@@ -4,8 +4,9 @@
  *   { local_id, refunded_at, order_id, refund_type (partial | complete), reason, currency,
  *     refund_items: [{ order_item_id, qty, gross_amount, discount_amount, subtotal, tax_amount, total }],
  *     order_discount_amount,
- *     payments: [{ method, return_amount }],
  *     total_payment_surcharge_refunded, total_refunded_amount }
+ *   (payments: [{ method, return_amount }] is not needed: the server splits the refund over the methods the sale was
+ *   paid with. It may still be sent, and is then checked against that split.)
  *
  * This file only checks what can be checked without the order (the arithmetic of a line, the payments adding
  * up to the total); order.service.js checks the rest against the saved sale (qty left, each line's share of
@@ -97,13 +98,15 @@ export function parseRefundV2(body) {
   if (new Set(items.map((row) => row.order_item_id)).size !== items.length) {
     throw new AppError("A line is listed twice: send it once with its whole qty", 400)
   }
-  if (!Array.isArray(body.payments) || !body.payments.length) throw new AppError("payments needs at least one row", 400)
-  const payments = body.payments.map(parsePayment)
+  // payments is optional: left out, the server gives each payment method of the sale its share back.
+  const sentPayments = body.payments === undefined || body.payments === null ? [] : body.payments
+  if (!Array.isArray(sentPayments)) throw new AppError("payments must be an array", 400)
+  const payments = sentPayments.map(parsePayment)
   if (new Set(payments.map((row) => row.method)).size !== payments.length) throw new AppError("payments lists a method twice", 400)
 
   const total = money(body, "total_refunded_amount", label, { required: true, positive: true })
   const returned = r2(payments.reduce((sum, row) => sum + row.return_amount, 0))
-  if (!close(returned, total, 0.011)) throw new AppError(`total_refunded_amount ${total} is not the sum of the payments (${returned})`, 400)
+  if (payments.length && !close(returned, total, 0.011)) throw new AppError(`total_refunded_amount ${total} is not the sum of the payments (${returned})`, 400)
 
   return {
     order_id: ref(body, ["order_id", "orderId"], label, { required: true }),
