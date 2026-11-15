@@ -14,9 +14,8 @@ import { orderIdFromRef, resolveOrderRefs } from "./orderRefs.js"
 import { actingAs, resolveStaff } from "../../shared/utils/staff.util.js"
 import { posOrder, posOrders, posRefund, posRefunds } from "../pos/posResponses.js"
 import { listOrderDiscounts } from "../discounts/orderDiscount.service.js"
-import { listBulks } from "../discounts/bulkDiscount.service.js"
 import { listBundles } from "../discounts/bundleDiscount.service.js"
-import { posBulks, posBundles, posOrderDiscount } from "../discounts/discountResponses.js"
+import { posBundles, posOrderDiscount } from "../discounts/discountResponses.js"
 import { loadLocation } from "../catalog/productStock.service.js"
 import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
@@ -135,15 +134,15 @@ export const list = asyncHandler(async (req, res) => {
 })
 
 /**
- * GET /orders/discounts: every discount an order can use, in one reply — the order discounts (GET /discounts),
- * the bulk discounts and the bundle discounts. active=true keeps the live ones, active=false the others.
+ * GET /orders/discounts: the discounts an order can use, in one reply — the order discounts (GET /discounts) and
+ * the bundle discounts. active=true keeps the live ones, active=false the others.
  */
 export const listDiscounts = asyncHandler(async (req, res) => {
   const query = { active: req.query.active }
-  const [discounts, bulks, bundles] = await Promise.all([listOrderDiscounts(req.storeId, query), listBulks(req.storeId, query), listBundles(req.storeId, query)])
+  const [discounts, bundles] = await Promise.all([listOrderDiscounts(req.storeId, query), listBundles(req.storeId, query)])
   const data = isPos(req)
-    ? { discounts: discounts.map(posOrderDiscount), bulk_discounts: await posBulks(bulks), bundle_discounts: await posBundles(bundles) }
-    : { discounts, bulk_discounts: bulks, bundle_discounts: bundles }
+    ? { discounts: discounts.map(posOrderDiscount), bundle_discounts: await posBundles(bundles) }
+    : { discounts, bundle_discounts: bundles }
   return apiResponse(res, 200, "OK", data)
 })
 
