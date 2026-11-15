@@ -404,7 +404,7 @@ export async function orders(req) {
 
 // ---- 5 / 6. Refunds: ?type=complete (whole orders) | partial (some items) ----
 // One order's refund rows paid back per method, added up method by method.
-function mergeRefundPayments(parts) {
+export function mergeRefundPayments(parts) {
   const byMethod = new Map()
   for (const row of parts.flatMap((part) => part.payments || [])) {
     const entry = byMethod.get(row.method)
@@ -412,9 +412,7 @@ function mergeRefundPayments(parts) {
       byMethod.set(row.method, { ...row })
       continue
     }
-    for (const key of ["bill_share", "surcharge_amount", "amount"]) {
-      if (row[key] != null) entry[key] = Number(((entry[key] || 0) + row[key]).toFixed(2))
-    }
+    if (row.return_amount != null) entry.return_amount = Number(((entry.return_amount || 0) + row.return_amount).toFixed(2))
   }
   return [...byMethod.values()]
 }
@@ -458,9 +456,9 @@ export async function refunds(req) {
   const byUuid = new Map(order.map((id, index) => [id, shaped[index]]))
   const rows = items.map((ids) => {
     const parts = [...ids].reverse().map((id) => byUuid.get(id)).filter(Boolean)
-    const entry = { ...parts[0], lines: parts.flatMap((part) => part.lines) }
+    const entry = { ...parts[0], refund_items: parts.flatMap((part) => part.refund_items) }
     for (const part of parts.slice(1)) {
-      for (const key of ["amount", "discount_amount", "tax", "surcharge", "total"]) entry[key] = Number(((entry[key] || 0) + (part[key] || 0)).toFixed(2))
+      for (const key of ["order_discount_amount", "total_payment_surcharge_refunded", "total_refunded_amount"]) entry[key] = Number(((entry[key] || 0) + (part[key] || 0)).toFixed(2))
     }
     entry.payments = mergeRefundPayments(parts)
     return entry

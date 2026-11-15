@@ -1,6 +1,7 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js"
 import { asyncHandler } from "../../shared/utils/asyncHandler.js"
 import { bulkStatus, posBulkResponse, extractBulkItems, runBulk } from "../../shared/utils/bulk.util.js"
+import { parseRefundV2 } from "./refundPayload.js"
 import {
   parseBulkRefundComplete,
   parseBulkRefundItem,
@@ -44,13 +45,11 @@ async function refundSummary(data) {
   const sum = (key) => Number(rows.reduce((total, row) => total + Number(row[key] || 0), 0).toFixed(2))
   return {
     ...rows[0],
-    lines: rows.flatMap((row) => row.lines),
-    amount: sum("amount"),
-    discount_amount: sum("discount_amount"),
-    tax: sum("tax"),
-    surcharge: sum("surcharge"),
-    total: sum("total"),
-    payments: rows.flatMap((row) => row.payments),
+    refund_items: rows.flatMap((row) => row.refund_items),
+    order_discount_amount: sum("order_discount_amount"),
+    payments: posHistory.mergeRefundPayments(rows),
+    total_payment_surcharge_refunded: sum("total_payment_surcharge_refunded"),
+    total_refunded_amount: sum("total_refunded_amount"),
   }
 }
 
@@ -237,9 +236,26 @@ async function posLinesRefund(req, res, complete) {
   return posBulkResponse(res, data, "Refunded Successfully", created)
 }
 
+/** POST /orders/refunds/bulk with refunds[]: partial and complete refunds in one request. */
+async function posRefundsV2(req, res) {
+  const location = await bulkLocation(req)
+  const topBatch = req.body?.batch_id ?? req.body?.batchId ?? null
+  const data = await runBulk(extractBulkItems({ items: req.body.refunds }), async (item) => {
+    const { staff_ref, ...parsed } = parseRefundV2(item || {})
+    if (!parsed.batch_ref && topBatch != null) parsed.batch_ref = String(topBatch)
+    const actor = await staffActor(req, staff_ref || req.body?.staff_id || req.body?.staffId)
+    return orderService.refundOrderV2(actor, await orderAt(actor.store_id, parsed.order_id, location), parsed)
+  })
+  const created = []
+  for (const row of data.created) created.push(await posRefund(row.refund.id))
+  return posBulkResponse(res, data, "Refunded Successfully", created)
+}
+
+const hasRefunds = (req) => Array.isArray(req.body?.refunds)
 const hasLines = (req) => extractBulkItems(req.body).some((item) => Array.isArray(item?.lines))
 
 export const refundItemsBulk = asyncHandler(async (req, res) => {
+  if (hasRefunds(req)) return posRefundsV2(req, res)
   if (hasLines(req)) return posLinesRefund(req, res, false)
   const location = await bulkLocation(req)
   const data = await runBulk(extractBulkItems(req.body), async (item) => {
@@ -256,6 +272,7 @@ export const refundItemsBulk = asyncHandler(async (req, res) => {
 })
 
 export const refundCompleteBulk = asyncHandler(async (req, res) => {
+  if (hasRefunds(req)) return posRefundsV2(req, res)
   if (hasLines(req)) return posLinesRefund(req, res, true)
   const location = await bulkLocation(req)
   const data = await runBulk(extractBulkItems(req.body), async (item) => {

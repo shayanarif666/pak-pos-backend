@@ -516,39 +516,34 @@ export async function posRefunds(refundIds) {
   const currency = await currencyFor(refunds.map((refund) => refund.store_id))
   return refunds.map((refund) => {
     const total = num(refund.amount) ?? 0
-    const payments = (Array.isArray(refund.payments) ? refund.payments : [{ method: "cash", amount: total }]).map((row) => ({
-      method: row.method,
-      bill_share: num(row.bill_share) ?? Number(((Number(row.amount) || 0) - (Number(row.surcharge_amount ?? row.payment_tax_amount) || 0)).toFixed(2)),
-      surcharge_type: row.surcharge_type || (Number(row.payment_tax_percent) > 0 ? "percentage" : null),
-      surcharge_value: num(row.surcharge_value ?? (Number(row.payment_tax_percent) > 0 ? row.payment_tax_percent : null)),
-      surcharge_amount: num(row.surcharge_amount ?? row.payment_tax_amount) ?? 0,
-      amount: num(row.amount),
-    }))
-    const surcharge = refund.surcharge_amount != null ? num(refund.surcharge_amount) : Number(payments.reduce((s, row) => s + (row.surcharge_amount || 0), 0).toFixed(2))
+    // How it was paid back: [{ method, return_amount }] (credit = off the udhaar).
+    const paid = Array.isArray(refund.payments) ? refund.payments : [{ method: "cash", amount: total }]
+    const payments = paid.map((row) => ({ method: row.method, return_amount: num(row.amount) }))
+    const surcharge = refund.surcharge_amount != null ? num(refund.surcharge_amount) : Number(paid.reduce((s, row) => s + (Number(row.surcharge_amount ?? row.payment_tax_amount) || 0), 0).toFixed(2))
     const views = [...(refund.OrderRefundItems || [])]
       .sort((a, b) => a.item_number - b.item_number)
       .map((line) => {
         const item = sold.get(line.order_item_id)
         const pack = item?.sale_unit === "pack" && Number(item.pack_size) > 0
-        const amount = num(line.subtotal) ?? 0
+        const subtotal = num(line.subtotal) ?? 0
+        const discount = num(line.discount_amount) ?? 0
         const tax = num(line.tax_amount) ?? 0
         return {
           order_item_id: item?.item_number ?? null,
           ...(line.product_id
             ? { product: { ...(refs.product(line.product_id) || { id: null, sku: null, unit: null }), title: line.title } }
-            : { title: line.title, category: item?.custom_category ? { id: null, name: item.custom_category } : null }),
+            : { is_custom: true, name: line.title, category: item?.custom_category ? { id: null, name: item.custom_category } : null }),
           qty: pack ? Number((Number(line.quantity) / Number(item.pack_size)).toFixed(4)) : num(line.quantity),
           sale_unit: pack ? "pack" : "unit",
           unit_price: pack ? num(item.pack_price) : num(line.unit_price),
-          discount_amount: num(line.discount_amount) ?? 0,
-          amount,
-          taxes: parseList(line.line_taxes).map((row) => ({ level: row.level, name: row.name ?? null, rate: num(row.rate), amount: num(row.amount) })),
-          tax,
-          total: Number((amount + tax).toFixed(2)),
+          gross_amount: Number((subtotal + discount).toFixed(2)),
+          discount_amount: discount,
+          subtotal,
+          tax_amount: tax,
+          total: Number((subtotal + tax).toFixed(2)),
           restocked: line.restocked == null ? Boolean(line.product_id) : Boolean(line.restocked),
         }
       })
-    const amount = Number(views.reduce((s, row) => s + row.amount, 0).toFixed(2))
     return {
       id: refund.refund_number,
       refund_type: refund.refund_type || "partial",
@@ -561,14 +556,12 @@ export async function posRefunds(refundIds) {
       receiptId: refs.number("receipt", refund.receipt_id),
       currency: currency(refund.store_id),
       reason: refund.reason || null,
-      lines: views,
-      amount,
-      discount_amount: refund.discount_amount != null ? num(refund.discount_amount) : Number(views.reduce((s, row) => s + row.discount_amount, 0).toFixed(2)),
-      tax: Number(Math.max(0, total - amount - surcharge).toFixed(2)),
-      surcharge,
-      total,
-      // How it was paid back, per method (credit = off the udhaar).
+      refund_items: views,
+      // The lines' discounts are in each refund_item; this is the share of the order discount given back.
+      order_discount_amount: num(refund.order_discount_amount) ?? 0,
       payments,
+      total_payment_surcharge_refunded: surcharge,
+      total_refunded_amount: total,
       refunded_at: refund.refunded_at || refund.created_at,
       synced_at: refund.created_at,
     }

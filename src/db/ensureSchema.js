@@ -51,6 +51,7 @@ import * as bulkBundleDiscounts from "./migrations/20261128120000-bulk-bundle-di
 import * as transferLossNote from "./migrations/20261129120000-transfer-loss-note.js"
 import * as variantDiscount from "./migrations/20261130120000-variant-discount.js"
 import * as orderPricingV2 from "./migrations/20261201120000-order-pricing-v2.js"
+import * as refundOrderDiscount from "./migrations/20261202120000-refund-order-discount.js"
 
 // Migrations the running code cannot work without (e.g. users.token_version is read on every
 // authenticated request). Each one checks before it changes anything, so running it on a
@@ -154,6 +155,8 @@ const REQUIRED = [
   variantDiscount,
   // orders.tax_exempt / discount_exempt / order_discount / bundles, order_items.discount_entries / bundle_id / bundle_role.
   orderPricingV2,
+  // order_refunds.order_discount_amount: the share of the order discount a refund gives back.
+  refundOrderDiscount,
 ]
 
 export async function ensureSchema() {

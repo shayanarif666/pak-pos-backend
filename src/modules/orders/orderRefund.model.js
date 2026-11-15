@@ -30,6 +30,8 @@ export const OrderRefund = sequelize.define(
     register_session_id: uuidCol(true),
     discount_amount: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
     surcharge_amount: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
+    // The share of the order discount this refund gives back.
+    order_discount_amount: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
     ...saleChannelVisibilityFields(),
   },
   {
