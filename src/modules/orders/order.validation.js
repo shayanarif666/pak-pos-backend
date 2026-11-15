@@ -1,6 +1,7 @@
 import { AppError } from "../../shared/errors/AppError.js"
 import { ORDER_CHANNEL, PAYMENT_METHOD } from "../../db/enums.js"
 import { staffRefFrom } from "../../shared/utils/staff.util.js"
+import { parseOrderV2 } from "./orderPayload.js"
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -69,7 +70,7 @@ function parseItem(row) {
 
 const DISCOUNT_SOURCES = ["none", "product", "category", "product+category", "bulk_tier", "offer", "custom"]
 // store = a tax from the Taxes page (kept with the product's own taxes on the line).
-const TAX_LEVELS = ["product", "store", "category", "sales"]
+const TAX_LEVELS = ["product", "store", "category", "variant", "sales"]
 
 function moneyAtLeastZero(row, key, label) {
   if (row[key] === undefined || row[key] === null || row[key] === "") return null
@@ -131,7 +132,7 @@ function parsePricedLine(row, index) {
     const taxLabel = `${label}.taxes[${t}]`
     if (!tax || typeof tax !== "object") throw new AppError(`${taxLabel} is invalid`, 400)
     const level = String(tax.level || "product")
-    if (!TAX_LEVELS.includes(level)) throw new AppError(`${taxLabel}.level must be product, store, category or sales`, 400)
+    if (!TAX_LEVELS.includes(level)) throw new AppError(`${taxLabel}.level must be product, store, category, variant or sales`, 400)
     const amount = moneyAtLeastZero(tax, "amount", taxLabel)
     if (amount == null) throw new AppError(`${taxLabel}.amount is required`, 400)
     return {
@@ -225,6 +226,8 @@ function withPaid(payments, amountPaid) {
 }
 
 export function parseCreateOrder(body) {
+  // The order as the POS sends it now (order_items with discount / taxes entries, payments, summary).
+  if (Array.isArray(body.order_items)) return parseOrderV2(body)
   const channel = String(body.channel || "pos")
   if (!ORDER_CHANNEL.includes(channel)) {
     throw new AppError("channel must be web or pos", 400)
@@ -378,7 +381,7 @@ export function parsePosRefund(body) {
       const taxLabel = `${label}.taxes[${t}]`
       if (!tax || typeof tax !== "object") throw new AppError(`${taxLabel} is invalid`, 400)
       const level = String(tax.level || "product")
-      if (!TAX_LEVELS.includes(level)) throw new AppError(`${taxLabel}.level must be product, store, category or sales`, 400)
+      if (!TAX_LEVELS.includes(level)) throw new AppError(`${taxLabel}.level must be product, store, category, variant or sales`, 400)
       const taxAmount = moneyAtLeastZero(tax, "amount", taxLabel)
       if (taxAmount == null) throw new AppError(`${taxLabel}.amount is required`, 400)
       return { level, name: tax.name == null ? null : String(tax.name).trim(), rate: moneyAtLeastZero(tax, "rate", taxLabel), amount: taxAmount }

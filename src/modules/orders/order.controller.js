@@ -99,10 +99,13 @@ export const createBulk = asyncHandler(async (req, res) => {
   const fallbackStaff = req.body?.staff_id ?? req.body?.staffId ?? null
   // locationId once next to items[] for every order (an order may still name its own).
   const topLocation = await bulkLocation(req)
-  const data = await runBulk(extractBulkItems(req.body), async (item) => {
+  const topBatch = req.body?.batch_id ?? req.body?.batchId ?? null
+  const data = await runBulk(extractBulkItems(Array.isArray(req.body?.orders) ? { items: req.body.orders } : req.body), async (item) => {
     const { locationId, location_id, ...orderBody } = item || {}
     const location = (await orderLocation(base, locationId ?? location_id)) || topLocation
     const { staff_ref, ...input } = parseCreateOrder(orderBody)
+    // batchId once next to orders[] covers every order that does not name its own.
+    if (!input.register_session_id) input.register_session_id = topBatch
     const actor = actingAs(
       location ? { ...base, location_id: location.id, location_id_int: location.location_id_int } : base,
       await resolveStaff(base.store_id, staff_ref || (fallbackStaff == null ? null : String(fallbackStaff)), req.user)

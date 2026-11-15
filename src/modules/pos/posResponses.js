@@ -287,30 +287,33 @@ function saleUnitView(item) {
   return { sale_unit: "pack", packs: num(item.qty_packs), pack_size: item.pack_size ?? null, pack_price: num(item.pack_price) }
 }
 
+/** A line's taxes as sold: [{ id (a Taxes page tax), level, name, type, value }]. */
 function lineTaxesOf(item) {
-  // As the till sent them; older lines: rebuilt from the product / category / sales tax kept.
   const sent = parseList(item.line_taxes)
-  if (sent.length) return sent.map((tax) => ({ level: tax.level, name: tax.name ?? null, rate: num(tax.rate), amount: num(tax.amount) }))
-  const out = parseList(item.product_taxes).map((tax) => ({ level: "product", name: tax.name ?? null, rate: num(tax.value), amount: num(tax.amount) }))
-  if (Number(item.category_tax_amount) > 0) {
-    out.push({ level: "category", name: item.category_tax_name || null, rate: num(item.category_tax_value), amount: num(item.category_tax_amount) })
+  if (sent.length) {
+    return sent.map((tax) => ({ id: tax.id ?? null, level: tax.level, name: tax.name ?? null, type: tax.type || "percentage", value: num(tax.rate ?? tax.value) }))
   }
-  if (Number(item.sales_tax_amount) > 0) out.push({ level: "sales", name: "Sales Tax", rate: null, amount: num(item.sales_tax_amount) })
+  // Lines saved before the till sent each tax: rebuilt from the product / category / sales tax kept.
+  const out = parseList(item.product_taxes).map((tax) => ({ id: null, level: "product", name: tax.name ?? null, type: tax.type || "percentage", value: num(tax.value) }))
+  if (Number(item.category_tax_amount) > 0) {
+    out.push({ id: null, level: "category", name: item.category_tax_name || null, type: item.category_tax_type || "percentage", value: num(item.category_tax_value) })
+  }
+  if (Number(item.sales_tax_amount) > 0) out.push({ id: null, level: "sales", name: "Sales Tax", type: "percentage", value: null })
   return out
 }
 
-/** A line's discounts as sold: [{ discount_id, name, type, discount_type, discount_value, amount }]. */
+/** A line's discounts as sold: [{ id (the discount's number: store / bulk / bundle only), level, name, type, value }]. */
 function lineDiscountsOf(item) {
-  return parseList(item.offers)
-    .filter((offer) => offer?.id != null)
-    .map((offer) => ({
-      discount_id: offer.id,
-      name: offer.name || null,
-      type: offer.type || null,
-      discount_type: offer.discount_type || null,
-      discount_value: num(offer.discount_value),
-      amount: offer.amount == null ? null : num(offer.amount),
-    }))
+  const sent = parseList(item.discount_entries)
+  if (sent.length) return sent.map((row) => ({ id: row.id ?? null, level: row.level, name: row.name ?? null, type: row.type || "percentage", value: num(row.value) }))
+  // Lines saved before the till sent each discount: the product / category discount and the offers kept.
+  const out = []
+  if (item.product_discount && typeof item.product_discount === "object") out.push({ id: null, level: "product", name: item.product_discount.name ?? null, type: item.product_discount.type || "percentage", value: num(item.product_discount.value) })
+  if (item.category_discount && typeof item.category_discount === "object") out.push({ id: null, level: "category", name: item.category_discount.name ?? null, type: item.category_discount.type || "percentage", value: num(item.category_discount.value) })
+  for (const offer of parseList(item.offers).filter((row) => row?.id != null)) {
+    out.push({ id: null, level: "store", name: offer.name || null, type: offer.discount_type || "percentage", value: num(offer.discount_value) })
+  }
+  return out
 }
 
 function orderItemView(item, refs, refundEntry) {
@@ -321,13 +324,14 @@ function orderItemView(item, refs, refundEntry) {
   const gross = packLine ? Number(item.pack_price || 0) * Number(item.qty_packs || 0) : Number(item.unit_price || 0) * Number(item.quantity || 0)
   const figures = {
     gross_amount: Number(gross.toFixed(2)),
-    discount_amount: num(item.discount_amount) ?? 0,
     discount: lineDiscountsOf(item),
-    free_qty: num(item.free_qty) ?? 0,
+    discount_amount: num(item.discount_amount) ?? 0,
     subtotal,
     taxes: lineTaxesOf(item),
     tax_amount: taxAmount,
     total: Number((subtotal + taxAmount).toFixed(2)),
+    // The bundle the line was sold in (its number) and its role: buy | reward.
+    ...(item.bundle_id != null ? { bundle_id: item.bundle_id, bundle_role: item.bundle_role || null } : {}),
     ...lineRefundView(item, refundEntry),
   }
   // The lots the line was sold from (soonest expiry first): [{ id (lot number), qty, expiry_date }].
@@ -351,7 +355,8 @@ function orderItemView(item, refs, refundEntry) {
   }
   return {
     id: item.item_number,
-    title: item.title,
+    is_custom: true,
+    name: item.title,
     category: item.custom_category ? { id: null, name: item.custom_category } : null,
     qty: num(item.quantity),
     unit_price: num(item.unit_price),
@@ -371,6 +376,20 @@ function paymentSplitsOf(order) {
   return Array.isArray(breakdown?.payment_gst) ? breakdown.payment_gst : []
 }
 
+/** The order discount as sold: { id, name, type, value } or null. */
+function orderDiscountOf(order, amount) {
+  let sent = order.order_discount
+  if (typeof sent === "string") {
+    try {
+      sent = JSON.parse(sent)
+    } catch {
+      sent = null
+    }
+  }
+  if (sent && typeof sent === "object") return { id: sent.id ?? null, name: sent.name ?? null, type: sent.type || "percentage", value: num(sent.value) }
+  return amount > 0 ? { id: null, name: null, type: order.order_discount_type || "percentage", value: null } : null
+}
+
 function orderView(order, refs, currency, remainingAmount = 0, receipts = new Map(), refundEntry = null) {
   const items = [...(order.OrderItems || [])].sort((a, b) => a.item_number - b.item_number)
   const surcharge = num(order.payment_gst_amount) ?? 0
@@ -385,31 +404,43 @@ function orderView(order, refs, currency, remainingAmount = 0, receipts = new Ma
     staff: refs.staff(order.cashier_id),
     customer: refs.customer(order.customer_id),
     batch: refs.batch(order.register_session_id),
-    currency,
     is_custom: Boolean(order.is_custom),
+    tax_exempt: Boolean(order.tax_exempt),
+    discount_exempt: Boolean(order.discount_exempt),
     order_items: items.map((item) => orderItemView(item, refs, refundEntry)),
-    gross_amount: num(order.gross_amount) ?? 0,
-    // The lines' discounts together (each line's are in order_items[].discount).
-    discount_amount: num(order.line_discount_amount) ?? 0,
-    order_discount: orderDiscount > 0 ? { type: order.order_discount_type || null, amount: orderDiscount } : null,
-    coupon: coupon > 0 ? { code: order.coupon_code || null, amount: coupon } : null,
-    subtotal: num(order.subtotal) ?? 0,
-    // The lines' taxes only; the payment surcharges are surcharge_amount.
-    tax_amount: Number(((Number(order.tax_amount) || 0) - surcharge).toFixed(2)),
-    surcharge_amount: surcharge,
-    total_amount: num(order.total_amount),
+    // The bundles used: [{ id, name, reward_type, value }].
+    bundles: parseList(order.bundles).map((bundle) => ({ id: bundle.id, name: bundle.name ?? null, reward_type: bundle.reward_type, value: num(bundle.value) })),
+    order_discount: orderDiscountOf(order, orderDiscount),
+    ...(coupon > 0 ? { coupon: { code: order.coupon_code || null, amount: coupon } } : {}),
+    // Per method: its share of the bill, its surcharge (on only while surcharge_active), what it paid and handed over.
+    payments: paymentSplitsOf(order).map((row) => {
+      const surchargeAmount = num(row.gst_amount) ?? 0
+      const type = row.surcharge_type || (Number(row.gst_percent) > 0 ? "percentage" : null)
+      return {
+        method: row.method,
+        bill_amount: num(row.bill_share) ?? Number(((Number(row.amount) || 0) - surchargeAmount).toFixed(2)),
+        surcharge_active: row.surcharge_active == null ? surchargeAmount > 0 : Boolean(row.surcharge_active),
+        type,
+        value: num(row.surcharge_value ?? (Number(row.gst_percent) > 0 ? row.gst_percent : null)) ?? 0,
+        surcharge_amount: surchargeAmount,
+        amount: num(row.amount),
+        paid: num(row.paid ?? row.amount),
+      }
+    }),
+    summary: {
+      currency,
+      total_items: items.length,
+      gross_amount: num(order.gross_amount) ?? 0,
+      // The lines' discounts together (each line's are in order_items[].discount).
+      items_discount_amount: num(order.line_discount_amount) ?? 0,
+      subtotal: num(order.subtotal) ?? 0,
+      order_discount_amount: orderDiscount,
+      // The lines' taxes only; the payment surcharges are surcharge_amount.
+      tax_amount: Number(((Number(order.tax_amount) || 0) - surcharge).toFixed(2)),
+      surcharge_amount: surcharge,
+      total_amount: num(order.total_amount),
+    },
     payment_method: order.payment_method,
-    // Per method: its share of the bill, its surcharge, what it paid toward the bill, handed over and change.
-    payments: paymentSplitsOf(order).map((row) => ({
-      method: row.method,
-      bill_share: num(row.bill_share) ?? Number(((Number(row.amount) || 0) - (Number(row.gst_amount) || 0)).toFixed(2)),
-      surcharge_type: row.surcharge_type || (Number(row.gst_percent) > 0 ? "percentage" : null),
-      surcharge_value: num(row.surcharge_value ?? (Number(row.gst_percent) > 0 ? row.gst_percent : null)),
-      surcharge_amount: num(row.gst_amount) ?? 0,
-      amount: num(row.amount),
-      paid: num(row.paid ?? row.amount),
-      change: num(row.change) ?? 0,
-    })),
     amount_paid: num(order.amount_paid),
     change_due: num(order.change_due),
     // Udhaar still owed on this sale (payment_status partial); 0 when fully paid.

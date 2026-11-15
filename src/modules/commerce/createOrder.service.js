@@ -10,6 +10,7 @@ import { CouponRedemption } from "../coupons/couponRedemption.model.js"
 import { Product } from "../catalog/product.model.js"
 import { Category } from "../catalog/category.model.js"
 import { Offer } from "../offers/offer.model.js"
+import { BundleDiscount } from "../discounts/bundleDiscount.model.js"
 import { withEffectiveDiscounts } from "../catalog/variantDiscount.js"
 import { getStoreForManager } from "../stores/store.service.js"
 import { getLocation } from "../locations/location.service.js"
@@ -265,7 +266,7 @@ function posPricedLine(item, product, offersById) {
   const offer = appliedOffers[0] || null
   // A store tax (Taxes page) is saved with the product's own taxes.
   const ofLevel = (level) =>
-    taxes.filter((tax) => tax.level === level || (level === "product" && tax.level === "store"))
+    taxes.filter((tax) => tax.level === level || (level === "product" && (tax.level === "store" || tax.level === "variant")))
   const categoryTax = ofLevel("category")[0] || null
   const salePrice = money(item.unit_price)
   const unit_price = packSize ? money(salePrice / packSize) : salePrice
@@ -304,11 +305,15 @@ function posPricedLine(item, product, offersById) {
     product_discount: source === "product" ? snapshot(discount_amount) : null,
     category_discount: source === "category" ? snapshot(discount_amount) : null,
     free_qty: discount?.free_qty || 0,
+    // The discounts of the line as the till sent them: [{ id, level, name, type, value, amount }].
+    discount_entries: discount?.entries || null,
+    bundle_id: item.bundle_id ?? null,
+    bundle_role: item.bundle_role ?? null,
     // The till's own figures: price × qty as it sold them (per pack on a pack line).
     subtotal: item.priced.subtotal != null ? money(item.priced.subtotal) : money(salePrice * Number(item.quantity) - discount_amount),
     tax_amount: item.priced.tax_amount != null ? money(item.priced.tax_amount) : sumOf(taxes, (tax) => tax.amount),
     // Every tax of the line as the till sent it (level, name, rate, amount).
-    line_taxes: taxes.map((tax) => ({ level: tax.level, name: tax.name, rate: tax.rate ?? null, amount: money(tax.amount) })),
+    line_taxes: taxes.map((tax) => ({ ...(tax.id !== undefined ? { id: tax.id } : {}), level: tax.level, name: tax.name, ...(tax.type ? { type: tax.type } : {}), rate: tax.rate ?? null, amount: money(tax.amount) })),
     product_tax_amount: sumOf(ofLevel("product"), (tax) => tax.amount),
     category_tax_amount: sumOf(ofLevel("category"), (tax) => tax.amount),
     sales_tax_amount: sumOf(ofLevel("sales"), (tax) => tax.amount),
@@ -327,11 +332,13 @@ function posPricedTotals({ lines, store, input, orderDiscount, couponDiscount })
     const amount = money(row.amount ?? (row.bill_share != null ? Number(row.bill_share) + gst_amount : row.paid || 0))
     return {
       method: row.method,
-      bill_share: money(amount - gst_amount),
+      // The share of the bill as the till sent it (cash may be rounded to the rupee, so amount - surcharge can differ by paise).
+      bill_share: row.bill_share != null ? money(row.bill_share) : money(amount - gst_amount),
       gst_percent: row.surcharge_type === "fixed" ? 0 : row.surcharge_value ?? row.tax_rate ?? 0,
       // The surcharge as the till sent it (percentage | fixed and its value).
       surcharge_type: row.surcharge_type || null,
       surcharge_value: row.surcharge_value ?? null,
+      surcharge_active: row.surcharge_active ?? null,
       gst_amount,
       amount,
       paid: money(row.paid ?? amount),
@@ -372,6 +379,7 @@ function posPricedTotals({ lines, store, input, orderDiscount, couponDiscount })
       bill_share: row.bill_share,
       surcharge_type: row.surcharge_type,
       surcharge_value: row.surcharge_value,
+      surcharge_active: row.surcharge_active,
       gst_percent: row.gst_percent,
       gst_amount: row.gst_amount,
       amount: row.amount,
@@ -489,6 +497,15 @@ export async function createOrder(actor, input) {
       tiersByProduct.set(tier.product_id, list)
     }
 
+    // The bundles a till order names must exist (an offline sale made before one was deleted still records it).
+    if (input.v2 && input.bundles?.length) {
+      const wanted = input.bundles.map((bundle) => bundle.id)
+      const found = await BundleDiscount.findAll({ where: { store_id: store.id, bundle_number: wanted }, attributes: ["bundle_number"], paranoid: false, transaction })
+      const have = new Set(found.map((row) => row.bundle_number))
+      const missing = wanted.find((id) => !have.has(id))
+      if (missing != null) throw new NotFoundError(`Bundle discount ${missing} not found`)
+    }
+
     const offerIds = input.precomputed
       ? [...new Set(items.flatMap((item) => item.priced?.discount?.offer_ids || []).filter(Boolean))]
       : []
@@ -559,7 +576,7 @@ export async function createOrder(actor, input) {
       ? money(input.order_discount?.amount || 0)
       : resolveOrderDiscount(lineSubtotal, input)
     // A manual order discount is a discount_override: cashiers need a manager's approval.
-    if (orderDiscount > 0 && actor.role === "cashier") {
+    if (orderDiscount > 0 && actor.role === "cashier" && !(input.v2 && input.order_discount?.id != null)) {
       await requireApprovedAction({
         store,
         actor,
@@ -708,6 +725,10 @@ export async function createOrder(actor, input) {
           ...visibilityFromOrderChannel(channel),
           is_custom,
           offer_exempt: Boolean(input.offer_exempt),
+          tax_exempt: Boolean(input.tax_exempt),
+          discount_exempt: Boolean(input.discount_exempt),
+          order_discount: input.v2 && input.order_discount ? { id: input.order_discount.id, name: input.order_discount.name, type: input.order_discount.type, value: input.order_discount.value } : null,
+          bundles: input.v2 && input.bundles?.length ? input.bundles : null,
           order_number,
           cashier_id,
           customer_id: customer?.id || null,
@@ -796,6 +817,9 @@ export async function createOrder(actor, input) {
         product_discount: line.product_discount || null,
         category_discount: line.category_discount || null,
         free_qty: line.free_qty || 0,
+        discount_entries: line.discount_entries || null,
+        bundle_id: line.bundle_id ?? null,
+        bundle_role: line.bundle_role ?? null,
         tax_amount: line.tax_amount,
         product_tax_amount: line.product_tax_amount || 0,
         category_tax_amount: line.category_tax_amount || 0,

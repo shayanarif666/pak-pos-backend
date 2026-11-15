@@ -44,6 +44,11 @@ export const OrderItem = sequelize.define(
     // The product / category discount that priced this line, as at the sale: { name, type, value, amount }.
     product_discount: { type: DataTypes.JSON, allowNull: true },
     category_discount: { type: DataTypes.JSON, allowNull: true },
+    // Every discount of the line as the till sent it: [{ id, level, name, type, value, amount }].
+    discount_entries: { type: DataTypes.JSON, allowNull: true },
+    // The bundle (its number) a line belongs to, and its role: buy | reward.
+    bundle_id: { type: DataTypes.INTEGER, allowNull: true },
+    bundle_role: { type: DataTypes.STRING(16), allowNull: true },
     offer_id: uuidCol(true),
     // The offer(s) that priced this line, as they were at the sale: [{ id, name, type, …, amount }].
     offers: { type: DataTypes.JSON, allowNull: true },

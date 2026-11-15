@@ -23,6 +23,11 @@ export const Order = sequelize.define(
     is_custom: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
     // Rung up with offer_exempt: no offer applied to any line.
     offer_exempt: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+    // No tax / no discount on the whole order; the order discount { id, name, type, value } and the bundles used.
+    tax_exempt: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+    discount_exempt: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+    order_discount: { type: DataTypes.JSON, allowNull: true },
+    bundles: { type: DataTypes.JSON, allowNull: true },
     order_number: { type: DataTypes.INTEGER, allowNull: false },
     cashier_id: uuidCol(true),
     customer_id: uuidCol(true),
