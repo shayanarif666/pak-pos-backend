@@ -37,7 +37,6 @@ import {
   refundReceipt,
   refundReceiptById,
   voidOne,
-  listDiscounts,
 } from "./order.controller.js"
 
 const router = Router()
@@ -62,7 +61,6 @@ router.patch("/bulk/status", ...manage, patchBulkStatus)
 router.patch("/bulk/payment-method", ...cancelled, patchBulkPaymentMethod)
 router.get("/", ...listRoles, list)
 router.get("/custom", ...staff, listCustom)
-router.get("/discounts", ...staff, listDiscounts)
 router.get("/cancelled", ...cancelled, listCancelled)
 router.get("/refunds", ...staff, listRefunds)
 router.get("/refunds/:refundId/receipt", ...staff, refundReceiptById)

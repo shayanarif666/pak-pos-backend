@@ -7,7 +7,8 @@ import { actingAs, resolveStaff } from "../../shared/utils/staff.util.js"
 import { OrderDiscount } from "./orderDiscount.model.js"
 import { parseCreateOrderDiscount, parsePatchOrderDiscount } from "./orderDiscount.validation.js"
 import * as service from "./orderDiscount.service.js"
-import { posOrderDiscount, sendList } from "./discountResponses.js"
+import { posBundles, posOrderDiscount } from "./discountResponses.js"
+import { listBundles } from "./bundleDiscount.service.js"
 
 const isPos = (req) => req.auth?.channel === "pos"
 
@@ -23,7 +24,11 @@ const idOf = (req) =>
 
 export const list = asyncHandler(async (req, res) => {
   const data = await service.listOrderDiscounts(req.storeId, req.query)
-  if (isPos(req)) return sendList(req, res, data, posOrderDiscount)
+  // The POS gets every discount an order can use in one reply: the order discounts and the bundle discounts.
+  if (isPos(req)) {
+    const bundles = await listBundles(req.storeId, { active: req.query.active })
+    return apiResponse(res, 200, "OK", { discounts: data.map(posOrderDiscount), bundle_discounts: await posBundles(bundles) })
+  }
   return apiResponse(res, 200, "OK", data)
 })
 
