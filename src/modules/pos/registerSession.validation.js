@@ -39,6 +39,12 @@ function optionalDate(body, key) {
   return date
 }
 
+/** The till (PC): its pos_devices id or its own hardware id / number (a string either way). */
+function deviceRef(body, key, alias) {
+  const value = body[key] ?? body[alias]
+  return value == null || value === "" ? null : String(value).trim()
+}
+
 /** Batch opening: { id (staff), opening_amount }. opening_cash is still read as the old name. */
 export function parseOpenBatch(body) {
   const raw = body.opening_amount ?? body.opening_cash
@@ -54,10 +60,8 @@ export function parseOpenBatch(body) {
     // id or the device's own stable hardware id in this one field, and resolveDevice() matches
     // whichever it turns out to be. device_uid stays as an explicit alternative for clients that
     // already know their hardware id.
-    device_id:
-      body.device_id == null || body.device_id === "" ? null : String(body.device_id).trim(),
-    device_uid:
-      body.device_uid == null || body.device_uid === "" ? null : String(body.device_uid).trim(),
+    device_id: deviceRef(body, "device_id", "deviceId"),
+    device_uid: deviceRef(body, "device_uid", "deviceUid"),
     note: body.note == null || body.note === "" ? null : String(body.note).trim(),
     // Offline POS: when this shift actually opened, if that's earlier than when this request
     // reaches the server. Defaults to now when omitted.
@@ -73,6 +77,9 @@ export function parseCloseBatch(body) {
     staff_ref: staffRefFrom(body, STAFF_KEYS),
     batch_id:
       body.batch_id == null || body.batch_id === "" ? null : String(body.batch_id).trim(),
+    // The till the batch was opened on: closes that device's open batch of the staff member (when no batch_id).
+    device_id: deviceRef(body, "device_id", "deviceId"),
+    device_uid: deviceRef(body, "device_uid", "deviceUid"),
     total_cash: total === undefined || total === null || total === "" ? null : optionalNumber({ total }, "total"),
     note_5000_count: optionalInt(body, "note_5000_count"),
     note_1000_count: optionalInt(body, "note_1000_count"),

@@ -53,9 +53,21 @@ function batchAction(run, parse, status, message) {
       run(actor, await resolveStaff(actor.store_id, staff_ref, req.user), fields)
     if (!Array.isArray(req.body?.items)) return apiResponse(res, status, message, await one(req.body))
     const location_id = req.body.location_id ?? req.body.locationId
-    const data = await runBulk(extractBulkItems(req.body), (item) =>
-      one(parse({ ...(location_id == null ? {} : { location_id }), ...(item || {}) }))
-    )
+    // deviceId / device_uid once next to items[]: the till every row without its own is on.
+    const device_id = req.body.device_id ?? req.body.deviceId
+    const device_uid = req.body.device_uid ?? req.body.deviceUid
+    const data = await runBulk(extractBulkItems(req.body), (item) => {
+      const own = item || {}
+      const hasDevice = own.device_id != null || own.deviceId != null || own.device_uid != null || own.deviceUid != null
+      return one(
+        parse({
+          ...(location_id == null ? {} : { location_id }),
+          ...(!hasDevice && device_id != null ? { device_id } : {}),
+          ...(!hasDevice && device_uid != null ? { device_uid } : {}),
+          ...own,
+        })
+      )
+    })
     return posBulkResponse(res, data, message, data.created)
   })
 }

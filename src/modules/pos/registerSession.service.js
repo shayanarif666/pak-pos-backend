@@ -99,15 +99,22 @@ async function getSessionByIdOrNumber(storeId, idOrNumber) {
   return row
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+/** A till named by its pos_devices id, its own hardware id (device_uid) or its short number. */
+function deviceMatch(ref) {
+  return [{ device_uid: ref }, ...(UUID_RE.test(ref) ? [{ id: ref }] : []), ...(/^[0-9]+$/.test(ref) ? [{ device_number: Number(ref) }] : [])]
+}
+
 async function resolveDevice(storeId, locationId, { deviceId, deviceUid } = {}) {
   if (!deviceId && !deviceUid) return null
   const where = { store_id: storeId, is_active: true }
   if (deviceId && deviceUid) {
-    where[Op.or] = [{ id: deviceId }, { device_uid: deviceUid }]
+    where[Op.or] = [...deviceMatch(deviceId), { device_uid: deviceUid }]
   } else if (deviceId) {
     // deviceId isn't guaranteed to be the pos_devices row id — it may be the device_uid sent
     // under the wrong key, so match either column.
-    where[Op.or] = [{ id: deviceId }, { device_uid: deviceId }]
+    where[Op.or] = deviceMatch(deviceId)
   } else {
     where.device_uid = deviceUid
   }
@@ -180,13 +187,7 @@ export async function openBatch(actor, staff, fields) {
     deviceUid: fields.device_uid || null,
   })
 
-  // One open batch per staff member, and per counter (device) when the till is known.
-  const openForStaff = await RegisterSession.findOne({
-    where: { store_id: store.id, cashier_id: staff.id, status: "open" },
-  })
-  if (openForStaff) {
-    throw new ConflictError("This staff member already has an open batch")
-  }
+  // A staff member may have several open batches (one on each counter); one counter holds one open batch.
   if (device) {
     const openOnDevice = await RegisterSession.findOne({
       where: { store_id: store.id, device_id: device.id, status: "open" },
@@ -235,6 +236,7 @@ export async function openBatch(actor, staff, fields) {
     id: row.session_number,
     staff: staffSummary(staff),
     ...(await batchLocation(row)),
+    device_id: device?.device_number ?? null,
     opening_amount: Number(row.opening_cash),
     opening_at: row.opened_at,
   }
@@ -248,12 +250,27 @@ export async function closeBatch(actor, staff, fields) {
   let row
   if (fields.batch_id) {
     row = await getSessionByIdOrNumber(actor.store_id, fields.batch_id)
-  } else {
+  } else if (fields.device_id || fields.device_uid) {
+    // The batch this staff member opened on that till.
+    const ref = fields.device_id || fields.device_uid
+    const device = await PosDevice.findOne({
+      where: { store_id: actor.store_id, [Op.or]: deviceMatch(ref) },
+    })
+    if (!device) throw new NotFoundError("Device not found")
     row = await RegisterSession.findOne({
+      where: { store_id: actor.store_id, cashier_id: staff.id, device_id: device.id, status: "open" },
+      order: [["opened_at", "DESC"]],
+    })
+    if (!row) throw new NotFoundError("This staff member has no open batch on this device")
+  } else {
+    // Several open batches (one on each counter): say which one — batch_id or the device.
+    const open = await RegisterSession.findAll({
       where: { store_id: actor.store_id, cashier_id: staff.id, status: "open" },
       order: [["opened_at", "DESC"]],
     })
-    if (!row) throw new NotFoundError("This staff member has no open batch")
+    if (!open.length) throw new NotFoundError("This staff member has no open batch")
+    if (open.length > 1) throw new AppError("This staff member has several open batches: send batch_id or device_id", 400)
+    row = open[0]
   }
   if (row.status !== "open") {
     throw new ConflictError("This batch is already closed")
@@ -265,7 +282,7 @@ export async function closeBatch(actor, staff, fields) {
   const expected = expectedCash(row)
   const variance = money(closing - expected)
 
-  const { batch_id: _batch, total_cash: _total, ...rest } = fields
+  const { batch_id: _batch, total_cash: _total, device_id: _device, device_uid: _uid, ...rest } = fields
   await row.update({
     ...rest,
     counted_cash: counted,
@@ -289,10 +306,12 @@ export async function closeBatch(actor, staff, fields) {
     note: `batch closed, variance ${variance}`,
   })
 
+  const tillOf = row.device_id ? await PosDevice.findByPk(row.device_id, { attributes: ["device_number"] }) : null
   return {
     id: row.session_number,
     staff: staffSummary(staff),
     ...(await batchLocation(row)),
+    device_id: tillOf?.device_number ?? null,
     total_cash: Number(row.counted_cash),
     closing_at: row.closed_at,
   }
