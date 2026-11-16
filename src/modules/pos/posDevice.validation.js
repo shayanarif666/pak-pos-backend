@@ -40,7 +40,7 @@ export function parsePatchDevice(body) {
   if (body.location_id !== undefined) {
     // The location number (e.g. 1) or UUID.
     const location_id = String(requireString(body, "location_id")).trim()
-    if (!UUID_RE.test(location_id) && !/^d+$/.test(location_id)) throw new AppError("location_id must be a location number or UUID", 400)
+    if (!UUID_RE.test(location_id) && !/^[0-9]+$/.test(location_id)) throw new AppError("location_id must be a location number or UUID", 400)
     patch.location_id = location_id
   }
   if (!Object.keys(patch).length) throw new AppError("No fields to update", 400)

@@ -29,7 +29,7 @@ const STAFF_ROLES = new Set(["store_admin", "manager", "cashier"])
 
 async function resolveLocation(storeId, locationId) {
   // The location number (e.g. 1) or UUID.
-  const byNumber = /^d+$/.test(String(locationId))
+  const byNumber = /^[0-9]+$/.test(String(locationId))
   const location = await Location.findOne({
     where: { ...(byNumber ? { location_id_int: Number(locationId) } : { id: locationId }), store_id: storeId, is_active: true },
   })
@@ -175,7 +175,7 @@ export async function heartbeat(actor, id) {
 export async function patchDevice(actor, id, fields) {
   // :id = the device number (e.g. 1) or UUID.
   const device = await PosDevice.findOne({
-    where: /^d+$/.test(String(id)) ? { device_number: Number(id), store_id: actor.store_id } : { id, store_id: actor.store_id },
+    where: /^[0-9]+$/.test(String(id)) ? { device_number: Number(id), store_id: actor.store_id } : { id, store_id: actor.store_id },
   })
   if (!device) throw new NotFoundError("Device not found")
 
