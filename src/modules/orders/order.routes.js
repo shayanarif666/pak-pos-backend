@@ -39,6 +39,7 @@ import {
   refundReceiptById,
   voidOne,
 } from "./order.controller.js"
+import { bulkPatch } from "../../shared/middlewares/bulkPatch.middleware.js"
 
 const router = Router()
 const tenant = [authMiddleware, tenantMiddleware, requireTenantStore]
@@ -54,12 +55,15 @@ const place = [
 const manage = [...tenant, authorize("store_admin", "manager", "cashier")]
 const cancelled = [...tenant, authorize("store_admin", "manager")]
 
+// PATCH /bulk takes the body of its POST (storeId, items[] with the POST field names).
+const PATCH_BODY = bulkPatch({ listKeys: ["orders"] })
+
 router.post("/", ...place, requestScope(), validate(parseCreateOrder), create)
 router.post("/bulk", ...place, requestScope(), createBulk)
 // Bulk updates (POS offline sync): items[] = [{ id (order number), ... }].
-router.patch("/bulk", ...manage, patchBulk)
-router.patch("/bulk/status", ...manage, patchBulkStatus)
-router.patch("/bulk/payment-method", ...cancelled, patchBulkPaymentMethod)
+router.patch("/bulk", ...manage, ...PATCH_BODY, patchBulk)
+router.patch("/bulk/status", ...manage, ...PATCH_BODY, patchBulkStatus)
+router.patch("/bulk/payment-method", ...cancelled, ...PATCH_BODY, patchBulkPaymentMethod)
 router.get("/", ...listRoles, list)
 router.get("/custom", ...staff, listCustom)
 // Dashboard: the Orders History table (Order #, Date, Cashier, Total Items, Total Amount, Status).

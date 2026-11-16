@@ -27,9 +27,13 @@ import {
   patchLocations,
   remove,
 } from "./category.controller.js"
+import { bulkPatch } from "../../shared/middlewares/bulkPatch.middleware.js"
 
 const router = Router()
 const tenant = [authMiddleware, tenantMiddleware, requireTenantStore]
+
+// PATCH /bulk takes the body of its POST (storeId, items[] with the POST field names).
+const PATCH_BODY = bulkPatch()
 
 router.get(
   "/",
@@ -65,8 +69,8 @@ router.post(
   createBulk
 )
 // Bulk updates (POS offline sync): items[] = [{ id (category number), ...fields }].
-router.patch("/bulk", ...tenant, authorize("store_admin", "manager"), patchBulk)
-router.patch("/bulk/status", ...tenant, authorize("store_admin", "manager"), patchBulkStatus)
+router.patch("/bulk", ...tenant, authorize("store_admin", "manager"), ...PATCH_BODY, patchBulk)
+router.patch("/bulk/status", ...tenant, authorize("store_admin", "manager"), ...PATCH_BODY, patchBulkStatus)
 // Where several categories are sold, in one call (dashboard: select rows -> Update Locations).
 router.patch("/locations", ...tenant, authorize("store_admin"), patchLocations)
 // Dashboard: the Categories table (Category #, Name, Sold At, Active).

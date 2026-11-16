@@ -9,8 +9,12 @@ import { requestScope } from "../../shared/middlewares/requestScope.middleware.j
 import { validate } from "../../shared/middlewares/validate.middleware.js"
 import { parseCreateMovement } from "./stock.validation.js"
 import { create, createBulk, list, patchBulk, remove } from "./stock.controller.js"
+import { bulkPatch, movementPatchItem } from "../../shared/middlewares/bulkPatch.middleware.js"
 
 const router = Router()
+
+// PATCH /bulk takes the body of its POST (storeId, items[] with the POST field names).
+const PATCH_BODY = bulkPatch({ item: movementPatchItem })
 
 router.use(
   authMiddleware,
@@ -23,7 +27,7 @@ router.get("/", list)
 router.post("/", requestScope(), validate(parseCreateMovement), create)
 router.post("/bulk", requestScope(), createBulk)
 // Fix wrong movements: { items: [{ id (movement number), ... }] }; the stock follows.
-router.patch("/bulk", patchBulk)
+router.patch("/bulk", ...PATCH_BODY, patchBulk)
 // Soft delete a wrong movement (:id = movement number); its qty is taken back off the stock.
 router.delete("/:id", remove)
 

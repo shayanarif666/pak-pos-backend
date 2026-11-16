@@ -22,8 +22,12 @@ import {
   patch,
   patchBulk,
 } from "./customer.controller.js"
+import { bulkPatch } from "../../shared/middlewares/bulkPatch.middleware.js"
 
 const router = Router()
+
+// PATCH /bulk takes the body of its POST (storeId, items[] with the POST field names).
+const PATCH_BODY = bulkPatch()
 
 router.use(
   authMiddleware,
@@ -36,7 +40,7 @@ router.get("/", list)
 router.post("/", requestScope(), validate(parseCreateCustomer), create)
 router.post("/bulk", requestScope({ itemLocation: true }), createBulk)
 // Bulk update (POS offline sync): items[] = [{ id (customer number), ...fields }].
-router.patch("/bulk", patchBulk)
+router.patch("/bulk", ...PATCH_BODY, patchBulk)
 router.get("/:id/credit", listCredit)
 router.post("/:id/credit", validate(parseCreditEntry), addCredit)
 router.get("/:id", getOne)

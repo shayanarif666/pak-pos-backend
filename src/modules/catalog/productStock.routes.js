@@ -8,18 +8,22 @@ import {
 import { validate } from "../../shared/middlewares/validate.middleware.js"
 import { parsePutStock } from "./productStock.validation.js"
 import { getOne, list, listLow, patchBulk, patchBulkQty, put, removeEntry } from "./productStock.controller.js"
+import { bulkPatch } from "../../shared/middlewares/bulkPatch.middleware.js"
 
 const router = Router()
 const tenant = [authMiddleware, tenantMiddleware, requireTenantStore]
 const read = [...tenant, authorize("store_admin", "manager", "cashier")]
 const write = [...tenant, authorize("store_admin", "manager")]
 
+// PATCH /bulk takes the body of its POST (storeId, items[] with the POST field names).
+const PATCH_BODY = bulkPatch()
+
 router.get("/", ...read, list)
 router.get("/low", ...read, listLow)
 // Stock edits, one item or many (POS offline sync and Product Stock & Expiry):
 // { locationId?, items: [{ product_id, variant_id?, location_id?, qty | number_of_packs..., ... }] }.
-router.patch("/bulk", ...write, patchBulk)
-router.patch("/bulk/qty", ...write, patchBulkQty)
+router.patch("/bulk", ...write, ...PATCH_BODY, patchBulk)
+router.patch("/bulk/qty", ...write, ...PATCH_BODY, patchBulkQty)
 router.put("/:productId", ...write, validate(parsePutStock), put)
 router.get("/:id", ...write, getOne)
 // Soft delete one stock entry (a product at a location) from Product Stock & Expiry.

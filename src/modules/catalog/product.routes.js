@@ -44,11 +44,15 @@ import {
   uploadImage,
   uploadVariantImage,
 } from "./product.controller.js"
+import { bulkPatch } from "../../shared/middlewares/bulkPatch.middleware.js"
 
 const router = Router()
 const tenant = [authMiddleware, tenantMiddleware, requireTenantStore]
 const catalogRead = [...tenant, authorize("store_admin", "manager", "cashier")]
 const catalogWrite = [...tenant, authorize("store_admin", "manager")]
+
+// PATCH /bulk takes the body of its POST (storeId, items[] with the POST field names).
+const PATCH_BODY = bulkPatch()
 
 router.get("/", ...catalogRead, list)
 // Product image, one per product: multipart image (+ productId: number or UUID).
@@ -73,11 +77,11 @@ router.post(
 )
 router.post("/bulk", ...catalogWrite, requestScope({ location: false }), createBulk)
 // Bulk updates (POS offline sync): items[] = [{ id (product number), ...fields }].
-router.patch("/bulk", ...catalogWrite, patchBulk)
-router.patch("/bulk/weight", ...catalogWrite, patchBulkWeight)
-router.patch("/bulk/price", ...catalogWrite, patchBulkPrice)
-router.patch("/bulk/status", ...catalogWrite, patchBulkStatus)
-router.patch("/bulk/visibility", ...catalogWrite, patchBulkVisibility)
+router.patch("/bulk", ...catalogWrite, ...PATCH_BODY, patchBulk)
+router.patch("/bulk/weight", ...catalogWrite, ...PATCH_BODY, patchBulkWeight)
+router.patch("/bulk/price", ...catalogWrite, ...PATCH_BODY, patchBulkPrice)
+router.patch("/bulk/status", ...catalogWrite, ...PATCH_BODY, patchBulkStatus)
+router.patch("/bulk/visibility", ...catalogWrite, ...PATCH_BODY, patchBulkVisibility)
 router.get("/weight", ...catalogWrite, listWeight)
 router.get("/expiry", ...catalogWrite, listExpiry)
 // The stock of every product / variant at every location, with its lots and their expiry.

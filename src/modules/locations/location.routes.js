@@ -19,8 +19,12 @@ import {
   patchBulk,
   patchLocation,
 } from "./location.controller.js"
+import { bulkPatch } from "../../shared/middlewares/bulkPatch.middleware.js"
 
 const router = Router()
+
+// PATCH /bulk takes the body of its POST (storeId, items[] with the POST field names).
+const PATCH_BODY = bulkPatch()
 
 router.use(
   authMiddleware,
@@ -37,7 +41,7 @@ router.post(
   createLocation
 )
 // Bulk update: items[] = [{ id (location number), ...fields }].
-router.patch("/bulk", patchBulk)
+router.patch("/bulk", ...PATCH_BODY, patchBulk)
 // Dashboard: the Locations table (Location #, Name, City, Manager Info, Status) and one location with its staff.
 router.get("/lists", locationLists)
 router.get("/:id", locationOne)

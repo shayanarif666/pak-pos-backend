@@ -7,10 +7,14 @@ import {
   tenantMiddleware,
 } from "../../shared/middlewares/tenant.middleware.js"
 import { clockIn, clockOut, patchBulk, patchOne, list, remove } from "./staffSession.controller.js"
+import { bulkPatch } from "../../shared/middlewares/bulkPatch.middleware.js"
 
 const router = Router()
 
 // Only a store admin or manager holds a token; they clock in themselves or the cashier picked by PIN.
+// PATCH /bulk takes the body of its POST (storeId, items[] with the POST field names).
+const PATCH_BODY = bulkPatch()
+
 router.use(authMiddleware, authorize("store_admin", "manager"), tenantMiddleware, requireTenantStore)
 
 router.get("/", list)
@@ -19,7 +23,7 @@ const clockScope = requestScope({ staffKeys: ["staff_id", "staffId", "id"] })
 router.post("/clock-in", clockScope, clockIn)
 router.post("/clock-out", clockScope, clockOut)
 // A manager corrects attendance: items[] = [{ id (session number), clock_in_at?, clock_out_at? }].
-router.patch("/bulk", patchBulk)
+router.patch("/bulk", ...PATCH_BODY, patchBulk)
 // One session (session number or UUID): edit its times, or soft delete it.
 router.patch("/:id", patchOne)
 router.delete("/:id", remove)

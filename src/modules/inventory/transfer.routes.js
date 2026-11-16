@@ -20,9 +20,13 @@ import {
   patchBulkStatus,
   remove,
 } from "./transfer.controller.js"
+import { bulkPatch } from "../../shared/middlewares/bulkPatch.middleware.js"
 
 const router = Router()
 const tenant = [authMiddleware, tenantMiddleware, requireTenantStore]
+
+// PATCH /bulk takes the body of its POST (storeId, items[] with the POST field names).
+const PATCH_BODY = bulkPatch()
 
 router.get(
   "/",
@@ -40,10 +44,10 @@ router.post(
 )
 router.post("/bulk", ...tenant, authorize("store_admin"), requestScope(), createBulk)
 // Update transfers: items[] = [{ id (transfer number), ...the same fields as create }].
-router.patch("/bulk", ...tenant, authorize("store_admin"), patchBulk)
-router.patch("/bulk/qty", ...tenant, authorize("store_admin"), patchBulkQty)
-router.patch("/bulk/status", ...tenant, authorize("store_admin", "manager"), patchBulkStatus)
-router.patch("/bulk/receive", ...tenant, authorize("store_admin", "manager"), patchBulkReceive)
+router.patch("/bulk", ...tenant, authorize("store_admin"), ...PATCH_BODY, patchBulk)
+router.patch("/bulk/qty", ...tenant, authorize("store_admin"), ...PATCH_BODY, patchBulkQty)
+router.patch("/bulk/status", ...tenant, authorize("store_admin", "manager"), ...PATCH_BODY, patchBulkStatus)
+router.patch("/bulk/receive", ...tenant, authorize("store_admin", "manager"), ...PATCH_BODY, patchBulkReceive)
 router.post(
   "/:id/complete",
   ...tenant,
