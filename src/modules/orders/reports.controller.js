@@ -3,6 +3,7 @@ import { shortReportIds } from "../pos/posHistory.service.js"
 import { asyncHandler } from "../../shared/utils/asyncHandler.js"
 import * as reportsService from "./reports.service.js"
 import { allLocationsReport, locationReport, posBreakdownReport } from "./reports.pos.service.js"
+import { posShape } from "../../shared/utils/posShape.js"
 
 function actorFromReq(req) {
   const user = req.user
@@ -41,13 +42,13 @@ export const dashboard = asyncHandler(async (req, res) => {
 
 export const breakdown = asyncHandler(async (req, res) => {
   const data = await posBreakdownReport(actorFromReq(req), req.query)
-  if (req.auth?.channel === "pos") return apiResponse(res, 200, "OK", await shortReportIds(data))
+  if (posShape(req)) return apiResponse(res, 200, "OK", await shortReportIds(data))
   return apiResponse(res, 200, "OK", data)
 })
 
 /** POS ids as short numbers; the web dashboard keeps the full rows. */
 async function reportReply(req, res, data) {
-  return apiResponse(res, 200, "OK", req.auth?.channel === "pos" ? await shortReportIds(data) : data)
+  return apiResponse(res, 200, "OK", posShape(req) ? await shortReportIds(data) : data)
 }
 
 export const allLocations = asyncHandler(async (req, res) => {

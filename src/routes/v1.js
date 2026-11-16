@@ -61,6 +61,8 @@ router.use("/tax-rates", taxRateRoutes)
 router.use("/currency", currencyRoutes)
 router.use("/store-backups", backupRoutes)
 router.use("/pos-devices", posDeviceRoutes)
+// Dashboard: Devices (Device #, Device Id, Location, Status); PATCH /devices/:id edits one.
+router.use("/devices", posDeviceRoutes)
 router.use("/locations", locationRoutes)
 router.use("/categories", categoryRoutes)
 router.use("/products", productRoutes)

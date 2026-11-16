@@ -1,4 +1,5 @@
 import { Router } from "express"
+import { transactionLists, transactionOne } from "../dashboard/dashboardLists.js"
 import { authMiddleware } from "../../shared/middlewares/auth.middleware.js"
 import { authorize } from "../../shared/middlewares/authorize.middleware.js"
 import {
@@ -20,5 +21,10 @@ router.get(
   requireTenantStore,
   asyncHandler(async (req, res) => posHistory.sendPage(res, await posHistory.transactions(req)))
 )
+
+const staff = [authMiddleware, authorize("store_admin", "manager", "cashier"), tenantMiddleware, requireTenantStore]
+// Dashboard: the Transactions table (Transaction #, Order #, Date, Method, Amount, Status) and one transaction.
+router.get("/lists", ...staff, transactionLists)
+router.get("/:id", ...staff, transactionOne)
 
 export default router

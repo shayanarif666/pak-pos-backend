@@ -10,6 +10,7 @@ import * as offerService from "./offer.service.js"
 import { actingAs, resolveStaff } from "../../shared/utils/staff.util.js"
 import { posOffer, posOffers } from "../pos/posResponses.js"
 import * as posHistory from "../pos/posHistory.service.js"
+import { posShape } from "../../shared/utils/posShape.js"
 
 // The offer is added by the PIN-picked staff member (created_by); the location context stays
 // the request's (token, or the store admin's location_id).
@@ -24,7 +25,7 @@ function offerSummary(result) {
 }
 
 export const list = asyncHandler(async (req, res) => {
-  if (req.auth?.channel === "pos") return posHistory.sendPage(res, await posHistory.offers(req))
+  if (posShape(req)) return posHistory.sendPage(res, await posHistory.offers(req))
   const data = await offerService.listOffers(req.user, req.query)
   return apiResponse(res, 200, "OK", data)
 })
@@ -39,7 +40,7 @@ export const create = asyncHandler(async (req, res) => {
   const { staff_ref, ...input } = req.body
   const result = await offerService.createOffer(store, input, await offerActor(req, staff_ref))
   const { summary: _summary, ...data } = result
-  if (req.auth?.channel === "pos") {
+  if (posShape(req)) {
     return apiResponse(res, 201, "Offer Created", await offerSummary(result))
   }
   return apiResponse(res, 201, "Offer created", data)
@@ -53,7 +54,7 @@ export const createBulk = asyncHandler(async (req, res) => {
     const ref = staff_ref || (fallbackStaff == null ? null : String(fallbackStaff))
     return offerService.createOffer(store, input, await offerActor(req, ref))
   })
-  if (req.auth?.channel === "pos") {
+  if (posShape(req)) {
     const created = []
     created.push(...(await posOffers(data.created.map(({ summary: _summary, ...view }) => view))))
     return posBulkResponse(res, data, "Offer Created", created)
@@ -102,7 +103,7 @@ function bulkOfferUpdate(parse, message) {
       handler: (uuid, fields) => offerService.updateOffer(req.user, uuid, parse(fields)),
     })
     const views = data.created.map(({ summary: _summary, ...view }) => view)
-    const rows = req.auth?.channel === "pos" ? await posOffers(views) : views
+    const rows = posShape(req) ? await posOffers(views) : views
     return bulkUpdateResponse(res, data, message, rows)
   })
 }

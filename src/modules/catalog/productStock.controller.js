@@ -10,6 +10,7 @@ import { extractBulkItems, runBulk } from "../../shared/utils/bulk.util.js"
 import { bulkUpdateResponse, uuidOfNumber } from "../../shared/utils/bulkUpdate.util.js"
 import { bulkLocation } from "../../shared/utils/location.util.js"
 import { resolveStaff } from "../../shared/utils/staff.util.js"
+import { posShape } from "../../shared/utils/posShape.js"
 
 export const list = asyncHandler(async (req, res) => {
   const data = await stockService.listStocks(req.user, req.query)
@@ -79,7 +80,7 @@ async function bulkStock(req, res, message, toFields) {
 }
 
 async function shapeStocks(req, rows) {
-  if (req.auth?.channel !== "pos") return rows
+  if (!posShape(req)) return rows
   const refs = await new Refs().loadAll({
     product: rows.map((row) => row.product_id),
     location: rows.map((row) => row.location_id),

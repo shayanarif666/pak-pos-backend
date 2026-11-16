@@ -1,4 +1,5 @@
 import { Router } from "express"
+import { deviceLists } from "../dashboard/dashboardLists.js"
 import { authMiddleware } from "../../shared/middlewares/auth.middleware.js"
 import { authorize } from "../../shared/middlewares/authorize.middleware.js"
 import {
@@ -16,7 +17,7 @@ router.get(
   "/",
   ...tenant,
   authorize("store_admin", "manager"),
-  list
+  (req, res, next) => (req.baseUrl.endsWith("/devices") ? deviceLists(req, res, next) : list(req, res, next))
 )
 router.post(
   "/",

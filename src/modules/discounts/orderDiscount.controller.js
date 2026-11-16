@@ -9,8 +9,9 @@ import { parseCreateOrderDiscount, parsePatchOrderDiscount } from "./orderDiscou
 import * as service from "./orderDiscount.service.js"
 import { posBundles, posOrderDiscount } from "./discountResponses.js"
 import { listBundles } from "./bundleDiscount.service.js"
+import { posShape } from "../../shared/utils/posShape.js"
 
-const isPos = (req) => req.auth?.channel === "pos"
+const isPos = (req) => posShape(req)
 
 async function actorFor(req, staffRef) {
   const base = { ...req.user.get({ plain: true }), location_id: req.auth?.location_id || req.user.location_id }

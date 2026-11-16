@@ -23,8 +23,9 @@ import { Customer } from "../customers/customer.model.js"
 import { PAYMENT_METHOD } from "../../db/enums.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { bulkUpdateResponse, uuidOfNumber } from "../../shared/utils/bulkUpdate.util.js"
+import { posShape } from "../../shared/utils/posShape.js"
 
-const isPos = (req) => req.auth?.channel === "pos"
+const isPos = (req) => posShape(req)
 
 /** The token's actor, acting as the PIN-picked staff member when the body names one. */
 async function staffActor(req, staffRef) {
@@ -125,7 +126,7 @@ export const createBulk = asyncHandler(async (req, res) => {
 })
 
 export const list = asyncHandler(async (req, res) => {
-  if (req.auth?.channel === "pos") return posHistory.sendPage(res, await posHistory.orders(req))
+  if (posShape(req)) return posHistory.sendPage(res, await posHistory.orders(req))
   const data = await orderService.listOrders(actorFromReq(req), req.query)
   return apiResponse(res, 200, "OK", data)
 })
@@ -146,7 +147,7 @@ export const salesByLocation = asyncHandler(async (req, res) => {
 })
 
 export const listRefunds = asyncHandler(async (req, res) => {
-  if (req.auth?.channel === "pos") return posHistory.sendPage(res, await posHistory.refunds(req))
+  if (posShape(req)) return posHistory.sendPage(res, await posHistory.refunds(req))
   const data = await orderService.listOrderRefunds(actorFromReq(req), req.query)
   return apiResponse(res, 200, "OK", data)
 })

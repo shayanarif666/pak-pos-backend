@@ -8,9 +8,10 @@ import { bulkUpdateResponse, runBulkUpdate } from "../../shared/utils/bulkUpdate
 import * as supplierService from "./supplier.service.js"
 import { posSupplier } from "../pos/posResponses.js"
 import * as posHistory from "../pos/posHistory.service.js"
+import { posShape } from "../../shared/utils/posShape.js"
 
 export const list = asyncHandler(async (req, res) => {
-  if (req.auth?.channel === "pos") return posHistory.sendPage(res, await posHistory.suppliers(req))
+  if (posShape(req)) return posHistory.sendPage(res, await posHistory.suppliers(req))
   const data = await supplierService.listSuppliers(req.storeId, req.user, req.query)
   return apiResponse(res, 200, "OK", data)
 })
@@ -23,7 +24,7 @@ export const getOne = asyncHandler(async (req, res) => {
 export const create = asyncHandler(async (req, res) => {
   const store = await getStoreForManager(req.storeId)
   const data = await supplierService.createSupplier(store, req.body, req.user)
-  if (req.auth?.channel === "pos") {
+  if (posShape(req)) {
     return apiResponse(res, 201, "Supplier Created", posSupplier(data))
   }
   return apiResponse(res, 201, "Supplier created", data)
@@ -34,7 +35,7 @@ export const createBulk = asyncHandler(async (req, res) => {
   const data = await runBulk(extractBulkItems(req.body), async (item) => {
     return supplierService.createSupplier(store, parseCreateSupplier(item), req.user)
   })
-  if (req.auth?.channel === "pos") {
+  if (posShape(req)) {
     return posBulkResponse(res, data, "Supplier Created", data.created.map(posSupplier))
   }
   return apiResponse(res, bulkStatus(data), "Bulk suppliers processed", data)
@@ -67,6 +68,6 @@ export const patchBulk = asyncHandler(async (req, res) => {
     storeId: req.storeId,
     handler: (uuid, fields) => supplierService.updateSupplier(req.storeId, uuid, parsePatchSupplier(fields), req.user),
   })
-  const rows = req.auth?.channel === "pos" ? data.created.map(posSupplier) : data.created
+  const rows = posShape(req) ? data.created.map(posSupplier) : data.created
   return bulkUpdateResponse(res, data, "Suppliers Updated", rows)
 })

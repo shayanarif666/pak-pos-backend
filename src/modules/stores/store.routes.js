@@ -1,4 +1,5 @@
 import { Router } from "express"
+import { storeDetail } from "../dashboard/dashboardLists.js"
 import { authMiddleware } from "../../shared/middlewares/auth.middleware.js"
 import { authorize } from "../../shared/middlewares/authorize.middleware.js"
 import {
@@ -46,6 +47,8 @@ const managerStore = [
 router.get("/by-slug/:slug", getBySlug)
 router.get("/by-domain/:domain", getByDomain)
 router.get("/me", ...tenantStaff, getMyStore)
+// Dashboard: Settings → Store Information (store admin only).
+router.get("/detail", ...tenantStaff, storeDetail)
 router.patch(
   "/me",
   ...managerStore,

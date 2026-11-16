@@ -13,6 +13,7 @@ import { posStockMovement, posStockMovements } from "../pos/posResponses.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { bulkLocation } from "../../shared/utils/location.util.js"
 import * as posHistory from "../pos/posHistory.service.js"
+import { posShape } from "../../shared/utils/posShape.js"
 
 /** The movement fields with the staff member acting and the supplier as a UUID. */
 async function prepare(req, base, { staff_ref, supplier_ref, ...fields }, fallbackStaff = null) {
@@ -40,7 +41,7 @@ async function movementRows(results) {
 }
 
 export const list = asyncHandler(async (req, res) => {
-  if (req.auth?.channel === "pos") return posHistory.sendPage(res, await posHistory.stockMovements(req))
+  if (posShape(req)) return posHistory.sendPage(res, await posHistory.stockMovements(req))
   const data = await stockService.listMovements(req.user, req.query)
   return apiResponse(res, 200, "OK", data)
 })
@@ -52,7 +53,7 @@ export const create = asyncHandler(async (req, res) => {
     const first = failed[0]
     return res.status(first?.status || 400).json({ success: false, message: first?.message || "Failed", failed })
   }
-  if (req.auth?.channel === "pos") {
+  if (posShape(req)) {
     const rows = await movementRows(created)
     return apiResponse(res, 201, "Stock Movement Created", rows.length === 1 && !failed.length ? rows[0] : rows)
   }
@@ -98,7 +99,7 @@ export const createBulk = asyncHandler(async (req, res) => {
     }
   }
   const data = { created: moved, failed, created_count: moved.length, failed_count: failed.length }
-  if (req.auth?.channel === "pos") {
+  if (posShape(req)) {
     // Every created movement in one query, shaped together.
     return posBulkResponse(res, data, "Stock Movement Created", await movementRows(moved))
   }

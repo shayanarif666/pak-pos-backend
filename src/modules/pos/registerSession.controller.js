@@ -7,6 +7,7 @@ import { parseCloseBatch, parseOpenBatch } from "./registerSession.validation.js
 import { extractBulkItems, posBulkResponse, runBulk } from "../../shared/utils/bulk.util.js"
 import { bulkUpdateResponse, runBulkUpdate } from "../../shared/utils/bulkUpdate.util.js"
 import { RegisterSession } from "./registerSession.model.js"
+import { posShape } from "../../shared/utils/posShape.js"
 
 function actorFromReq(req) {
   const user = req.user
@@ -25,13 +26,13 @@ function actorFromReq(req) {
 }
 
 export const list = asyncHandler(async (req, res) => {
-  if (req.auth?.channel === "pos") return posHistory.sendPage(res, await posHistory.batches(req))
+  if (posShape(req)) return posHistory.sendPage(res, await posHistory.batches(req))
   const data = await sessionService.listSessions(actorFromReq(req), req.query)
   return apiResponse(res, 200, "OK", data)
 })
 
 export const current = asyncHandler(async (req, res) => {
-  if (req.auth?.channel === "pos") return apiResponse(res, 200, "OK", await posHistory.currentBatch(req))
+  if (posShape(req)) return apiResponse(res, 200, "OK", await posHistory.currentBatch(req))
   const data = await sessionService.getCurrentSession(actorFromReq(req), req.query)
   return apiResponse(res, 200, "OK", data)
 })

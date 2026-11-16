@@ -9,9 +9,10 @@ import { bulkUpdateResponse, optionalUuidOfNumber, runBulkUpdate } from "../../s
 import * as customerService from "./customer.service.js"
 import { posCustomer } from "../pos/posResponses.js"
 import * as posHistory from "../pos/posHistory.service.js"
+import { posShape } from "../../shared/utils/posShape.js"
 
 export const list = asyncHandler(async (req, res) => {
-  if (req.auth?.channel === "pos") return posHistory.sendPage(res, await posHistory.customers(req))
+  if (posShape(req)) return posHistory.sendPage(res, await posHistory.customers(req))
   const data = await customerService.listCustomers(req.storeId, req.query)
   return apiResponse(res, 200, "OK", data)
 })
@@ -24,7 +25,7 @@ export const getOne = asyncHandler(async (req, res) => {
 export const create = asyncHandler(async (req, res) => {
   const store = await getStoreForManager(req.storeId)
   const data = await customerService.createCustomer(store, req.body)
-  if (req.auth?.channel === "pos") {
+  if (posShape(req)) {
     // Its number is the customer_id an udhaar order sends.
     return apiResponse(res, 201, "Customer Successfully Created", posCustomer(data))
   }
@@ -36,7 +37,7 @@ export const createBulk = asyncHandler(async (req, res) => {
   const data = await runBulk(extractBulkItems(req.body), async (item) => {
     return customerService.createCustomer(store, parseCreateCustomer(item))
   })
-  if (req.auth?.channel === "pos") {
+  if (posShape(req)) {
     return posBulkResponse(res, data, "Customers Successfully Created", data.created.map(posCustomer))
   }
   return apiResponse(res, bulkStatus(data), "Bulk customers processed", data)
@@ -82,6 +83,6 @@ export const patchBulk = asyncHandler(async (req, res) => {
       return customerService.updateCustomer(req.storeId, uuid, parsePatchCustomer(input))
     },
   })
-  const rows = req.auth?.channel === "pos" ? data.created.map(posCustomer) : data.created
+  const rows = posShape(req) ? data.created.map(posCustomer) : data.created
   return bulkUpdateResponse(res, data, "Customers Updated", rows)
 })

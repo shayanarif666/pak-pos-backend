@@ -1,4 +1,5 @@
 import { Router } from "express"
+import { productLists, weightedLists } from "../dashboard/dashboardLists.js"
 import { authMiddleware } from "../../shared/middlewares/auth.middleware.js"
 import { authorize } from "../../shared/middlewares/authorize.middleware.js"
 import {
@@ -81,6 +82,9 @@ router.get("/weight", ...catalogWrite, listWeight)
 router.get("/expiry", ...catalogWrite, listExpiry)
 // The stock of every product / variant at every location, with its lots and their expiry.
 router.get("/stock", ...catalogRead, listStock)
+// Dashboard: the Products table (Product #, Title, SKU, Barcode, Total Variants, Status) and the weighted products.
+router.get("/lists", ...catalogRead, productLists)
+router.get("/weighted", ...catalogRead, weightedLists)
 router.get("/:id/bulk-tiers", ...catalogRead, listBulkTiers)
 router.put(
   "/:id/bulk-tiers",

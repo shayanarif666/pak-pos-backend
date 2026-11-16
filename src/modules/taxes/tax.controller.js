@@ -6,6 +6,7 @@ import { getStoreForManager } from "../stores/store.service.js"
 import { StoreTax } from "./storeTax.model.js"
 import { parseCreateTax, parsePatchTax } from "./tax.validation.js"
 import * as taxService from "./tax.service.js"
+import { posShape } from "../../shared/utils/posShape.js"
 
 export const list = asyncHandler(async (req, res) => {
   return apiResponse(res, 200, "OK", await taxService.listTaxes(req.storeId, req.query))
@@ -24,7 +25,7 @@ export const create = asyncHandler(async (req, res) => {
 export const createBulk = asyncHandler(async (req, res) => {
   const store = await getStoreForManager(req.storeId)
   const data = await runBulk(extractBulkItems(req.body), (item) => taxService.createTax(store, parseCreateTax(item), req.user))
-  if (req.auth?.channel === "pos") return posBulkResponse(res, data, "Taxes Created", data.created)
+  if (posShape(req)) return posBulkResponse(res, data, "Taxes Created", data.created)
   return apiResponse(res, bulkStatus(data), "Taxes Created", data)
 })
 

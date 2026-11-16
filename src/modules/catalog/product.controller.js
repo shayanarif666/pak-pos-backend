@@ -19,9 +19,10 @@ import * as productService from "./product.service.js"
 import { uploadImageBuffer } from "../../shared/utils/cloudinary.util.js"
 import * as posHistory from "../pos/posHistory.service.js"
 import { listStockRows } from "./stockList.service.js"
+import { posShape } from "../../shared/utils/posShape.js"
 
 export const list = asyncHandler(async (req, res) => {
-  if (req.auth?.channel === "pos") return posHistory.sendPage(res, await posHistory.products(req))
+  if (posShape(req)) return posHistory.sendPage(res, await posHistory.products(req))
   // A variant is listed inside its product (variants[] with their own stock).
   const data = await productService.listProducts(req.user, req.query, { parentsOnly: true })
   return apiResponse(res, 200, "OK", data)
@@ -34,7 +35,7 @@ const PARENT_ONLY_VARIANT_FIELDS = [
 ]
 
 export const getOne = asyncHandler(async (req, res) => {
-  const pos = req.auth?.channel === "pos"
+  const pos = posShape(req)
   const data = await productService.getProductView(req.user, req.params.id, req.query, { withSummary: !pos })
   if (!pos) return apiResponse(res, 200, "OK", data)
   // The POS shape, with the stock per location (each variant's inside it), as in Products.
@@ -59,7 +60,7 @@ export const getOne = asyncHandler(async (req, res) => {
 export const create = asyncHandler(async (req, res) => {
   const store = await getStoreForManager(req.storeId)
   const product = await productService.createProduct(store, req.body, req.user)
-  if (req.auth?.channel === "pos") {
+  if (posShape(req)) {
     // Every field, with short numbers (id = product_number, category_id = category_number).
     return apiResponse(res, 201, "Products Created", await posProduct(product))
   }
@@ -71,7 +72,7 @@ export const createBulk = asyncHandler(async (req, res) => {
   const data = await runBulk(extractBulkItems(req.body), async (item) => {
     return productService.createProduct(store, parseCreateProduct(item), req.user)
   })
-  if (req.auth?.channel === "pos") {
+  if (posShape(req)) {
     const created = []
     created.push(...(await posProducts(data.created)))
     return posBulkResponse(res, data, "Products Created", created)
@@ -148,7 +149,7 @@ export const removeImage = asyncHandler(async (req, res) => {
 })
 
 export const listWeight = asyncHandler(async (req, res) => {
-  if (req.auth?.channel === "pos") return posHistory.sendPage(res, await posHistory.weightList(req))
+  if (posShape(req)) return posHistory.sendPage(res, await posHistory.weightList(req))
   const data = await productService.listWeightProducts(req.storeId)
   return apiResponse(res, 200, "OK", data)
 })
@@ -171,7 +172,7 @@ export const listStock = asyncHandler(async (req, res) => {
 })
 
 export const listExpiry = asyncHandler(async (req, res) => {
-  if (req.auth?.channel === "pos") return posHistory.sendPage(res, await posHistory.expiryList(req))
+  if (posShape(req)) return posHistory.sendPage(res, await posHistory.expiryList(req))
   // A manager sees their own location; a store admin every location (or ?location_id=).
   const locationId =
     req.user.role === "store_admin" ? req.query.location_id || null : req.auth?.location_id || req.user.location_id
@@ -220,7 +221,7 @@ function bulkProductUpdate(parse, message) {
           req.user
         ),
     })
-    const rows = req.auth?.channel === "pos" ? await posProducts(data.created) : data.created
+    const rows = posShape(req) ? await posProducts(data.created) : data.created
     return bulkUpdateResponse(res, data, message, rows)
   })
 }

@@ -15,9 +15,10 @@ import {
 import * as staffService from "./staff.service.js"
 import * as posHistory from "../pos/posHistory.service.js"
 import { Refs } from "../pos/posResponses.js"
+import { posShape } from "../../shared/utils/posShape.js"
 
 export const list = asyncHandler(async (req, res) => {
-  if (req.auth?.channel === "pos") return posHistory.sendPage(res, await posHistory.staff(req))
+  if (posShape(req)) return posHistory.sendPage(res, await posHistory.staff(req))
   const data = await staffService.listStaff(req.user, req.query)
   return apiResponse(res, 200, "OK", data)
 })
@@ -34,7 +35,7 @@ export const create = asyncHandler(async (req, res) => {
     location_id: req.auth?.location_id || req.user.location_id,
   }
   const data = await staffService.createStaff(actor, req.body)
-  if (req.auth?.channel === "pos") {
+  if (posShape(req)) {
     return apiResponse(res, 201, createdMessage([data]), posStaff(data, await new Refs().load("location", [data.location_id])))
   }
   return apiResponse(res, 201, "Staff created", data)
@@ -77,7 +78,7 @@ export const createBulk = asyncHandler(async (req, res) => {
   const data = await runBulk(extractBulkItems(req.body), async (item) => {
     return staffService.createStaff(actor, parseCreateStaff(item))
   })
-  if (req.auth?.channel === "pos") {
+  if (posShape(req)) {
     return posBulkResponse(
       res,
       data,
@@ -122,7 +123,7 @@ function bulkStaffUpdate(parse, message, validateFields = parsePatchStaff) {
         return staffService.patchStaff(actor, uuid, validateFields(parse(input)))
       },
     })
-    const rows = req.auth?.channel === "pos" ? await staffWithLocations(data.created) : data.created
+    const rows = posShape(req) ? await staffWithLocations(data.created) : data.created
     return bulkUpdateResponse(res, data, message, rows)
   })
 }

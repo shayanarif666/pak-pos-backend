@@ -8,8 +8,9 @@ import { BundleDiscount } from "./bundleDiscount.model.js"
 import { parseCreateBundle, parsePatchBundle } from "./bundleDiscount.validation.js"
 import * as service from "./bundleDiscount.service.js"
 import { posBundles, sendList } from "./discountResponses.js"
+import { posShape } from "../../shared/utils/posShape.js"
 
-const isPos = (req) => req.auth?.channel === "pos"
+const isPos = (req) => posShape(req)
 const posOne = async (view) => (await posBundles([view]))[0]
 
 async function actorFor(req, staffRef) {

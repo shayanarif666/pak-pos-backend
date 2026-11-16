@@ -1,10 +1,11 @@
 import { apiResponse } from "../../shared/utils/apiResponse.js"
 import { asyncHandler } from "../../shared/utils/asyncHandler.js"
 import * as storeService from "./store.service.js"
+import { posShape } from "../../shared/utils/posShape.js"
 
 export const getMyStore = asyncHandler(async (req, res) => {
   const store = await storeService.getMyStoreView(req.storeId)
-  if (req.auth?.channel === "pos") return apiResponse(res, 200, "OK", posStore(store))
+  if (posShape(req)) return apiResponse(res, 200, "OK", posStore(store))
   return apiResponse(res, 200, "OK", store)
 })
 

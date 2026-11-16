@@ -1,4 +1,5 @@
 import { Router } from "express"
+import { orderLists } from "../dashboard/dashboardLists.js"
 import { authMiddleware } from "../../shared/middlewares/auth.middleware.js"
 import { authorize } from "../../shared/middlewares/authorize.middleware.js"
 import {
@@ -61,6 +62,8 @@ router.patch("/bulk/status", ...manage, patchBulkStatus)
 router.patch("/bulk/payment-method", ...cancelled, patchBulkPaymentMethod)
 router.get("/", ...listRoles, list)
 router.get("/custom", ...staff, listCustom)
+// Dashboard: the Orders History table (Order #, Date, Cashier, Total Items, Total Amount, Status).
+router.get("/lists", ...staff, orderLists)
 router.get("/cancelled", ...cancelled, listCancelled)
 router.get("/refunds", ...staff, listRefunds)
 router.get("/refunds/:refundId/receipt", ...staff, refundReceiptById)

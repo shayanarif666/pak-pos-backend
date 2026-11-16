@@ -8,8 +8,9 @@ import { BulkDiscount } from "./bulkDiscount.model.js"
 import { parseCreateBulk, parsePatchBulk } from "./bulkDiscount.validation.js"
 import * as service from "./bulkDiscount.service.js"
 import { posBulks, sendList } from "./discountResponses.js"
+import { posShape } from "../../shared/utils/posShape.js"
 
-const isPos = (req) => req.auth?.channel === "pos"
+const isPos = (req) => posShape(req)
 const posOne = async (view) => (await posBulks([view]))[0]
 
 async function actorFor(req, staffRef) {

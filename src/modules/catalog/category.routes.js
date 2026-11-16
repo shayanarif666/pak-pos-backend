@@ -1,4 +1,5 @@
 import { Router } from "express"
+import { categoryLists, categoryOne } from "../dashboard/dashboardLists.js"
 import { authMiddleware } from "../../shared/middlewares/auth.middleware.js"
 import { authorize } from "../../shared/middlewares/authorize.middleware.js"
 import {
@@ -68,8 +69,12 @@ router.patch("/bulk", ...tenant, authorize("store_admin", "manager"), patchBulk)
 router.patch("/bulk/status", ...tenant, authorize("store_admin", "manager"), patchBulkStatus)
 // Where several categories are sold, in one call (dashboard: select rows -> Update Locations).
 router.patch("/locations", ...tenant, authorize("store_admin"), patchLocations)
+// Dashboard: the Categories table (Category #, Name, Sold At, Active).
+router.get("/lists", ...tenant, authorize("store_admin", "manager", "cashier"), categoryLists)
+// One category with where it is sold and its products (the /products/lists columns).
+router.get("/:id", ...tenant, authorize("store_admin", "manager", "cashier"), categoryOne)
 router.get(
-  "/:id",
+  "/:id/legacy",
   ...tenant,
   authorize("store_admin", "manager", "cashier"),
   getOne

@@ -9,6 +9,7 @@ import * as posHistory from "../pos/posHistory.service.js"
 import { StockTransfer } from "./stockTransfer.model.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { bulkUpdateResponse, runBulkUpdate, uuidOfNumber } from "../../shared/utils/bulkUpdate.util.js"
+import { posShape } from "../../shared/utils/posShape.js"
 
 // The acting user with the request's location (a manager / cashier: their own).
 const actorOf = (req, staff = req.user) => ({
@@ -18,7 +19,7 @@ const actorOf = (req, staff = req.user) => ({
 })
 
 export const list = asyncHandler(async (req, res) => {
-  if (req.auth?.channel === "pos") return posHistory.sendPage(res, await posHistory.stockTransfers(req))
+  if (posShape(req)) return posHistory.sendPage(res, await posHistory.stockTransfers(req))
   const data = await transferService.listTransfers(req.storeId)
   return apiResponse(res, 200, "OK", data)
 })
@@ -28,7 +29,7 @@ export const create = asyncHandler(async (req, res) => {
   // created_by = the staff member who sent it (PIN-picked), else the signed-in user.
   const staff = await resolveStaff(req.storeId, staff_ref == null ? null : String(staff_ref), req.user)
   const data = await transferService.createTransfer(req.storeId, fields, staff)
-  if (req.auth?.channel === "pos") {
+  if (posShape(req)) {
     return apiResponse(res, 201, "Stock Transfer Created", await posTransfer(data))
   }
   return apiResponse(res, 201, "Transfer created", data)
@@ -55,7 +56,7 @@ export const createBulk = asyncHandler(async (req, res) => {
     const staff = await resolveStaff(req.storeId, ref == null ? null : String(ref), req.user)
     return transferService.createTransfer(req.storeId, fields, staff)
   })
-  if (req.auth?.channel === "pos") {
+  if (posShape(req)) {
     return posBulkResponse(res, data, "Stock Transfer Created", await posTransfers(data.created))
   }
   return apiResponse(res, bulkStatus(data), "Bulk stock transfers processed", data)
@@ -77,7 +78,7 @@ function bulkTransferUpdate(message, handler) {
         return handler(req, uuid, fields, actorOf(req, staff))
       },
     })
-    const rows = req.auth?.channel === "pos" ? await posTransfers(data.created) : data.created
+    const rows = posShape(req) ? await posTransfers(data.created) : data.created
     return bulkUpdateResponse(res, data, message, rows)
   })
 }

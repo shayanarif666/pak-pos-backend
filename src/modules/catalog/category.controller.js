@@ -19,16 +19,17 @@ import { posCategories, posCategory } from "../pos/posResponses.js"
 import * as categoryService from "./category.service.js"
 import { getCategoryDetail } from "./product.service.js"
 import * as posHistory from "../pos/posHistory.service.js"
+import { posShape } from "../../shared/utils/posShape.js"
 
 export const list = asyncHandler(async (req, res) => {
-  if (req.auth?.channel === "pos") return posHistory.sendPage(res, await posHistory.categories(req))
+  if (posShape(req)) return posHistory.sendPage(res, await posHistory.categories(req))
   const rows = await categoryService.listCategories(req.storeId, req.user, req.query)
   return apiResponse(res, 200, "OK", rows)
 })
 
 export const getOne = asyncHandler(async (req, res) => {
   // Dashboard: the category with its products and totals (:id = UUID or category number).
-  if (req.auth?.channel !== "pos") {
+  if (!posShape(req)) {
     return apiResponse(res, 200, "OK", await getCategoryDetail(req.user, req.params.id, req.query))
   }
   const data = await categoryService.getCategoryView(req.storeId, req.params.id, req.user)
@@ -38,7 +39,7 @@ export const getOne = asyncHandler(async (req, res) => {
 export const create = asyncHandler(async (req, res) => {
   const store = await getStoreForManager(req.storeId)
   const category = await categoryService.createCategory(store, req.body, req.user)
-  if (req.auth?.channel === "pos") {
+  if (posShape(req)) {
     // Every field, with short numbers (id = category_number) — the POS stores the row as is.
     return apiResponse(res, 201, "Categories Created", await posCategory(category))
   }
@@ -50,7 +51,7 @@ export const createBulk = asyncHandler(async (req, res) => {
   const data = await runBulk(extractBulkItems(req.body), async (item) => {
     return categoryService.createCategory(store, parseCreateCategory(item), req.user)
   })
-  if (req.auth?.channel === "pos") {
+  if (posShape(req)) {
     const created = []
     created.push(...(await posCategories(data.created)))
     return posBulkResponse(res, data, "Categories Created", created)
@@ -72,7 +73,7 @@ export const patch = asyncHandler(async (req, res) => {
 export const patchLocations = asyncHandler(async (req, res) => {
   const { category_ids, ...scope } = parseCategoryLocations(req.body)
   const rows = await categoryService.updateCategoryLocations(req.storeId, category_ids, scope)
-  const data = req.auth?.channel === "pos" ? await posCategories(rows) : rows
+  const data = posShape(req) ? await posCategories(rows) : rows
   return apiResponse(res, 200, "Category Locations Updated", data)
 })
 
@@ -102,7 +103,7 @@ function bulkCategoryUpdate(parse, message) {
         return categoryService.updateCategory(req.storeId, uuid, parse(input), req.user)
       },
     })
-    const rows = req.auth?.channel === "pos" ? await posCategories(data.created) : data.created
+    const rows = posShape(req) ? await posCategories(data.created) : data.created
     return bulkUpdateResponse(res, data, message, rows)
   })
 }

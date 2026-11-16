@@ -6,6 +6,7 @@ import { pageOf, posView } from "../pos/posHistory.service.js"
 import { Location } from "./location.model.js"
 import { parsePatchLocation } from "./location.validation.js"
 import { bulkUpdateResponse, runBulkUpdate, uuidOfNumber } from "../../shared/utils/bulkUpdate.util.js"
+import { posShape } from "../../shared/utils/posShape.js"
 
 /** A branch as the POS reads it; users (managers and cashiers, the PIN only for a store admin) when the role may see them. */
 function posLocationRow(location, users, { pin }) {
@@ -51,7 +52,7 @@ export const listLocations = asyncHandler(async (req, res) => {
     role: req.user.role,
     location_id: req.auth?.location_id || req.user.location_id,
   }
-  if (req.auth?.channel === "pos") {
+  if (posShape(req)) {
     const { page, limit, offset } = pageOf(req.query)
     const { rows, total } = await locationService.listLocationsPage(req.storeId, actor, { limit, offset })
     return res.status(200).json({
@@ -81,7 +82,7 @@ export const getLocation = asyncHandler(async (req, res) => {
 export const createLocation = asyncHandler(async (req, res) => {
   const store = await storeService.getStoreForManager(req.storeId)
   const location = await locationService.createLocation(store, req.body)
-  if (req.auth?.channel === "pos") {
+  if (posShape(req)) {
     return apiResponse(res, 201, "Location Successfully Created", posView(location, "location_number"))
   }
   return apiResponse(res, 201, "Location created", location)
@@ -109,7 +110,7 @@ export const patchBulk = asyncHandler(async (req, res) => {
     storeId: req.storeId,
     handler: (uuid, fields) => locationService.updateLocation(req.storeId, uuid, parsePatchLocation(fields), req.user),
   })
-  const rows = req.auth?.channel === "pos" ? data.created.map(posLocation) : data.created
+  const rows = posShape(req) ? data.created.map(posLocation) : data.created
   return bulkUpdateResponse(res, data, "Locations Updated", rows)
 })
 
@@ -126,7 +127,7 @@ export const deleteLocation = asyncHandler(async (req, res) => {
     ? await uuidOfNumber(Location, "location_id_int", req.storeId, req.params.id, "Location")
     : req.params.id
   const location = await locationService.deleteLocation(req.storeId, id)
-  if (req.auth?.channel === "pos") {
+  if (posShape(req)) {
     return apiResponse(res, 200, "Location Deleted", posView(location, "location_number"))
   }
   return apiResponse(res, 200, "Location deleted", location)

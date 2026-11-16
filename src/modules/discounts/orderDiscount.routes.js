@@ -1,4 +1,5 @@
 import { Router } from "express"
+import { discountLists } from "../dashboard/dashboardLists.js"
 import { authMiddleware } from "../../shared/middlewares/auth.middleware.js"
 import { authorize } from "../../shared/middlewares/authorize.middleware.js"
 import { requireTenantStore, tenantMiddleware } from "../../shared/middlewares/tenant.middleware.js"
@@ -14,6 +15,8 @@ router.get("/", ...read, list)
 router.post("/", ...write, create)
 router.post("/bulk", ...write, createBulk)
 router.patch("/bulk", ...write, patchBulk)
+// Dashboard: the Discounts tab — the order, bulk and bundle discounts together.
+router.get("/lists", ...read, discountLists)
 router.get("/:id", ...read, getOne)
 router.patch("/:id", ...write, patch)
 router.delete("/:id", ...write, remove)

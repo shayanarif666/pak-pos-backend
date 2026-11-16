@@ -765,24 +765,38 @@ export async function transactions(req) {
     limit: pageInfo.limit,
     offset: pageInfo.offset,
   })
+  return paged(await transactionRows(rows), count, pageInfo)
+}
+
+/**
+ * Transactions (payment rows) as the API returns them: { id (transaction number), reference (the till's card /
+ * wallet reference), order { id, status }, location, method, amount (surcharge included), surcharge_amount,
+ * currency, status, paid_at }.
+ */
+export async function transactionRows(rows) {
   const refs = await new Refs().loadAll({ order: rows.map((row) => row.order_id), location: rows.map((row) => row.location_id) })
-  return paged(
-    rows.map((row) => ({
-      id: row.transaction_number,
-      // The till's card / wallet reference, when it sent one.
-      reference: row.gateway_transaction_id || null,
-      order: refs.order(row.order_id),
-      location: refs.location(row.location_id),
-      method: row.method,
-      amount: num(row.amount),
-      tax_amount: num(row.tax_amount),
-      currency: row.currency,
-      status: row.status,
-      paid_at: row.paid_at,
-    })),
-    count,
-    pageInfo
-  )
+  return rows.map((row) => ({
+    id: row.transaction_number,
+    reference: row.gateway_transaction_id || null,
+    order: refs.order(row.order_id),
+    location: refs.location(row.location_id),
+    method: row.method,
+    amount: num(row.amount),
+    surcharge_amount: num(row.tax_amount) ?? 0,
+    currency: row.currency,
+    status: row.status,
+    paid_at: row.paid_at,
+  }))
+}
+
+/** GET /transactions/:id — one transaction by its number (or UUID). */
+export async function transactionDetail(req, ref) {
+  const scope = await scopeOf(req)
+  const id = await idOf(Payment, "transaction_number", scope.store_id, ref, "Transaction")
+  const row = await Payment.findOne({ where: { id, store_id: scope.store_id } })
+  if (!row) throw new NotFoundError("Transaction not found")
+  assertAtScope(scope, row, "Transaction")
+  return (await transactionRows([row]))[0]
 }
 
 // ---- Products: expiry manager (stock rows with an expiry date, soonest first) ----
@@ -904,7 +918,16 @@ export async function orderDetail(req, ref) {
   const order = await Order.findOne({ where: { id: orderId, store_id: scope.store_id }, attributes: ["id", "location_id"] })
   if (!order) throw new NotFoundError("Order not found")
   assertAtScope(scope, order, "Order")
-  return posOrderDetail(order.id)
+  const [view] = await posOrders([order.id])
+  const payments = await Payment.findAll({ where: { order_id: order.id }, order: [["transaction_number", "ASC"]] })
+  const refunds = await OrderRefund.findAll({ where: { order_id: order.id }, attributes: ["id"], order: [["refund_number", "ASC"]] })
+  return {
+    ...view,
+    // Every payment of the sale (one transaction each).
+    transactions: await transactionRows(payments),
+    // Every refund of the order with its lines (what each order line got back is also on order_items).
+    refunds: await posRefunds(refunds.map((row) => row.id)),
+  }
 }
 
 function assertAtScope(scope, row, label) {

@@ -5,6 +5,7 @@ import { bulkUpdateResponse, requireBoolean, runBulkUpdate } from "../../shared/
 import { getStoreForManager } from "../stores/store.service.js"
 import { PaymentSurcharge } from "./paymentSurcharge.model.js"
 import * as service from "./surcharge.service.js"
+import { posShape } from "../../shared/utils/posShape.js"
 
 export const list = asyncHandler(async (req, res) => {
   return apiResponse(res, 200, "OK", await service.listSurcharges(req.storeId))
@@ -25,7 +26,7 @@ export const createBulk = asyncHandler(async (req, res) => {
   const data = await runBulk(extractBulkItems(req.body), (item) =>
     service.createSurcharge(store, service.parseCreateSurcharge(item), req.user)
   )
-  if (req.auth?.channel === "pos") return posBulkResponse(res, data, "Surcharges Created", data.created)
+  if (posShape(req)) return posBulkResponse(res, data, "Surcharges Created", data.created)
   return apiResponse(res, bulkStatus(data), "Surcharges Created", data)
 })
 
