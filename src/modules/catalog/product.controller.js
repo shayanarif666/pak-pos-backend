@@ -38,23 +38,13 @@ export const getOne = asyncHandler(async (req, res) => {
   const pos = posShape(req)
   const data = await productService.getProductView(req.user, req.params.id, req.query, { withSummary: !pos })
   if (!pos) return apiResponse(res, 200, "OK", data)
-  // The POS shape, with the stock per location (each variant's inside it), as in Products.
+  // The product as GET /products gives it: its information only, no stock (that is GET /products/stock).
   const [row] = await posProducts([data])
   if (data.has_variants) {
-    // Prices, pack and stock belong to each variant: the product itself is not sold.
+    // Prices and pack belong to each variant: the product itself is not sold.
     for (const key of PARENT_ONLY_VARIANT_FIELDS) delete row[key]
-    return apiResponse(res, 200, "OK", row)
   }
-  const stocks = data.stocks || []
-  return apiResponse(res, 200, "OK", {
-    ...row,
-    qty: Number(stocks.reduce((sum, stock) => sum + Number(stock.qty || 0), 0).toFixed(3)),
-    stocks: stocks.map((stock) => ({
-      location: { id: stock.location_number, name: stock.location_name || null },
-      qty: stock.qty,
-      expiry_date: stock.expiry_date,
-    })),
-  })
+  return apiResponse(res, 200, "OK", row)
 })
 
 export const create = asyncHandler(async (req, res) => {
