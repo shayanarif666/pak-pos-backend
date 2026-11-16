@@ -69,7 +69,8 @@ export async function listCustomers(storeId, query = {}) {
 
 export async function getCustomer(storeId, id) {
   const row = await Customer.findOne({
-    where: { id, store_id: storeId },
+    // id: the customer number (e.g. 1) or the UUID.
+    where: { ...(/^[0-9]+$/.test(String(id)) ? { customer_number: Number(id) } : { id }), store_id: storeId },
     include: [locationInclude],
   })
   if (!row) throw new NotFoundError("Customer not found")
@@ -167,9 +168,9 @@ export async function updateCustomer(storeId, id, fields) {
 }
 
 export async function listCredit(storeId, customerId) {
-  await getCustomer(storeId, customerId)
+  const customer = await getCustomer(storeId, customerId)
   return CustomerCreditEntry.findAll({
-    where: { store_id: storeId, customer_id: customerId },
+    where: { store_id: storeId, customer_id: customer.id },
     order: [["created_at", "DESC"]],
   })
 }

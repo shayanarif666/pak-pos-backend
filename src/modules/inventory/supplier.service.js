@@ -55,7 +55,8 @@ function servesLocation(row, locationId) {
 
 async function loadSupplier(storeId, id, transaction) {
   const row = await Supplier.findOne({
-    where: { id, store_id: storeId, deleted_at: null },
+    // id: the supplier number (e.g. 1) or the UUID.
+    where: { ...(/^[0-9]+$/.test(String(id)) ? { supplier_number: Number(id) } : { id }), store_id: storeId, deleted_at: null },
     include: [SUPPLIER_LOCATIONS_INCLUDE],
     transaction,
   })

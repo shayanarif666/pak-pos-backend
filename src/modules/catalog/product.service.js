@@ -1303,12 +1303,13 @@ export async function deleteVariant(storeId, productRef, variantRef) {
 }
 
 export async function deleteProduct(storeId, id) {
-  const product = await getProduct(storeId, id)
+  // id: the product number (e.g. 1) or the UUID.
+  const product = await getProductByRef(storeId, id)
   await product.update({ is_active: false, is_published: false, is_pos_visible: false })
   if (product.has_variants) {
     await Product.update({ is_active: false }, { where: { store_id: storeId, parent_product_id: product.id, deleted_at: null } })
   }
-  return publicProduct(await getProduct(storeId, id))
+  return publicProduct(await getProduct(storeId, product.id))
 }
 
 export async function listWeightProducts(storeId) {

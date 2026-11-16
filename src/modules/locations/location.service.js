@@ -358,7 +358,8 @@ export async function createLocation(store, fields) {
 
 export async function updateLocation(storeId, locationId, fields, actor) {
   const location = await Location.findOne({
-    where: { id: locationId, store_id: storeId, deleted_at: null },
+    // locationId: the location number (e.g. 1) or the UUID.
+    where: { ...(/^[0-9]+$/.test(String(locationId)) ? { location_id_int: Number(locationId) } : { id: locationId }), store_id: storeId, deleted_at: null },
   })
   if (!location) throw new NotFoundError("Location not found")
   if (actor?.role === "manager" && location.id !== actor.location_id) {

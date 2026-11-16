@@ -84,9 +84,12 @@ export function parsePatchStaff(body) {
   // The password is not edited here: staff reset it with POST /auth/forgot-password.
   if (body.pin !== undefined) patch.pin = requirePin(body, "pin")
   if (body.location_id !== undefined) {
-    const location_id = optionalUuid(body, "location_id")
-    if (!location_id) throw new AppError("location_id must be a UUID", 400)
-    patch.location_id = location_id
+    // The location number (e.g. 1) or its UUID.
+    const ref = String(body.location_id ?? "").trim()
+    if (!/^[0-9]+$/.test(ref) && !optionalUuid(body, "location_id")) {
+      throw new AppError("location_id must be a location number or UUID", 400)
+    }
+    patch.location_id = ref
   }
   if (body.is_active !== undefined) patch.is_active = Boolean(body.is_active)
   if (body.role !== undefined) {

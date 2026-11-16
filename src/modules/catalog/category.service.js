@@ -94,7 +94,8 @@ export async function listCategories(storeId, actor = null, query = {}) {
 
 export async function getCategory(storeId, id, actor = null) {
   const category = await Category.findOne({
-    where: { id, store_id: storeId },
+    // id: the category number (e.g. 1) or the UUID.
+    where: { ...(/^[0-9]+$/.test(String(id)) ? { category_number: Number(id) } : { id }), store_id: storeId },
     include: [CATEGORY_LOCATIONS_INCLUDE],
   })
   if (!category) throw new NotFoundError("Category not found")
@@ -249,7 +250,7 @@ export async function updateCategoryLocations(storeId, refs, { location_scope, l
 
 export async function deleteCategory(storeId, id) {
   const category = await getCategory(storeId, id)
-  const productCount = await Product.count({ where: { category_id: id } })
+  const productCount = await Product.count({ where: { category_id: category.id } })
   if (productCount > 0) {
     throw new ConflictError("Cannot delete category while products still reference it")
   }

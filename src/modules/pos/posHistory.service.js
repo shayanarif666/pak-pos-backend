@@ -376,7 +376,8 @@ const ORDER_STATUS = {
 export async function orders(req) {
   const scope = await scopeOf(req)
   const pageInfo = pageOf(req.query)
-  const where = { store_id: scope.store_id, ...atLocation(scope), ...dateRange(req.query, "placed_at") }
+  // locations: a list of location numbers (store admin); else the one location of the scope.
+  const where = { store_id: scope.store_id, ...(await locationWhere(scope, req.query)), ...dateRange(req.query, "placed_at") }
   const status = queryRef(req.query, "status")
   if (status && status !== "all") {
     if (!ORDER_STATUS[status]) throw new AppError("status must be completed, partial_refunded, pending, cancelled, refunded or all", 400)
@@ -423,7 +424,7 @@ export async function refunds(req) {
   // One list for every refund: partial and complete together, newest first; type = partial | complete narrows it.
   const type = queryRef(req.query, "type")
   if (type && !["complete", "partial", "all"].includes(type)) throw new AppError("type must be complete, partial or all", 400)
-  const where = { store_id: scope.store_id, ...atLocation(scope), ...dateRange(req.query, "created_at") }
+  const where = { store_id: scope.store_id, ...(await locationWhere(scope, req.query)), ...dateRange(req.query, "created_at") }
   if (type === "complete") where.refund_type = "complete"
   else if (type === "partial") where.refund_type = { [Op.or]: ["partial", null] }
   const orderId = await idOf(Order, "order_number", scope.store_id, queryRef(req.query, "orderId", "order_id"), "Order")
@@ -749,7 +750,7 @@ export async function staff(req) {
 export async function transactions(req) {
   const scope = await scopeOf(req)
   const pageInfo = pageOf(req.query)
-  const where = { store_id: scope.store_id, ...atLocation(scope), ...dateRange(req.query, "created_at") }
+  const where = { store_id: scope.store_id, ...(await locationWhere(scope, req.query)), ...dateRange(req.query, "created_at") }
   const orderId = await idOf(Order, "order_number", scope.store_id, queryRef(req.query, "orderId", "order_id"), "Order")
   if (orderId) where.order_id = orderId
   for (const key of ["method", "status"]) {

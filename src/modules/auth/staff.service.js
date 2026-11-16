@@ -33,7 +33,8 @@ function staffWhere(actor, { withDeleted = false } = {}) {
 
 async function findVisibleStaff(actor, id) {
   const user = await User.findOne({
-    where: { ...staffWhere(actor), id },
+    // id: the staff number (e.g. 2) or the UUID.
+    where: { ...staffWhere(actor), ...(/^[0-9]+$/.test(String(id)) ? { user_number: Number(id) } : { id }) },
   })
   if (!user) throw new NotFoundError("Staff not found")
   return user
@@ -169,10 +170,10 @@ export async function patchStaff(actor, id, fields) {
   }
   if (fields.password) patch.password = await hashPassword(fields.password)
   if (fields.location_id) {
-    if (actor.role === "manager" && fields.location_id !== actor.location_id) {
+    const location = await resolveLocation(actor.store_id, fields.location_id)
+    if (actor.role === "manager" && location.id !== actor.location_id) {
       throw new ForbiddenError("Managers cannot move staff to another location")
     }
-    const location = await resolveLocation(actor.store_id, fields.location_id)
     patch.location_id = location.id
     patch.location_id_int = location.location_id_int
   }
