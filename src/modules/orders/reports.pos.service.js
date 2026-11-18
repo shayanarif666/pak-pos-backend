@@ -694,8 +694,8 @@ async function loadOrders(actor, query) {
       },
       { model: Payment },
       { model: OrderRefund },
-      { model: User, as: "cashier", attributes: ["id", "name", "role"] },
-      { model: Location, attributes: ["id", "name"] },
+      { model: User, as: "cashier", attributes: ["id", "name", "role", "user_number"] },
+      { model: Location, attributes: ["id", "name", "location_id_int"] },
     ],
     order: [["placed_at", "ASC"]],
   })
@@ -737,8 +737,8 @@ async function zReports(actor, query, scope, extra = {}) {
   const sessions = await RegisterSession.findAll({
     where,
     include: [
-      { model: User, as: "cashier", attributes: ["id", "name"] },
-      { model: Location, attributes: ["id", "name"] },
+      { model: User, as: "cashier", attributes: ["id", "name", "user_number"] },
+      { model: Location, attributes: ["id", "name", "location_id_int"] },
     ],
     order: [["opened_at", "DESC"]],
     limit: 200,
@@ -785,12 +785,17 @@ async function zReports(actor, query, scope, extra = {}) {
         closed_at: json.closed_at || null,
         status: json.status === "open" ? "OPEN" : "CLOSED",
         cashier: json.cashier?.name || "—",
+        cashier_number: json.cashier?.user_number ?? null,
+        location: json.Location?.name || "—",
+        location_number: json.Location?.location_id_int ?? null,
         opening_amount: money(json.opening_cash || 0),
         orders: sold.length,
         gross_sales: keptSum((f) => f.gross),
         discounts: keptSum((f) => f.discount),
         net_sales: keptSum((f) => f.net),
         tax: keptSum((f) => f.taxes.total),
+        // The payment surcharges inside tax (they are no tax: the dashboard shows them apart).
+        surcharge: keptSum((f) => f.taxes.payment_method_tax.total),
         refunds: sum("refunded"),
         total_sales: keptSum((f) => f.total),
         cash_sales: money(cashRow?.net_amount || 0),
@@ -835,7 +840,7 @@ async function inventoryReport(actor, query, scope, extra = {}) {
     include: [
       {
         model: Product,
-        attributes: ["id", "title", "sku", "unit", "is_pack_product", "pack_size", "sell_loose", "is_weight_based", "low_stock_threshold", "low_stock_unit"],
+        attributes: ["id", "title", "sku", "unit", "is_pack_product", "pack_size", "sell_loose", "is_weight_based", "low_stock_threshold", "low_stock_unit", "product_number", "variant_number", "variant_name", "parent_product_id"],
         include: [{ model: Category, attributes: ["id", "name"] }],
       },
       { model: Location, attributes: ["id", "name", "location_id_int"] },
@@ -865,15 +870,22 @@ async function inventoryReport(actor, query, scope, extra = {}) {
     flow.set(key, cur)
   }
 
+  // A variant's number is its product's number plus the variant number inside it.
+  const parentIds = [...new Set(stocks.map((row) => row.Product?.parent_product_id).filter(Boolean))]
+  const parents = parentIds.length ? await Product.findAll({ where: { id: { [Op.in]: parentIds } }, attributes: ["id", "title", "product_number"] }) : []
+  const parentOf = new Map(parents.map((row) => [row.id, row]))
   let rows = stocks.map((row) => {
       const json = row.toJSON()
       const delta = flow.get(flowKey(json.product_id, json.location_id)) || { inn: 0, out: 0 }
       const qty = Number(json.qty || 0)
       const threshold = json.low_stock_threshold ?? json.Product?.low_stock_threshold
       const product = json.Product
+      const parent = product?.parent_product_id ? parentOf.get(product.parent_product_id) : null
       return {
-        id: json.id,
-        product: product?.title || "—",
+        id: parent ? parent.product_number ?? null : product?.product_number ?? null,
+        variant_id: parent ? product?.variant_number ?? null : null,
+        product: parent?.title || product?.title || "—",
+        variant: parent ? product?.variant_name || null : null,
         sku: product?.sku || "—",
         category: product?.Category?.name || "—",
         location: json.Location?.name || "—",

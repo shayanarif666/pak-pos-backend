@@ -19,7 +19,20 @@ import { dateBound, normalizeChannel, reportScope } from "../orders/reports.serv
 import { AppError } from "../../shared/errors/AppError.js"
 import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
 import { filterLines, filterOrders, filterSpecFor, lineTest, parseFilters, resolveFilters } from "./reportFilters.js"
-import { cashierTotals, categoriesByProfit, onlyMethod, refundsCancelledSection, taxReport, zeroSalesRows } from "./reportBuilders.js"
+import { refundsCancelledSection, taxReport, zeroSalesRows } from "./reportBuilders.js"
+import {
+  batchesTable,
+  cashiersTable,
+  categoriesTable,
+  discountPerformance,
+  paymentsSection,
+  productsTable,
+  profitValues,
+  refundsCancelledValues,
+  salesValues,
+  sessionsTable,
+  taxValues,
+} from "./dashboardSections.js"
 
 /*
  * GET /api/v1/reporting — the dashboard's reporting, by the store plan's reporting_level.
@@ -30,18 +43,16 @@ import { cashierTotals, categoriesByProfit, onlyMethod, refundsCancelledSection,
 
 const LEVELS = ["basic", "standard", "advanced"]
 const levelRank = (level) => LEVELS.indexOf(level)
-// Basic shows the top 10 products / categories; Standard and Advanced every one.
-const BASIC_TOP = 10
 const DEFAULT_DAYS = 7
 const MAX_LIMIT = 200
 
 export const CARDS = [
   // Basic
-  { id: "sales", label: "Sales Summary", level: "basic", about: "Orders, gross and net sales, discounts, taxes and the sales trend." },
-  { id: "payments", label: "Payments", level: "basic", about: "Takings per payment method, payment tax and refunds." },
-  { id: "batches", label: "Z-Reports (Batches)", level: "basic", about: "Each batch: takings per method, expected vs counted cash." },
-  { id: "top_products", label: "Top Products", level: "basic", about: "Best-selling products by sales (Basic: top 10; Standard and up: every product)." },
-  { id: "top_categories", label: "Top Categories", level: "basic", about: "Best-selling categories by sales (Basic: top 10; Standard and up: every category)." },
+  { id: "sales", label: "Sales Summary", level: "basic", about: "Orders, gross and net sales, discounts, tax, payment surcharges, refunds and profit: single values, no lists." },
+  { id: "payments", label: "Payments", level: "basic", about: "Every payment method of the store: what it took, its surcharge and its tax apart, refunds and net." },
+  { id: "batches", label: "Z-Reports", level: "basic", about: "Batches History: every batch of the locations, its takings per method, expected vs counted cash." },
+  { id: "top_products", label: "By Products", level: "basic", about: "Every product (and variant) sold, with all its figures, best seller first." },
+  { id: "top_categories", label: "By Categories", level: "basic", about: "Every category sold, with all its figures, best seller first." },
   { id: "refunds_cancelled", label: "Refunds / Cancelled", level: "basic", about: "Partial and complete refunds, cancelled orders and voided orders in one list, with the amount, reason and cashier." },
   { id: "refunds", label: "Refunded Orders", level: "basic", hidden: true, about: "Complete and partial refunds with amounts and reasons." },
   { id: "cancelled", label: "Cancelled Orders", level: "basic", hidden: true, about: "Voided and cancelled sales and the sales lost." },
@@ -51,13 +62,13 @@ export const CARDS = [
   { id: "movements", label: "Stock Movements", level: "standard", about: "Every stock in / out with its location, reason and who did it." },
   { id: "transfers", label: "Stock Transfers", level: "standard", about: "Stock sent between locations: what left, what arrived and what is on the way." },
   { id: "discounts", label: "Discounts", level: "standard", about: "Every discount entered and each discounted sale with its calculation." },
-  { id: "cashiers", label: "By Cashier", level: "standard", about: "Orders, sales, discounts and refunds per staff member." },
-  { id: "sessions", label: "Sessions History", level: "standard", about: "Staff clock in / clock out and hours worked." },
+  { id: "cashiers", label: "By Cashiers", level: "standard", about: "Every cashier's orders, sales, discounts, tax and refunds, highest sales first." },
+  { id: "sessions", label: "Sessions History", level: "standard", about: "Every staff session of the locations: clock in, clock out and hours worked." },
   // Advanced
-  { id: "profit", label: "Profit & Margin", level: "advanced", about: "Cost, gross profit and margin % by product, category and location." },
-  { id: "tax", label: "Tax Breakdown", level: "advanced", about: "Sales, product, category and payment-method tax collected." },
+  { id: "profit", label: "Profit & Margin", level: "advanced", about: "Net sales, cost, tax and gross profit: single values, no lists." },
+  { id: "tax", label: "Tax Breakdown", level: "advanced", about: "Every tax collected (store, product, variant, category), with its totals. Payment surcharges are in Payments." },
   { id: "comparison", label: "Period Comparison", level: "advanced", about: "These dates against the same number of days just before, with the change." },
-  { id: "offers", label: "Discount Performance", level: "advanced", about: "Sales, units, free units and discount given per discount." },
+  { id: "offers", label: "Discount Performance", level: "advanced", about: "Every discount given (line, order and bundle): orders, units, sales and discount given." },
   { id: "dead_stock", label: "Dead Stock", level: "advanced", about: "Products in stock that did not sell in these dates, with when they last sold." },
   { id: "forecast", label: "Stock Forecast", level: "advanced", about: "Days until each product runs out, from its average daily sales." },
   { id: "peak_hours", label: "Peak Hours", level: "advanced", about: "Orders and sales by hour and weekday, for staffing." },
@@ -89,21 +100,22 @@ function dateRange(query) {
 }
 
 /**
- * location: a location number or UUID, or "all" (store admin only). A manager always gets their
- * own location. Returns { location (row or null), actorQuery } for the report builders.
+ * locations: location numbers (or UUIDs), one or several — locations=1,2 — or "all" (store admin
+ * only; location= with one value also works). A manager always gets their own location.
+ * Returns the location rows ([] = every location).
  */
-async function resolveLocation(actor, query) {
-  const raw = String(query.location ?? query.location_id ?? query.locationId ?? "").trim()
+async function resolveLocations(actor, query) {
+  const raw = String(query.locations ?? query.location ?? query.location_id ?? query.locationId ?? "").trim()
+  const refs = raw && raw !== "all" ? [...new Set(raw.split(",").map((part) => part.trim()).filter(Boolean))] : []
   if (actor.role !== "store_admin") {
     if (!actor.location_id) throw new ForbiddenError("No location on this account")
     const own = await loadLocation(actor.store_id, actor.location_id)
-    if (raw && raw !== "all" && raw !== String(own.location_id_int) && raw !== own.id) {
+    if (refs.some((ref) => ref !== String(own.location_id_int) && ref !== own.id)) {
       throw new ForbiddenError("You can only see the reports of your own location")
     }
-    return own
+    return [own]
   }
-  if (!raw || raw === "all") return null
-  return loadLocation(actor.store_id, raw)
+  return Promise.all(refs.map((ref) => loadLocation(actor.store_id, ref)))
 }
 
 /** One page of a list: ?table= picks the list the page is for; the others start at page 1. */
@@ -136,45 +148,6 @@ const sum = (rows, key) => money(rows.reduce((total, row) => total + Number(row[
 const pct = (part, whole) => (Number(whole) ? money((Number(part) / Number(whole)) * 100) : 0)
 
 // ---------- advanced sections ----------
-
-/** sort: profit (default), margin or sales — highest first. */
-function sortProfit(rows, sort) {
-  const key = { profit: "gross_profit", margin: "margin_percent", sales: "net_sales" }[sort || "profit"]
-  return [...rows].sort((a, b) => b[key] - a[key])
-}
-
-/** Profit & margin per product, category and location, from the lines kept after refunds. */
-function profitSection(completed, f = {}) {
-  const groups = { product: new Map(), category: new Map(), location: new Map() }
-  const add = (map, key, base, line) => {
-    if (!map.has(key)) map.set(key, { ...base, units: 0, net_sales: 0, cost: 0, gross_profit: 0, margin_percent: 0 })
-    const row = map.get(key)
-    row.units = money(row.units + line.units)
-    row.net_sales = money(row.net_sales + line.net)
-    row.cost = money(row.cost + line.cost)
-  }
-  for (const { order, figures } of completed) {
-    for (const line of figures.lines) {
-      if (line.units <= 0) continue
-      const { item } = line
-      const category = item.Product?.Category?.name || item.custom_category || (item.product_id ? "Uncategorized" : "Custom")
-      add(groups.product, item.product_id || `custom:${item.title}`, { product: item.Product?.title || item.title, category, unit: item.unit || item.Product?.unit || null }, line)
-      add(groups.category, category, { category }, line)
-      add(groups.location, order.location_id || "none", { location: order.Location?.name || "—" }, line)
-    }
-  }
-  const finish = (map) =>
-    [...map.values()]
-      .map((row) => ({ ...row, gross_profit: money(row.net_sales - row.cost), margin_percent: pct(row.net_sales - row.cost, row.net_sales) }))
-      .sort((a, b) => b.gross_profit - a.gross_profit)
-  const byProduct = finish(groups.product)
-  const net = sum(byProduct, "net_sales")
-  const cost = sum(byProduct, "cost")
-  return {
-    summary: { net_sales: net, cost, gross_profit: money(net - cost), margin_percent: pct(net - cost, net) },
-    tables: { by_product: sortProfit(byProduct, f.sort), by_category: sortProfit(finish(groups.category), f.sort), by_location: sortProfit(finish(groups.location), f.sort) },
-  }
-}
 
 const COMPARE_KEYS = [
   ["orders", "Orders"],
@@ -514,9 +487,10 @@ async function varianceSection(actor, scopedQuery, scope, location, range, f = {
 }
 
 /** Staff clock in / out in the range, and hours per staff member. */
-async function sessionsSection(actor, location, range, f = {}) {
+async function sessionsSection(actor, location, range, f = {}, onlyLocations = null) {
   const where = { store_id: actor.store_id, clock_in_at: { [Op.gte]: dateBound(range.from), [Op.lte]: dateBound(range.to, true) } }
   if (location) where.location_id = location.id
+  else if (onlyLocations) where.location_id = { [Op.in]: [...onlyLocations] }
   if (f.staff_id) where.user_id = f.staff_id
   const sessions = await StaffSession.findAll({ where, order: [["clock_in_at", "DESC"]] })
   const userIds = [...new Set(sessions.map((row) => row.user_id).filter(Boolean))]
@@ -580,63 +554,61 @@ async function buildSection(id, ctx) {
   if (needsOrders) {
     // The order-level filters (cashier, batch, status, discounted, custom, payment) narrow the orders first.
     orders = filterOrders(await parts.loadOrders(actor, scopedQuery), f)
+    if (ctx.locationIds) orders = orders.filter((order) => ctx.locationIds.has(order.location_id))
     extras = parts.liveOrders(orders, { ignoreRefunds: f.net_of_refunds === false })
   }
   const { completed } = extras
   // The line filters (product type, category) narrow the sold lines.
   const lineKeep = lineTest(f)
   switch (id) {
-    case "sales": {
-      const { totals, trend, payments } = parts.salesSummary(completed, extras, scopedQuery)
-      // Cost and profit are Advanced (Profit & Margin).
-      const shown = { ...totals }
-      if (levelRank(level) < levelRank("advanced")) {
-        delete shown.cost
-        delete shown.gross_profit
-      }
-      delete shown.revenue
-      delete shown.tax_collection
-      return { summary: shown, tables: { trend, payments } }
-    }
-    case "payments": {
-      const report = parts.paymentBreakdown(completed)
-      return split(f.method ? onlyMethod(report, f.method) : report)
-    }
+    // Sales Summary and Profit & Margin: single values only (no lists).
+    case "sales":
+      return salesValues(parts.salesSummary(completed, extras, scopedQuery).totals, { withProfit: levelRank(level) >= levelRank("advanced") })
+    // Payments: every payment method of the store, its surcharge and its tax apart.
+    case "payments":
+      return paymentsSection(actor.store_id, completed, f)
+    // Z-Reports: one list, the batches history.
     case "batches": {
       const report = await parts.zReports(actor, scopedQuery, scope, {
         status: f.status && f.status !== "all" ? f.status : undefined,
         cashierId: f.staff_id,
         varianceOnly: f.variance_only,
       })
-      return { summary: {}, tables: { rows: report.rows, by_cashier: cashierTotals(report.rows) } }
+      let rows = batchesTable(report.rows)
+      if (ctx.locationNumbers) rows = rows.filter((row) => ctx.locationNumbers.has(row.location_id))
+      return { summary: {}, tables: { batches: rows } }
     }
-    case "top_products":
+    // By Products / By Categories: every product / category sold (one list each).
+    case "top_products": {
+      const source = lineKeep ? filterLines(completed, lineKeep) : completed
+      const rows = f.zero_sales ? await zeroSalesRows(actor.store_id, completed, f) : await productsTable(source)
+      return { summary: {}, tables: { products: rows } }
+    }
     case "top_categories": {
       const source = lineKeep ? filterLines(completed, lineKeep) : completed
-      let rows
-      if (id === "top_products") rows = f.zero_sales ? await zeroSalesRows(actor.store_id, completed, f) : parts.byProduct(source).rows
-      else {
-        rows = parts.byCategory(source).rows
-        if (f.sort === "profit") rows = categoriesByProfit(rows, source, levelRank(level) >= levelRank("advanced"))
-      }
-      const limited = levelRank(level) < levelRank("standard")
-      return { summary: { shown: limited ? Math.min(BASIC_TOP, rows.length) : rows.length, total: rows.length, top_only: limited }, tables: { rows: limited ? rows.slice(0, BASIC_TOP) : rows } }
+      let rows = categoriesTable(source)
+      if (f.sort === "profit") rows = [...rows].sort((a, b) => b.gross_profit - a.gross_profit)
+      return { summary: {}, tables: { categories: rows } }
     }
     case "refunds":
       return split(parts.refundedOrders(orders))
     case "cancelled":
       return split(parts.cancelledOrders(orders))
-    case "refunds_cancelled":
-      return refundsCancelledSection(orders, f)
+    // Refunds / Cancelled: one list, its totals as single values (KPIs).
+    case "refunds_cancelled": {
+      const rows = refundsCancelledSection(orders, f).tables.rows
+      return { summary: refundsCancelledValues(rows), tables: { orders: rows } }
+    }
     case "locations": {
       const key = { sales: "total_sales", orders: "orders", refunds: "refunds" }[f.sort]
       const report = parts.byLocation(completed)
       return split(key ? { rows: [...report.rows].sort((a, b) => Number(b[key]) - Number(a[key])) } : report)
     }
-    case "inventory":
-      return split(
-        await parts.inventoryReport(actor, scopedQuery, scope, { stockStatus: f.stock_status, expiryStatus: f.expiry_status, type: f.type, supplierId: f.supplier_id })
-      )
+    case "inventory": {
+      const report = await parts.inventoryReport(actor, scopedQuery, scope, { stockStatus: f.stock_status, expiryStatus: f.expiry_status, type: f.type, supplierId: f.supplier_id })
+      const rows = ctx.locationNumbers ? report.rows.filter((row) => ctx.locationNumbers.has(row.location_id)) : report.rows
+      return { summary: {}, tables: { inventory: rows } }
+    }
     case "movements":
       return split(
         await parts.stockMovementReport(actor, scopedQuery, scope, { movementType: f.movement_type, reason: f.reason, supplierId: f.supplier_id, staffId: f.staff_id, productIds: f.product_ids })
@@ -648,33 +620,37 @@ async function buildSection(id, ctx) {
       const { by_source, catalog, sales, rows, ...summary } = report
       return { summary, tables: { by_source, catalog, sales, lines: rows } }
     }
+    // By Cashiers: highest sales first (sort= sales | refunds | discount picks the column).
     case "cashiers": {
-      const key = { sales: "total_sales", refunds: "refunds", discount: "discounts" }[f.sort]
-      const report = parts.byCashier(completed)
-      return split(key ? { rows: [...report.rows].sort((a, b) => Number(b[key]) - Number(a[key])) } : report)
+      const key = { sales: "total_sales", refunds: "refunds", discount: "discounts" }[f.sort] || "total_sales"
+      return { summary: {}, tables: { cashiers: cashiersTable(completed, key) } }
     }
-    case "sessions":
-      return sessionsSection(actor, location, range, f)
+    // Sessions History: one list, every clock in / clock out.
+    case "sessions": {
+      const report = await sessionsSection(actor, location, range, f, ctx.locationIds)
+      return { summary: report.summary, tables: { sessions: sessionsTable(report.tables.sessions) } }
+    }
     case "profit":
-      return profitSection(lineKeep ? filterLines(completed, lineKeep) : completed, f)
+      return profitValues(lineKeep ? filterLines(completed, lineKeep) : completed)
+    // Tax Breakdown: one list of the taxes collected (the payment surcharges are in Payments), totals as single values.
     case "tax": {
-      const base = split(parts.taxBreakdown(completed))
-      const { rules, surcharges, surchargeTotal } = await taxReport(actor.store_id, completed, f)
-      const taxes = base.summary.totals?.taxes
-      return {
-        summary: {
-          ...base.summary,
-          // The surcharge is no tax: the tax without it, and the surcharge on its own (the surcharges list).
-          tax_collected_excl_surcharge: taxes ? money(taxes.total - taxes.payment_method_tax.total) : 0,
-          surcharge_collected: surchargeTotal,
-        },
-        tables: { ...base.tables, rules, surcharges },
-      }
+      const { rules } = await taxReport(actor.store_id, completed, f)
+      const rows = rules.map((rule) => ({
+        id: rule.tax_id,
+        tax: rule.tax_rule,
+        level: rule.level,
+        type: rule.tax_type,
+        rate: rule.rate,
+        taxable_amount: rule.taxable_amount,
+        tax_collected: rule.tax_collected,
+      }))
+      return { summary: taxValues(completed, rules), tables: { taxes: rows } }
     }
     case "comparison":
       return comparisonSection(actor, scopedQuery, range)
+    // Discount Performance: every discount given, one list, totals as single values.
     case "offers":
-      return split(parts.byOffer(completed))
+      return discountPerformance(completed, f)
     case "dead_stock":
       return deadStockSection(actor, location, completed, range, f)
     case "forecast":
@@ -697,14 +673,23 @@ async function context(actor, query) {
   const store = await getStoreForManager(actor.store_id)
   const { level, plan } = await planLevel(store)
   const range = dateRange(query)
-  const location = await resolveLocation(actor, query)
+  const locations = await resolveLocations(actor, query)
+  // One location scopes every query; several are filtered in (orders, batches, sessions, stock).
+  const location = locations.length === 1 ? locations[0] : null
+  const locationIds = locations.length > 1 ? new Set(locations.map((row) => row.id)) : null
+  const locationNumbers = locations.length > 1 ? new Set(locations.map((row) => row.location_id_int)) : null
   const channel = normalizeChannel(query)
   const scopedQuery = { from: range.from, to: range.to, channel: channel || undefined, ...(location ? { location_id: location.id } : {}) }
   const scope = reportScope(actor, scopedQuery)
-  return { actor, store, level, plan, range, location, channel, scopedQuery, scope }
+  return { actor, store, level, plan, range, location, locations, locationIds, locationNumbers, channel, scopedQuery, scope }
 }
 
-const locationView = (location) => (location ? { id: location.location_id_int, name: location.name } : "all")
+/** "all", one location { id, name } or several [{ id, name }]. */
+const locationView = (locations) => {
+  if (!locations?.length) return "all"
+  const views = locations.map((row) => ({ id: row.location_id_int, name: row.name }))
+  return views.length === 1 ? views[0] : views
+}
 
 function cardsFor(level, location) {
   return CARDS.filter((card) => !card.allOnly || !location).map((card) => ({
@@ -723,10 +708,10 @@ export async function reportingOverview(actor, query = {}) {
   const ctx = await context(actor, query)
   return {
     plan: { name: ctx.plan?.name || null, reporting_level: ctx.level },
-    location: locationView(ctx.location),
+    location: locationView(ctx.locations),
     from: ctx.range.from,
     to: ctx.range.to,
-    cards: cardsFor(ctx.level, ctx.location),
+    cards: cardsFor(ctx.level, ctx.locations.length ? ctx.locations : null),
   }
 }
 
@@ -738,7 +723,7 @@ export async function reportingSection(actor, section, query = {}) {
   const card = CARD.get(section)
   if (!card) throw new AppError("Unknown report", 404)
   const ctx = await context(actor, query)
-  if (card.allOnly && ctx.location) throw new AppError(`${card.label} needs location=all`, 400)
+  if (card.allOnly && ctx.locations.length) throw new AppError(`${card.label} needs location=all`, 400)
   if (levelRank(card.level) > levelRank(ctx.level)) {
     const err = new ForbiddenError(`${card.label} is in the ${card.level} reporting plan. Upgrade to see it.`)
     err.data = { code: "plan_locked", required_level: card.level, reporting_level: ctx.level }
@@ -747,7 +732,7 @@ export async function reportingSection(actor, section, query = {}) {
   // The section's filters (a bad value is a 400; one the section does not know is ignored).
   const applied = parseFilters(section, query)
   ctx.filters = await resolveFilters(actor.store_id, section, applied)
-  const key = [actor.store_id, actor.role, actor.location_id, section, ctx.level, ctx.location?.id || "all", ctx.range.from, ctx.range.to, ctx.channel || "", JSON.stringify(ctx.filters)].join("|")
+  const key = [actor.store_id, actor.role, actor.location_id, section, ctx.level, ctx.locations.map((row) => row.id).join(",") || "all", ctx.range.from, ctx.range.to, ctx.channel || "", JSON.stringify(ctx.filters)].join("|")
   const built = await cached(key, () => buildSection(section, ctx))
 
   const all = String(query.limit) === "all"
@@ -767,7 +752,7 @@ export async function reportingSection(actor, section, query = {}) {
     label: card.label,
     level: card.level,
     reporting_level: ctx.level,
-    location: locationView(ctx.location),
+    location: locationView(ctx.locations),
     from: ctx.range.from,
     to: ctx.range.to,
     filters: applied,

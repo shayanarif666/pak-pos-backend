@@ -180,10 +180,14 @@ export async function taxReport(storeId, completed, f) {
   }
 
   const groups = new Map()
-  const add = (level, name, type, rate, amount) => {
+  // id: the tax's own number when the sale named it (a Taxes page tax); taxable_amount: the net sales it was charged on.
+  const add = (level, name, type, rate, amount, id = null, taxable = 0) => {
     const key = `${level}|${String(name).toLowerCase()}`
-    if (!groups.has(key)) groups.set(key, { tax_rule: name, level, tax_type: type, rate: rate == null ? null : Number(rate), tax_collected: 0 })
-    groups.get(key).tax_collected = money(groups.get(key).tax_collected + amount)
+    if (!groups.has(key)) groups.set(key, { tax_id: id ?? null, tax_rule: name, level, tax_type: type, rate: rate == null ? null : Number(rate), taxable_amount: 0, tax_collected: 0 })
+    const group = groups.get(key)
+    if (group.tax_id == null && id != null) group.tax_id = id
+    group.taxable_amount = money(group.taxable_amount + taxable)
+    group.tax_collected = money(group.tax_collected + amount)
   }
   const surcharge = new Map()
   for (const { figures } of completed) {
@@ -198,7 +202,7 @@ export async function taxReport(storeId, completed, f) {
         for (const tax of taxes) {
           const level = tax.level === "sales" ? "store" : tax.level
           const name = tax.name || "Tax"
-          add(level, name, tax.type || typeOf(level, name, item), tax.rate, Number(tax.amount || 0) * share)
+          add(level, name, tax.type || typeOf(level, name, item), tax.rate, Number(tax.amount || 0) * share, tax.id ?? null, line.net)
         }
       } else {
         // Older sales: only the three tax columns were kept.

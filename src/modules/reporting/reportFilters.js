@@ -84,7 +84,7 @@ export const SECTION_FILTERS = {
   },
   tax: {
     tax_name: text("Tax name"),
-    level: choice("Level", ["product", "store", "category"]),
+    level: choice("Level", ["store", "product", "variant", "category"]),
     tax_type: choice("Type", ["percentage", "fixed"]),
   },
 
@@ -99,11 +99,11 @@ export const SECTION_FILTERS = {
     staff_id: pick("staff", "Staff"),
     status: choice("Status", ["on_duty", "clocked_out"]),
   },
-  profit: {
-    category_id: CATEGORY,
-    sort: choice("Sort by", ["profit", "margin", "sales"], "profit"),
+  profit: { category_id: CATEGORY },
+  offers: {
+    staff_id: STAFF,
+    level: choice("Discount level", ["category", "product", "variant", "store", "bulk", "bundle", "manual", "order"]),
   },
-  offers: { staff_id: STAFF },
   dead_stock: {
     category_id: CATEGORY,
     min_days: number("Not sold for at least (days)"),
