@@ -24,6 +24,7 @@ import {
   batchesTable,
   cashiersTable,
   categoriesTable,
+  dailyTrend,
   discountPerformance,
   paymentsSection,
   productsTable,
@@ -706,13 +707,23 @@ function cardsFor(level, location) {
 /** GET /reporting — the plan's level and every card (locked or not). */
 export async function reportingOverview(actor, query = {}) {
   const ctx = await context(actor, query)
-  return {
+  const reply = {
     plan: { name: ctx.plan?.name || null, reporting_level: ctx.level },
     location: locationView(ctx.locations),
     from: ctx.range.from,
     to: ctx.range.to,
     cards: cardsFor(ctx.level, ctx.locations.length ? ctx.locations : null),
   }
+  // with=trend (the dashboard home): the sales of every day of the dates (after refunds).
+  if (String(query.with || "").split(",").includes("trend")) {
+    const key = ["trend", actor.store_id, actor.role, actor.location_id, ctx.locations.map((row) => row.id).join(",") || "all", ctx.range.from, ctx.range.to, ctx.channel || ""].join("|")
+    reply.trend = await cached(key, async () => {
+      let orders = await parts.loadOrders(actor, ctx.scopedQuery)
+      if (ctx.locationIds) orders = orders.filter((order) => ctx.locationIds.has(order.location_id))
+      return dailyTrend(parts.liveOrders(orders).completed, ctx.range)
+    })
+  }
+  return reply
 }
 
 /**

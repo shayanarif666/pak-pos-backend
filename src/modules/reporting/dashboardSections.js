@@ -401,3 +401,25 @@ export function taxValues(completed, rules) {
   }
 }
 
+
+// ---------- The dashboard home's trend: every day of the dates, its sales and orders (days without sales are 0)
+
+export function dailyTrend(completed, range) {
+  const days = new Map()
+  const start = new Date(`${range.from}T00:00:00`)
+  const end = new Date(`${range.to}T00:00:00`)
+  for (let day = new Date(start); day <= end; day.setDate(day.getDate() + 1)) {
+    const key = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`
+    days.set(key, { date: key, total_sales: 0, orders: 0 })
+  }
+  for (const { order, figures } of completed) {
+    if (figures.fully_refunded) continue
+    const at = new Date(order.placed_at)
+    const key = `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}-${String(at.getDate()).padStart(2, "0")}`
+    const row = days.get(key)
+    if (!row) continue
+    row.total_sales = money(row.total_sales + Number(figures.total || 0))
+    row.orders += 1
+  }
+  return [...days.values()]
+}
