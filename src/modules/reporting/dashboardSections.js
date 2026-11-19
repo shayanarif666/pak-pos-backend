@@ -400,3 +400,73 @@ export function taxValues(completed, rules) {
     sales_with_tax: money(sum(lines, "net") + sum(lines, "tax")),
   }
 }
+
+// ---------- Sales of some products / categories only
+
+/**
+ * The orders narrowed to the lines that pass keep(item) (products / categories): each order's
+ * figures are worked out again from those lines only. What belongs to the whole bill is shared
+ * by the lines' part of it: the payment surcharge and shipping by what is still sold, what was
+ * charged / collected by the bill as sold, and the refunds by the value refunded of those lines.
+ * Returns the narrowed `completed` and the matching refund / cancel counts (liveOrders' extras).
+ */
+export function narrowToLines(completed, orders, keep) {
+  const fullValue = (item) => Number(item.subtotal || 0) + Number(item.tax_amount || 0)
+  const refundedValue = (items) =>
+    items.reduce((acc, item) => {
+      const qty = Number(item.quantity || 0)
+      return acc + (qty > 0 ? (fullValue(item) * Number(item.refunded_qty || 0)) / qty : 0)
+    }, 0)
+  const narrowed = []
+  const extras = { void_orders: 0, cancelled_orders: 0, refunded_orders: 0, refunded_items: 0, refunded_amount: 0, refunded_tax: 0 }
+  for (const { order, figures, refund } of completed) {
+    const kept = figures.lines.filter((line) => keep(line.item))
+    if (!kept.length) continue
+    const items = order.OrderItems || []
+    const keptItems = kept.map((line) => line.item)
+    const allValue = items.reduce((acc, item) => acc + fullValue(item), 0)
+    const soldShare = allValue > 0 ? keptItems.reduce((acc, item) => acc + fullValue(item), 0) / allValue : 0
+    const nowAll = figures.lines.reduce((acc, line) => acc + Number(line.total || 0), 0)
+    const nowShare = nowAll > 0 ? kept.reduce((acc, line) => acc + Number(line.total || 0), 0) / nowAll : 0
+    const allRefunded = refundedValue(items)
+    const refundShare = allRefunded > 0 ? refundedValue(keptItems) / allRefunded : 0
+    const sumOf = (key) => money(kept.reduce((acc, line) => acc + Number(line[key] || 0), 0))
+    const paymentTax = Object.fromEntries(Object.entries(figures.taxes.payment_method_tax).map(([key, value]) => [key, money(Number(value || 0) * nowShare)]))
+    const taxes = { sales_tax: sumOf("sales_tax"), product_tax: sumOf("product_tax"), category_tax: sumOf("category_tax"), payment_method_tax: paymentTax }
+    taxes.total = money(taxes.sales_tax + taxes.product_tax + taxes.category_tax + paymentTax.total)
+    const net = sumOf("net")
+    const shipping = money(Number(figures.shipping || 0) * nowShare)
+    const next = {
+      ...figures,
+      lines: kept,
+      units: sumOf("units"),
+      gross: sumOf("gross"),
+      line_discount: sumOf("line_discount"),
+      order_discount: sumOf("order_discount"),
+      discount: sumOf("discount"),
+      net,
+      taxes,
+      shipping,
+      total: money(net + taxes.total + shipping),
+      charged: money(Number(figures.charged || 0) * soldShare),
+      collected: money(Number(figures.collected || 0) * soldShare),
+      refunded: money(Number(figures.refunded || 0) * refundShare),
+      refunded_tax: money(Number(figures.refunded_tax || 0) * refundShare),
+      cost: sumOf("cost"),
+      fully_refunded: !kept.some((line) => line.units > 0),
+    }
+    narrowed.push({ order, figures: next, refund: { ...refund, amount: next.refunded, tax: next.refunded_tax } })
+    extras.refunded_items = money(extras.refunded_items + keptItems.reduce((acc, item) => acc + Number(item.refunded_qty || 0), 0))
+    extras.refunded_amount = money(extras.refunded_amount + next.refunded)
+    extras.refunded_tax = money(extras.refunded_tax + next.refunded_tax)
+    if (refundShare > 0 && order.order_status === "refunded") extras.refunded_orders += 1
+  }
+  // Voided / cancelled sales that had one of those lines.
+  for (const order of orders) {
+    if (!["voided", "cancelled"].includes(order.order_status)) continue
+    if (!(order.OrderItems || []).some((item) => keep(item))) continue
+    if (order.order_status === "voided") extras.void_orders += 1
+    else extras.cancelled_orders += 1
+  }
+  return { completed: narrowed, extras: { completed: narrowed, ...extras } }
+}

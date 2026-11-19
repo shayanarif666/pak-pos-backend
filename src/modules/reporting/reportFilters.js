@@ -6,6 +6,7 @@ import { Category } from "../catalog/category.model.js"
 import { Product } from "../catalog/product.model.js"
 import { Supplier } from "../inventory/supplier.model.js"
 import { RegisterSession } from "../pos/registerSession.model.js"
+import { PosDevice } from "../pos/posDevice.model.js"
 
 /*
  * The filters of GET /api/v1/reporting/:section, one list per section (the POS shows ten of the
@@ -24,8 +25,11 @@ const choice = (label, values, def = null) => ({ type: "enum", label, values, de
 const flag = (label, def = null) => ({ type: "boolean", label, default: def })
 const text = (label) => ({ type: "text", label })
 const number = (label) => ({ type: "number", label })
-// kind: which list the dashboard offers (staff / category / supplier / product / batch / variant).
+// kind: which list the dashboard offers (staff / category / supplier / product / batch / variant / device).
 const pick = (kind, label) => ({ type: "ref", kind, label })
+// Several values, comma separated (1,2 or cash,jazzcash); left out = every one.
+const picks = (kind, label) => ({ type: "refs", kind, label })
+const choices = (label, values) => ({ type: "enums", label, values })
 
 const STAFF = pick("staff", "Cashier")
 const CATEGORY = pick("category", "Category")
@@ -34,10 +38,14 @@ const SUPPLIER = pick("supplier", "Supplier")
 export const SECTION_FILTERS = {
   // ---- the POS sections
   sales: {
-    payment_method: choice("Payment method", PAYMENT_METHODS),
+    product_id: picks("product", "Products"),
+    variant_id: pick("variant", "Variant"),
+    category_id: picks("category", "Categories"),
+    devices: picks("device", "Devices"),
+    payment_method: choices("Payment methods", PAYMENT_METHODS),
+    custom: flag("Only custom sales"),
     order_status: choice("Order status", ["completed", "partial_refunded"]),
     discounted: flag("Only discounted orders"),
-    custom: flag("Only custom sales"),
   },
   top_products: {
     type: choice("Type", KINDS),
@@ -151,6 +159,16 @@ export function parseFilters(section, query = {}) {
       const lower = value.toLowerCase()
       if (!def.values.includes(lower)) throw new AppError(`${name} must be one of: ${def.values.join(", ")}`, 400)
       out[name] = lower
+    } else if (def.type === "enums" || def.type === "refs") {
+      const list = [...new Set(value.split(",").map((part) => part.trim()).filter(Boolean))]
+      if (list.includes("all")) continue
+      if (def.type === "enums") {
+        const bad = list.find((entry) => !def.values.includes(entry.toLowerCase()))
+        if (bad) throw new AppError(`${name} takes one or several of: ${def.values.join(", ")}`, 400)
+        out[name] = list.map((entry) => entry.toLowerCase())
+      } else {
+        out[name] = list.map((entry) => entry.slice(0, 100))
+      }
     } else if (def.type === "boolean") {
       const lower = value.toLowerCase()
       if (["true", "1", "yes"].includes(lower)) out[name] = true
@@ -173,6 +191,7 @@ const REF_MODEL = {
   category: [Category, "category_number", "Category"],
   supplier: [Supplier, "supplier_number", "Supplier"],
   batch: [RegisterSession, "session_number", "Batch"],
+  device: [PosDevice, "device_number", "Device"],
 }
 
 /** A row of the store by its short number or UUID → its UUID (404 when it is not this store's). */
@@ -209,8 +228,19 @@ export async function resolveFilters(storeId, section, filters) {
   for (const [name, value] of Object.entries(filters)) {
     const def = defs[name]
     if (def?.type === "ref" && REF_MODEL[def.kind]) out[name] = await idOf(def.kind, storeId, value)
+    if (def?.type === "refs" && REF_MODEL[def.kind]) out[name] = await Promise.all(value.map((ref) => idOf(def.kind, storeId, ref)))
   }
-  if (filters.product_id) out.product_ids = await productIdsOf(storeId, filters.product_id, filters.variant_id)
+  if (filters.product_id) {
+    const refs = [].concat(filters.product_id)
+    // variant_id picks one variant of one product; with several products it is not used.
+    const lists = await Promise.all(refs.map((ref) => productIdsOf(storeId, ref, refs.length === 1 ? filters.variant_id : undefined)))
+    out.product_ids = [...new Set(lists.flat())]
+  }
+  // Devices: the sales of the batches opened on those tills.
+  if (Array.isArray(out.devices)) {
+    const sessions = await RegisterSession.findAll({ where: { store_id: storeId, device_id: out.devices }, attributes: ["id"] })
+    out.batch_ids = sessions.map((row) => row.id)
+  }
   return out
 }
 
@@ -232,14 +262,17 @@ const hasDiscount = (order) =>
 
 /** Only the orders that fit the order-level filters (cashier, batch, status, discounted, custom, payment). */
 export function filterOrders(orders, f) {
-  if (!["staff_id", "batch_id", "order_status", "discounted", "custom", "payment_method", "payment_type"].some((name) => f[name] !== undefined)) return orders
+  if (!["staff_id", "batch_id", "batch_ids", "order_status", "discounted", "custom", "payment_method", "payment_type"].some((name) => f[name] !== undefined)) return orders
+  const batches = Array.isArray(f.batch_ids) ? new Set(f.batch_ids) : null
+  const methods = f.payment_method ? [].concat(f.payment_method) : null
   return orders.filter((order) => {
     if (f.staff_id && order.cashier_id !== f.staff_id) return false
     if (f.batch_id && order.register_session_id !== f.batch_id) return false
+    if (batches && !batches.has(order.register_session_id)) return false
     if (f.order_status && order.order_status !== f.order_status) return false
     if (f.custom !== undefined && isCustomOrder(order) !== f.custom) return false
     if (f.discounted !== undefined && hasDiscount(order) !== f.discounted) return false
-    if (f.payment_method && !methodsOf(order).includes(f.payment_method)) return false
+    if (methods && !methodsOf(order).some((method) => methods.includes(method))) return false
     if (f.payment_type && (methodsOf(order).length > 1) !== (f.payment_type === "split")) return false
     return true
   })
@@ -252,12 +285,15 @@ export function filterLines(completed, keep) {
     .filter((entry) => entry.figures.lines.length)
 }
 
-/** The line filters of a section (product type, category) as one test, or null when there are none. */
+/** The line filters of a section (product type, products, categories) as one test, or null when there are none. */
 export function lineTest(f) {
-  if (!f.type && !f.category_id) return null
+  const products = Array.isArray(f.product_ids) && f.product_ids.length ? new Set(f.product_ids) : null
+  const categories = f.category_id ? new Set([].concat(f.category_id)) : null
+  if (!f.type && !categories && !products) return null
   return (item) => {
     if (f.type && productKind(item.Product) !== f.type) return false
-    if (f.category_id && (item.Product?.category_id || item.category_id) !== f.category_id) return false
+    if (categories && !categories.has(item.Product?.category_id || item.category_id)) return false
+    if (products && !products.has(item.product_id)) return false
     return true
   }
 }
