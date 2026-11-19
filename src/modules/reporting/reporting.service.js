@@ -25,7 +25,6 @@ import {
   cashiersTable,
   categoriesTable,
   discountPerformance,
-  narrowToLines,
   paymentsSection,
   productsTable,
   profitValues,
@@ -563,12 +562,8 @@ async function buildSection(id, ctx) {
   const lineKeep = lineTest(f)
   switch (id) {
     // Sales Summary and Profit & Margin: single values only (no lists).
-    // Products / categories picked: the sales of those lines only (the rest of each bill is left out).
-    case "sales": {
-      const narrowed = lineKeep ? narrowToLines(completed, orders, lineKeep) : null
-      const totals = parts.salesSummary(narrowed ? narrowed.completed : completed, narrowed ? narrowed.extras : extras, scopedQuery).totals
-      return salesValues(totals, { withProfit: levelRank(level) >= levelRank("advanced") })
-    }
+    case "sales":
+      return salesValues(parts.salesSummary(completed, extras, scopedQuery).totals, { withProfit: levelRank(level) >= levelRank("advanced") })
     // Payments: every payment method of the store, its surcharge and its tax apart.
     case "payments":
       return paymentsSection(actor.store_id, completed, f)

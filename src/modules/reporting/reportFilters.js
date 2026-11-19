@@ -38,13 +38,9 @@ const SUPPLIER = pick("supplier", "Supplier")
 export const SECTION_FILTERS = {
   // ---- the POS sections
   sales: {
-    product_id: picks("product", "Products"),
-    variant_id: pick("variant", "Variant"),
-    category_id: picks("category", "Categories"),
     devices: picks("device", "Devices"),
     payment_method: choices("Payment methods", PAYMENT_METHODS),
     custom: flag("Only custom sales"),
-    order_status: choice("Order status", ["completed", "partial_refunded"]),
     discounted: flag("Only discounted orders"),
   },
   top_products: {
@@ -230,12 +226,7 @@ export async function resolveFilters(storeId, section, filters) {
     if (def?.type === "ref" && REF_MODEL[def.kind]) out[name] = await idOf(def.kind, storeId, value)
     if (def?.type === "refs" && REF_MODEL[def.kind]) out[name] = await Promise.all(value.map((ref) => idOf(def.kind, storeId, ref)))
   }
-  if (filters.product_id) {
-    const refs = [].concat(filters.product_id)
-    // variant_id picks one variant of one product; with several products it is not used.
-    const lists = await Promise.all(refs.map((ref) => productIdsOf(storeId, ref, refs.length === 1 ? filters.variant_id : undefined)))
-    out.product_ids = [...new Set(lists.flat())]
-  }
+  if (filters.product_id) out.product_ids = await productIdsOf(storeId, filters.product_id, filters.variant_id)
   // Devices: the sales of the batches opened on those tills.
   if (Array.isArray(out.devices)) {
     const sessions = await RegisterSession.findAll({ where: { store_id: storeId, device_id: out.devices }, attributes: ["id"] })
@@ -285,15 +276,13 @@ export function filterLines(completed, keep) {
     .filter((entry) => entry.figures.lines.length)
 }
 
-/** The line filters of a section (product type, products, categories) as one test, or null when there are none. */
+/** The line filters of a section (product type, category) as one test, or null when there are none. */
 export function lineTest(f) {
-  const products = Array.isArray(f.product_ids) && f.product_ids.length ? new Set(f.product_ids) : null
   const categories = f.category_id ? new Set([].concat(f.category_id)) : null
-  if (!f.type && !categories && !products) return null
+  if (!f.type && !categories) return null
   return (item) => {
     if (f.type && productKind(item.Product) !== f.type) return false
     if (categories && !categories.has(item.Product?.category_id || item.category_id)) return false
-    if (products && !products.has(item.product_id)) return false
     return true
   }
 }
