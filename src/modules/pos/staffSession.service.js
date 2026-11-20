@@ -107,7 +107,9 @@ export async function clockStatusOf(storeId, userIds) {
 
 /**
  * A manager corrects an attendance row: clock_in_at / clock_out_at (e.g. the cashier forgot to
- * clock out). Setting clock_out_at closes the session. A manager only at their own location.
+ * clock out) and the tills: clock_in_device_id / clock_out_device_id (device number, UUID or
+ * device_uid at the session's location; null clears it). Setting clock_out_at closes the session.
+ * A manager only at their own location.
  */
 export async function updateStaffSession(actor, id, fields) {
   const row = await StaffSession.findOne({ where: { id, store_id: actor.store_id } })
@@ -123,7 +125,17 @@ export async function updateStaffSession(actor, id, fields) {
   }
   const clockIn = dateOf("clock_in_at")
   const clockOut = dateOf("clock_out_at")
-  if (clockIn === undefined && clockOut === undefined) throw new AppError("Send clock_in_at and / or clock_out_at", 400)
+  const deviceOf = async (key) => {
+    if (fields[key] === undefined) return undefined
+    if (fields[key] === null || String(fields[key]).trim() === "") return null
+    const device = await resolveDevice(row.store_id, row.location_id || null, { deviceId: String(fields[key]).trim() })
+    return device.id
+  }
+  const inDevice = await deviceOf("clock_in_device_id")
+  const outDevice = await deviceOf("clock_out_device_id")
+  if ([clockIn, clockOut, inDevice, outDevice].every((value) => value === undefined)) {
+    throw new AppError("Send clock_in_at, clock_out_at, clock_in_device_id and / or clock_out_device_id", 400)
+  }
   const start = clockIn ?? row.clock_in_at
   const end = clockOut ?? row.clock_out_at
   if (end && start && new Date(end) <= new Date(start)) throw new AppError("clock_out_at must be after clock_in_at", 400)
@@ -131,6 +143,8 @@ export async function updateStaffSession(actor, id, fields) {
   await row.update({
     ...(clockIn ? { clock_in_at: clockIn } : {}),
     ...(clockOut ? { clock_out_at: clockOut, status: "clock_out" } : {}),
+    ...(inDevice !== undefined ? { device_id: inDevice } : {}),
+    ...(outDevice !== undefined ? { clock_out_device_id: outDevice } : {}),
   })
   const staff = await User.findByPk(row.user_id, { attributes: ["id", "user_number", "name", "role"] })
   await writeAudit({
@@ -144,7 +158,10 @@ export async function updateStaffSession(actor, id, fields) {
     user_id: actor.id,
     channel: "pos",
   })
-  return publicStaffSession(row, staff)
+  // The corrected row with both tills (device numbers), in place of the one device_id of a clock in / out.
+  const { device_id: _device, ...session } = await publicStaffSession(row, staff)
+  const numberOf = async (id) => (id ? (await PosDevice.findByPk(id, { attributes: ["device_number"] }))?.device_number ?? null : null)
+  return { ...session, clock_in_device_id: await numberOf(row.device_id), clock_out_device_id: await numberOf(row.clock_out_device_id) }
 }
 
 /** A session by its UUID or session number, visible to the actor (a manager: their location). */
