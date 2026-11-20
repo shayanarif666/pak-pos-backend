@@ -753,18 +753,71 @@ export async function staff(req) {
       status: clock.get(row.id) || "clock_out",
       is_active: Boolean(row.is_active),
       sessions_total: history[index].count,
-      sessions: history[index].rows.map((session) => ({
-        id: session.session_number,
-        location: refs.location(session.location_id),
-        status: session.status,
-        opening_at: session.clock_in_at,
-        closing_at: session.clock_out_at || null,
-        hours_worked: Math.round((((session.clock_out_at ? new Date(session.clock_out_at) : new Date()) - new Date(session.clock_in_at)) / 3600000) * 100) / 100,
-      })),
+      sessions: history[index].rows.map((session) => staffSessionRow(session, refs)),
     })),
     count,
     pageInfo
   )
+}
+
+/** One session of a staff member's history (GET /staff and GET /staff/:id). */
+function staffSessionRow(session, refs) {
+  const end = session.clock_out_at ? new Date(session.clock_out_at) : new Date()
+  return {
+    id: session.session_number,
+    location: refs.location(session.location_id),
+    status: session.status,
+    opening_at: session.clock_in_at,
+    closing_at: session.clock_out_at || null,
+    hours_worked: Math.round(((end - new Date(session.clock_in_at)) / 3600000) * 100) / 100,
+  }
+}
+
+/**
+ * GET /staff/:id — one staff member (:id = staff number or UUID) as GET /staff lists them, with their
+ * sessions history paged: page / limit are for the sessions (newest first); pagination goes next to data.
+ * from / to narrow the sessions to their clock-in dates. A manager / cashier only sees their location's staff.
+ */
+export async function staffOne(req) {
+  const scope = await scopeOf(req)
+  const ref = String(req.params.id ?? "").trim()
+  const where = {
+    store_id: scope.store_id,
+    role: { [Op.in]: ["manager", "cashier"] },
+    deleted_at: null,
+    ...(await locationWhere(scope, {})),
+    ...(isNumber(ref) ? { user_number: Number(ref) } : { id: ref }),
+  }
+  const row = await User.findOne({ where })
+  if (!row) throw new NotFoundError("Staff not found")
+  const pageInfo = pageOf(req.query)
+  const [clock, history] = await Promise.all([
+    clockStatusOf(scope.store_id, [row.id]),
+    StaffSession.findAndCountAll({
+      where: { store_id: scope.store_id, user_id: row.id, ...dateRange(req.query, "clock_in_at") },
+      order: [["clock_in_at", "DESC"]],
+      limit: pageInfo.limit,
+      offset: pageInfo.offset,
+    }),
+  ])
+  const refs = await new Refs().load("location", [row.location_id, ...history.rows.map((session) => session.location_id)])
+  const page = paged(history.rows.map((session) => staffSessionRow(session, refs)), history.count, pageInfo)
+  return {
+    data: {
+      id: row.user_number,
+      location: refs.location(row.location_id),
+      name: row.name,
+      email: row.email,
+      pin: row.pin || null,
+      role: row.role,
+      phone: row.phone || null,
+      status: clock.get(row.id) || "clock_out",
+      is_active: Boolean(row.is_active),
+      sessions_total: history.count,
+      sessions: page.rows,
+    },
+    pagination: page.pagination,
+  }
 }
 
 // ---- 16. Transactions (one per order payment) ----

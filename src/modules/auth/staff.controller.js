@@ -24,6 +24,11 @@ export const list = asyncHandler(async (req, res) => {
 })
 
 export const getOne = asyncHandler(async (req, res) => {
+  // POS / dashboard shape: the staff member with their sessions history (paged).
+  if (posShape(req)) {
+    const one = await posHistory.staffOne(req)
+    return res.status(200).json({ success: true, message: "OK", data: one.data, pagination: one.pagination })
+  }
   const data = await staffService.getStaff(req.user, req.params.id)
   return apiResponse(res, 200, "OK", data)
 })
