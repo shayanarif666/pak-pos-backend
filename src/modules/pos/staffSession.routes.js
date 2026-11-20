@@ -6,7 +6,7 @@ import {
   requireTenantStore,
   tenantMiddleware,
 } from "../../shared/middlewares/tenant.middleware.js"
-import { clockIn, clockOut, patchBulk, patchOne, list, remove } from "./staffSession.controller.js"
+import { clockIn, clockOut, getOne, patchBulk, patchOne, list, remove } from "./staffSession.controller.js"
 import { bulkPatch } from "../../shared/middlewares/bulkPatch.middleware.js"
 
 const router = Router()
@@ -24,7 +24,8 @@ router.post("/clock-in", clockScope, clockIn)
 router.post("/clock-out", clockScope, clockOut)
 // A manager corrects attendance: items[] = [{ id (session number), clock_in_at?, clock_out_at? }].
 router.patch("/bulk", ...PATCH_BODY, patchBulk)
-// One session (session number or UUID): edit its times, or soft delete it.
+// One session (session number or UUID): read it, edit its times, or soft delete it.
+router.get("/:id", getOne)
 router.patch("/:id", patchOne)
 router.delete("/:id", remove)
 

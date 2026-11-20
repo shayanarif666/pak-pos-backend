@@ -14,6 +14,7 @@ import { categoryOf, figures } from "./saleCatalog.js"
 import { bulksForProducts } from "../discounts/bulkDiscount.service.js"
 import { effectiveDiscount } from "../catalog/variantDiscount.js"
 import { Op } from "sequelize"
+import { PosDevice } from "./posDevice.model.js"
 import { Order } from "../orders/order.model.js"
 import { OrderItem } from "../orders/orderItem.model.js"
 import { OrderRefund } from "../orders/orderRefund.model.js"
@@ -63,6 +64,7 @@ const KINDS = {
   batch: { model: RegisterSession, attributes: ["id", "session_number", "status"] },
   order: { model: Order, attributes: ["id", "order_number", "order_status"] },
   receipt: { model: Receipt, attributes: ["id", "receipt_number"] },
+  device: { model: PosDevice, attributes: ["id", "device_number", "name"] },
 }
 
 /** Rows of other tables a reply points at, loaded per table with one IN (...) query. */
@@ -97,7 +99,7 @@ export class Refs {
   number(kind, id) {
     const row = this.get(kind, id)
     if (!row) return null
-    const key = { user: "user_number", location: "location_id_int", product: "product_number", category: "category_number", supplier: "supplier_number", customer: "customer_number", batch: "session_number", order: "order_number", receipt: "receipt_number" }[kind]
+    const key = { user: "user_number", location: "location_id_int", product: "product_number", category: "category_number", supplier: "supplier_number", customer: "customer_number", batch: "session_number", order: "order_number", receipt: "receipt_number", device: "device_number" }[kind]
     return row[key] ?? null
   }
 

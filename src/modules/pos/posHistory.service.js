@@ -273,19 +273,47 @@ export async function staffSessions(req) {
     limit: pageInfo.limit,
     offset: pageInfo.offset,
   })
-  const refs = await new Refs().loadAll({ user: rows.map((row) => row.user_id), location: rows.map((row) => row.location_id) })
-  return paged(
-    rows.map((row) => ({
-      id: row.session_number,
-      staff: refs.staff(row.user_id),
-      location: refs.location(row.location_id),
-      status: row.status,
-      opening_at: row.clock_in_at,
-      closing_at: row.clock_out_at || null,
-    })),
-    count,
-    pageInfo
-  )
+  const refs = await sessionRefs(rows)
+  return paged(rows.map((row) => sessionListRow(row, refs)), count, pageInfo)
+}
+
+/** Users, locations and tills the given staff sessions point at. */
+function sessionRefs(rows) {
+  return new Refs().loadAll({
+    user: rows.map((row) => row.user_id),
+    location: rows.map((row) => row.location_id),
+    device: rows.flatMap((row) => [row.device_id, row.clock_out_device_id]),
+  })
+}
+
+/** A row of GET /staff-sessions and GET /staff-sessions/:id. */
+function sessionListRow(row, refs) {
+  return {
+    id: row.session_number,
+    staff: refs.staff(row.user_id),
+    location: refs.location(row.location_id),
+    // The tills (device numbers) they clocked in and out on; null when none was recorded.
+    clock_in_device_id: refs.number("device", row.device_id),
+    clock_out_device_id: refs.number("device", row.clock_out_device_id),
+    status: row.status,
+    opening_at: row.clock_in_at,
+    closing_at: row.clock_out_at || null,
+  }
+}
+
+/** GET /staff-sessions/:id — one session (session number or UUID); a manager / cashier: their location only. */
+export async function staffSessionOne(req) {
+  const scope = await scopeOf(req)
+  const ref = String(req.params.id ?? "").trim()
+  const row = await StaffSession.findOne({
+    where: {
+      store_id: scope.store_id,
+      ...(await locationWhere(scope, {})),
+      ...(isNumber(ref) ? { session_number: Number(ref) } : { id: ref }),
+    },
+  })
+  if (!row) throw new NotFoundError("Staff session not found")
+  return sessionListRow(row, await sessionRefs([row]))
 }
 
 // ---- 2. Categories ----
@@ -740,7 +768,11 @@ export async function staff(req) {
       )
     ),
   ])
-  const refs = await new Refs().load("location", [...rows.map((row) => row.location_id), ...history.flatMap((list) => list.rows.map((session) => session.location_id))])
+  const sessionsOfPage = history.flatMap((list) => list.rows)
+  const refs = await new Refs().loadAll({
+    location: [...rows.map((row) => row.location_id), ...sessionsOfPage.map((session) => session.location_id)],
+    device: sessionsOfPage.flatMap((session) => [session.device_id, session.clock_out_device_id]),
+  })
   return paged(
     rows.map((row, index) => ({
       id: row.user_number,
@@ -766,6 +798,8 @@ function staffSessionRow(session, refs) {
   return {
     id: session.session_number,
     location: refs.location(session.location_id),
+    clock_in_device_id: refs.number("device", session.device_id),
+    clock_out_device_id: refs.number("device", session.clock_out_device_id),
     status: session.status,
     opening_at: session.clock_in_at,
     closing_at: session.clock_out_at || null,
@@ -800,7 +834,10 @@ export async function staffOne(req) {
       offset: pageInfo.offset,
     }),
   ])
-  const refs = await new Refs().load("location", [row.location_id, ...history.rows.map((session) => session.location_id)])
+  const refs = await new Refs().loadAll({
+    location: [row.location_id, ...history.rows.map((session) => session.location_id)],
+    device: history.rows.flatMap((session) => [session.device_id, session.clock_out_device_id]),
+  })
   const page = paged(history.rows.map((session) => staffSessionRow(session, refs)), history.count, pageInfo)
   return {
     data: {

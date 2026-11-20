@@ -32,6 +32,11 @@ export const list = asyncHandler(async (req, res) => {
   return posHistory.sendPage(res, await posHistory.staffSessions(req))
 })
 
+/** One session: :id = the session number or UUID. */
+export const getOne = asyncHandler(async (req, res) => {
+  return apiResponse(res, 200, "Staff Session", await posHistory.staffSessionOne(req))
+})
+
 /** The till of a clock in / out: an item's own deviceId / device_id, else the one sent once on top. */
 function deviceRef(body, top) {
   const own = body?.deviceId ?? body?.device_id
