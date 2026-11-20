@@ -18,7 +18,9 @@ export const StaffSession = sequelize.define(
     location_id: uuidCol(true),
     location_id_int: { type: DataTypes.INTEGER, allowNull: true },
     user_id: uuidCol(false),
+    // The till they clocked in on, and the one they clocked out on (a shift can end on another till).
     device_id: uuidCol(true),
+    clock_out_device_id: uuidCol(true),
     status: {
       type: DataTypes.ENUM(...STAFF_SESSION_STATUS),
       allowNull: false,

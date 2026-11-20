@@ -8,14 +8,20 @@ import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { User } from "../auth/user.model.js"
+import { PosDevice } from "./posDevice.model.js"
+import { resolveDevice } from "./registerSession.service.js"
 
-/** POS shape: { id, staffId, status, opening_at | closing_at } with short numbers. */
+/** POS shape: { id, staff, location, device_id, status, opening_at | closing_at } with short numbers. */
 async function publicStaffSession(row, staff) {
   const location = row.location_id ? await Location.findByPk(row.location_id, { attributes: ["location_id_int", "name"] }) : null
+  // device_id: the till of this action — the clock-in till on a clock in, the clock-out till on a clock out.
+  const deviceRef = row.status === "clock_in" ? row.device_id : row.clock_out_device_id
+  const device = deviceRef ? await PosDevice.findByPk(deviceRef, { attributes: ["device_number"] }) : null
   const base = {
     id: row.session_number,
     staff: { id: staff.user_number, name: staff.name, role: staff.role },
     location: location ? { id: location.location_id_int, name: location.name } : null,
+    device_id: device?.device_number ?? null,
     status: row.status,
   }
   return row.status === "clock_in"
@@ -41,7 +47,7 @@ async function audit(action, row, staff) {
  * Clock in: starts the staff member's attendance at the request's location (token, or the store
  * admin's location_id). A staff member can be clocked in only once at a time.
  */
-export async function clockIn(actor, staff, { clocked_at = null } = {}) {
+export async function clockIn(actor, staff, { clocked_at = null, device_id = null } = {}) {
   const store = await getStoreForManager(actor.store_id)
   const open = await StaffSession.findOne({
     where: { store_id: store.id, user_id: staff.id, status: "clock_in" },
@@ -55,6 +61,8 @@ export async function clockIn(actor, staff, { clocked_at = null } = {}) {
         attributes: ["id", "location_id_int"],
       })
     : null
+  // deviceId: the till (its number, UUID or device_uid), at this location; else the token's till.
+  const device = device_id ? await resolveDevice(store.id, location?.id || null, { deviceId: String(device_id) }) : null
 
   const row = await StaffSession.create({
     store_id: store.id,
@@ -63,7 +71,7 @@ export async function clockIn(actor, staff, { clocked_at = null } = {}) {
     location_id: location?.id || null,
     location_id_int: location?.location_id_int ?? null,
     user_id: staff.id,
-    device_id: actor.device_id || null,
+    device_id: device?.id || actor.device_id || null,
     status: "clock_in",
     clock_in_at: clocked_at || new Date(),
   })
@@ -72,13 +80,15 @@ export async function clockIn(actor, staff, { clocked_at = null } = {}) {
 }
 
 /** Clock out: ends the staff member's open attendance session. */
-export async function clockOut(actor, staff, { clocked_at = null } = {}) {
+export async function clockOut(actor, staff, { clocked_at = null, device_id = null } = {}) {
   const row = await StaffSession.findOne({
     where: { store_id: actor.store_id, user_id: staff.id, status: "clock_in" },
     order: [["clock_in_at", "DESC"]],
   })
   if (!row) throw new NotFoundError("This staff member is not clocked in")
-  await row.update({ status: "clock_out", clock_out_at: clocked_at || new Date() })
+  // deviceId: the till they clock out on (its number, UUID or device_uid), at the session's location.
+  const device = device_id ? await resolveDevice(actor.store_id, row.location_id || null, { deviceId: String(device_id) }) : null
+  await row.update({ status: "clock_out", clock_out_at: clocked_at || new Date(), clock_out_device_id: device?.id || actor.device_id || null })
   await audit("clock_out", row, staff)
   return publicStaffSession(row, staff)
 }

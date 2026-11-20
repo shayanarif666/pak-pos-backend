@@ -32,16 +32,25 @@ export const list = asyncHandler(async (req, res) => {
   return posHistory.sendPage(res, await posHistory.staffSessions(req))
 })
 
+/** The till of a clock in / out: an item's own deviceId / device_id, else the one sent once on top. */
+function deviceRef(body, top) {
+  const own = body?.deviceId ?? body?.device_id
+  const ref = own ?? top
+  return ref === undefined || ref === null || String(ref).trim() === "" ? null : String(ref).trim()
+}
+
 /**
- * Clock in / out: one staff member ({ staffId, clocked_at? }) or, for POS offline sync, many at
- * once ({ items: [{ staffId, clocked_at? }, ...] }) — each item saved on its own, in order.
+ * Clock in / out: one staff member ({ staffId, deviceId?, clocked_at? }) or, for POS offline sync, many at
+ * once ({ staffId?, deviceId?, items: [{ staffId?, deviceId?, clocked_at? }, ...] }) — each item saved on its
+ * own, in order. deviceId: the till (device number, UUID or device_uid); left out = the token's till.
  */
 function clockAction(run, status, message) {
   return asyncHandler(async (req, res) => {
     const actor = actorFromReq(req)
+    const topDevice = req.body?.deviceId ?? req.body?.device_id
     const one = async (body) => {
       const staff = await resolveStaff(actor.store_id, staffRefFrom(body, STAFF_KEYS), req.user)
-      return run(actor, staff, { clocked_at: clockedAt(body) })
+      return run(actor, staff, { clocked_at: clockedAt(body), device_id: deviceRef(body, topDevice) })
     }
     if (!Array.isArray(req.body?.items)) return apiResponse(res, status, message, await one(req.body || {}))
     const data = await runBulk(extractBulkItems(req.body), (item) => one(item || {}))

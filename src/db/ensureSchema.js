@@ -52,6 +52,7 @@ import * as transferLossNote from "./migrations/20261129120000-transfer-loss-not
 import * as variantDiscount from "./migrations/20261130120000-variant-discount.js"
 import * as orderPricingV2 from "./migrations/20261201120000-order-pricing-v2.js"
 import * as refundOrderDiscount from "./migrations/20261202120000-refund-order-discount.js"
+import * as staffSessionClockOutDevice from "./migrations/20261203120000-staff-session-clock-out-device.js"
 
 // Migrations the running code cannot work without (e.g. users.token_version is read on every
 // authenticated request). Each one checks before it changes anything, so running it on a
@@ -157,6 +158,8 @@ const REQUIRED = [
   orderPricingV2,
   // order_refunds.order_discount_amount: the share of the order discount a refund gives back.
   refundOrderDiscount,
+  // staff_sessions.clock_out_device_id: the till a staff member clocked out on.
+  staffSessionClockOutDevice,
 ]
 
 export async function ensureSchema() {

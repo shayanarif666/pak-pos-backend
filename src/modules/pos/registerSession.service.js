@@ -106,7 +106,7 @@ function deviceMatch(ref) {
   return [{ device_uid: ref }, ...(UUID_RE.test(ref) ? [{ id: ref }] : []), ...(/^[0-9]+$/.test(ref) ? [{ device_number: Number(ref) }] : [])]
 }
 
-async function resolveDevice(storeId, locationId, { deviceId, deviceUid } = {}) {
+export async function resolveDevice(storeId, locationId, { deviceId, deviceUid } = {}) {
   if (!deviceId && !deviceUid) return null
   const where = { store_id: storeId, is_active: true }
   if (deviceId && deviceUid) {
