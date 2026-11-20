@@ -725,12 +725,24 @@ export async function staff(req) {
     limit: pageInfo.limit,
     offset: pageInfo.offset,
   })
-  const [clock, refs] = await Promise.all([
+  // Each staff member of THIS page with their own sessions history: the latest sessions_limit (default 10,
+  // at most 50), newest first, and sessions_total = all their sessions. Only the page's staff are loaded.
+  const sessionsLimit = Math.min(50, Math.max(1, Number(queryRef(req.query, "sessions_limit", "sessionsLimit")) || 10))
+  const [clock, history] = await Promise.all([
     clockStatusOf(scope.store_id, rows.map((row) => row.id)),
-    new Refs().load("location", rows.map((row) => row.location_id)),
+    Promise.all(
+      rows.map((row) =>
+        StaffSession.findAndCountAll({
+          where: { store_id: scope.store_id, user_id: row.id },
+          order: [["clock_in_at", "DESC"]],
+          limit: sessionsLimit,
+        })
+      )
+    ),
   ])
+  const refs = await new Refs().load("location", [...rows.map((row) => row.location_id), ...history.flatMap((list) => list.rows.map((session) => session.location_id))])
   return paged(
-    rows.map((row) => ({
+    rows.map((row, index) => ({
       id: row.user_number,
       location: refs.location(row.location_id),
       name: row.name,
@@ -740,6 +752,15 @@ export async function staff(req) {
       phone: row.phone || null,
       status: clock.get(row.id) || "clock_out",
       is_active: Boolean(row.is_active),
+      sessions_total: history[index].count,
+      sessions: history[index].rows.map((session) => ({
+        id: session.session_number,
+        location: refs.location(session.location_id),
+        status: session.status,
+        opening_at: session.clock_in_at,
+        closing_at: session.clock_out_at || null,
+        hours_worked: Math.round((((session.clock_out_at ? new Date(session.clock_out_at) : new Date()) - new Date(session.clock_in_at)) / 3600000) * 100) / 100,
+      })),
     })),
     count,
     pageInfo
