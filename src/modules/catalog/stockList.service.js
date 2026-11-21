@@ -99,7 +99,7 @@ export async function listStockRows(scope, query = {}) {
 
   const stocks = await ProductStock.findAll({
     where,
-    include: [{ model: Product, where: productWhere, include: [{ model: Product, as: "parent", attributes: ["id", "product_number", "title", "sku", "barcode", "created_at"] }] }],
+    include: [{ model: Product, where: productWhere, include: [{ model: Product, as: "parent", attributes: ["id", "product_number", "title", "sku", "barcode", "featured_image", "images", "created_at"] }] }],
   })
   if (!stocks.length) return { rows: [], total: 0 }
 
@@ -115,6 +115,18 @@ export async function listStockRows(scope, query = {}) {
       : []
   )
   const now = new Date()
+
+  // A product's / variant's image: its featured image, else the first of its images; null = none.
+  const imageOf = (row) => {
+    if (!row) return null
+    if (row.featured_image) return row.featured_image
+    let list = row.images
+    if (typeof list === "string") {
+      try { list = JSON.parse(list) } catch { list = [] }
+    }
+    const first = Array.isArray(list) ? list[0] : null
+    return (typeof first === "string" ? first : first?.url) || null
+  }
 
   let rows = stocks.map((stock) => {
     const product = stock.Product
@@ -138,11 +150,13 @@ export async function listStockRows(scope, query = {}) {
       product: {
         id: parent ? parent.product_number : product.product_number,
         title: parent ? parent.title : product.title,
+        image: imageOf(parent || product),
         unit: product.unit,
         sku: parent ? parent.sku : product.sku,
         barcode: parent ? parent.barcode : product.barcode,
       },
-      variant: parent ? { id: product.variant_number, name: product.variant_name, sku: product.sku, barcode: product.barcode, ...flagsOf(product) } : null,
+      // A variant's own image; null = none (show the product's).
+      variant: parent ? { id: product.variant_number, name: product.variant_name, image: imageOf(product), sku: product.sku, barcode: product.barcode, ...flagsOf(product) } : null,
       // The flags of a product without variants (a variant carries its own).
       flags: parent ? null : flagsOf(product),
       stock: {

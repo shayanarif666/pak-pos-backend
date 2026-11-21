@@ -65,6 +65,8 @@ export const transactionOne = asyncHandler(async (req, res) => apiResponse(res, 
 const productListRow = (product) => ({
   id: product.id,
   title: product.title,
+  // The product's image (URL); null = none.
+  image: product.image || null,
   sku: product.sku,
   barcode: product.barcode,
   category: product.category ?? null,
