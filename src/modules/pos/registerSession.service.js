@@ -278,6 +278,10 @@ export async function closeBatch(actor, staff, fields) {
   if (row.status !== "open") {
     throw new ConflictError("This batch is already closed")
   }
+  // A batch cannot close before it opened.
+  if (fields.closed_at && row.opened_at && new Date(fields.closed_at) < new Date(row.opened_at)) {
+    throw new AppError("closed_at must be after the batch was opened", 400)
+  }
   if (!closeDevice && fields.batch_id && (fields.device_id || fields.device_uid)) {
     closeDevice = await resolveDevice(actor.store_id, row.location_id || null, { deviceId: fields.device_id || null, deviceUid: fields.device_uid || null })
   }
