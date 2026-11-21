@@ -1,4 +1,5 @@
 import { Router } from "express"
+import { bulkDelete } from "../../shared/utils/bulkDelete.util.js"
 import { locationLists, locationOne } from "../dashboard/dashboardLists.js"
 import { authMiddleware } from "../../shared/middlewares/auth.middleware.js"
 import { authorize } from "../../shared/middlewares/authorize.middleware.js"
@@ -47,6 +48,8 @@ router.get("/lists", locationLists)
 router.get("/:id", locationOne)
 router.patch("/:id", validate(parsePatchLocation), patchLocation)
 // Soft delete a branch (store admin): not the default one, nor with stock or transfers on the way.
+// The bulk form of the delete below (as POST / PATCH /bulk): { storeId, items: [{ id }] }, each item that delete.
+router.delete("/bulk", authorize("store_admin"), bulkDelete(deleteLocation, "Locations Deleted"))
 router.delete("/:id", authorize("store_admin"), deleteLocation)
 
 export default router

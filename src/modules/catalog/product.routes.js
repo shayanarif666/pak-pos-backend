@@ -1,4 +1,5 @@
 import { Router } from "express"
+import { bulkDelete } from "../../shared/utils/bulkDelete.util.js"
 import { productLists, weightedLists } from "../dashboard/dashboardLists.js"
 import { authMiddleware } from "../../shared/middlewares/auth.middleware.js"
 import { authorize } from "../../shared/middlewares/authorize.middleware.js"
@@ -118,6 +119,8 @@ router.patch(
   validate(parsePatchProduct),
   patch
 )
+// The bulk form of the delete below (as POST / PATCH /bulk): { storeId, items: [{ id }] }, each item that delete.
+router.delete("/bulk", ...catalogWrite, bulkDelete(remove, "Products Deleted"))
 router.delete("/:id", ...catalogWrite, remove)
 
 export default router

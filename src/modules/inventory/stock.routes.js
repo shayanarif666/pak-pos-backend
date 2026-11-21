@@ -1,4 +1,5 @@
 import { Router } from "express"
+import { bulkDelete } from "../../shared/utils/bulkDelete.util.js"
 import { authMiddleware } from "../../shared/middlewares/auth.middleware.js"
 import { authorize } from "../../shared/middlewares/authorize.middleware.js"
 import {
@@ -29,6 +30,8 @@ router.post("/bulk", requestScope(), createBulk)
 // Fix wrong movements: { items: [{ id (movement number), ... }] }; the stock follows.
 router.patch("/bulk", ...PATCH_BODY, patchBulk)
 // Soft delete a wrong movement (:id = movement number); its qty is taken back off the stock.
+// The bulk form of the delete below (as POST / PATCH /bulk): { storeId, items: [{ id }] }, each item that delete.
+router.delete("/bulk", bulkDelete(remove, "Stock Movements Deleted"))
 router.delete("/:id", remove)
 
 export default router

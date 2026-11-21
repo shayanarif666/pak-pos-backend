@@ -1,4 +1,5 @@
 import { Router } from "express"
+import { bulkDelete } from "../../shared/utils/bulkDelete.util.js"
 import { authMiddleware } from "../../shared/middlewares/auth.middleware.js"
 import { authorize } from "../../shared/middlewares/authorize.middleware.js"
 import {
@@ -62,6 +63,8 @@ router.post(
 )
 
 // Soft delete a transfer nothing of which was received yet (:id = transfer number).
+// The bulk form of the delete below (as POST / PATCH /bulk): { storeId, items: [{ id }] }, each item that delete.
+router.delete("/bulk", ...tenant, authorize("store_admin"), bulkDelete(remove, "Stock Transfers Deleted"))
 router.delete("/:id", ...tenant, authorize("store_admin"), remove)
 
 export default router

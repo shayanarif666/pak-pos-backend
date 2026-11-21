@@ -1,4 +1,5 @@
 import { Router } from "express"
+import { bulkDelete } from "../../shared/utils/bulkDelete.util.js"
 import { authMiddleware } from "../../shared/middlewares/auth.middleware.js"
 import { authorize } from "../../shared/middlewares/authorize.middleware.js"
 import {
@@ -39,6 +40,8 @@ const management = [...tenant, authorize("store_admin", "manager")]
 router.patch("/bulk", ...management, ...PATCH_BODY, patchBulk)
 router.get("/:id", ...staff, getOne)
 router.patch("/:id", ...management, patchOne)
+// The bulk form of the delete below (as POST / PATCH /bulk): { storeId, items: [{ id }] }, each item that delete.
+router.delete("/bulk", ...management, bulkDelete(remove, "Batches Deleted"))
 router.delete("/:id", ...management, remove)
 
 export default router

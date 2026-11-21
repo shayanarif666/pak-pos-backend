@@ -1,4 +1,5 @@
 import { Router } from "express"
+import { bulkDelete } from "../../shared/utils/bulkDelete.util.js"
 import { authMiddleware } from "../../shared/middlewares/auth.middleware.js"
 import { authorize } from "../../shared/middlewares/authorize.middleware.js"
 import { requestScope } from "../../shared/middlewares/requestScope.middleware.js"
@@ -27,6 +28,8 @@ router.patch("/bulk", ...PATCH_BODY, patchBulk)
 // One session (session number or UUID): read it, edit its times, or soft delete it.
 router.get("/:id", getOne)
 router.patch("/:id", patchOne)
+// The bulk form of the delete below (as POST / PATCH /bulk): { storeId, items: [{ id }] }, each item that delete.
+router.delete("/bulk", bulkDelete(remove, "Staff Sessions Deleted"))
 router.delete("/:id", remove)
 
 export default router
