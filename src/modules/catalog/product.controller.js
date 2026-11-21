@@ -20,6 +20,7 @@ import { uploadImageBuffer } from "../../shared/utils/cloudinary.util.js"
 import * as posHistory from "../pos/posHistory.service.js"
 import { listStockRows } from "./stockList.service.js"
 import { posShape } from "../../shared/utils/posShape.js"
+import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 
 export const list = asyncHandler(async (req, res) => {
   if (posShape(req)) return posHistory.sendPage(res, await posHistory.products(req))
@@ -45,6 +46,42 @@ export const getOne = asyncHandler(async (req, res) => {
     for (const key of PARENT_ONLY_VARIANT_FIELDS) delete row[key]
   }
   return apiResponse(res, 200, "OK", row)
+})
+
+/**
+ * GET /products/variants/:id — one variant (dashboard: the variant detail page). :id = the variant's
+ * number inside its product with ?product_id (product number or UUID), or the variant's UUID alone.
+ * Reply: the variant as GET /products/:id lists it, its product { id, title, sku, image, category, unit },
+ * total_qty and its stock per location with the lots.
+ */
+export const getVariant = asyncHandler(async (req, res) => {
+  const ref = String(req.params.id ?? "").trim()
+  let productRef = String(req.query.product_id ?? req.query.productId ?? "").trim()
+  let variantNumber = /^[0-9]+$/.test(ref) ? Number(ref) : null
+  if (variantNumber === null) {
+    // A variant UUID: its own row gives the product and the number.
+    const own = await Product.findOne({ where: { id: ref, store_id: req.user.store_id, deleted_at: null }, attributes: ["parent_product_id", "variant_number"] })
+    if (!own?.parent_product_id) throw new NotFoundError("Variant not found")
+    productRef = own.parent_product_id
+    variantNumber = own.variant_number
+  }
+  if (!productRef) throw new AppError("product_id is required (the product number or UUID)", 400)
+  const view = await productService.getProductView(req.user, productRef, req.query, { withSummary: false })
+  const [product] = await posProducts([view])
+  const variant = (product.variants || []).find((row) => Number(row.id) === variantNumber)
+  if (!variant) throw new NotFoundError("Variant not found")
+
+  // Its stock per location (with lots), as GET /products/stock gives it.
+  const scope = await posHistory.scopeOf(req)
+  const { rows } = await listStockRows({ ...scope, location_ids: await posHistory.locationIdsOf(scope, req.query) }, {})
+  const stockOf = rows.find((row) => row.product.id === product.id)?.product.variants?.find((row) => Number(row.id) === variantNumber)
+
+  return apiResponse(res, 200, "OK", {
+    ...variant,
+    product: { id: product.id, title: product.title, sku: product.sku, image: product.image || null, category: product.category || null, unit: product.unit },
+    total_qty: stockOf?.total_qty ?? 0,
+    stock: stockOf?.stock || [],
+  })
 })
 
 export const create = asyncHandler(async (req, res) => {

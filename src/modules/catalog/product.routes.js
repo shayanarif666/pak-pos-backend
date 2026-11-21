@@ -24,6 +24,7 @@ import {
   createBulk,
   getImage,
   getOne,
+  getVariant,
   list,
   listBulkTiers,
   listExpiry,
@@ -89,6 +90,9 @@ router.get("/stock", ...catalogRead, listStock)
 // Dashboard: the Products table (Product #, Title, SKU, Barcode, Total Variants, Status) and the weighted products.
 router.get("/lists", ...catalogRead, productLists)
 router.get("/weighted", ...catalogRead, weightedLists)
+// Dashboard: one variant's detail page (:id = variant number with ?product_id, or its UUID).
+router.get("/variants/:id", ...catalogRead, getVariant)
+router.get("/varients/:id", ...catalogRead, getVariant)
 router.get("/:id/bulk-tiers", ...catalogRead, listBulkTiers)
 router.put(
   "/:id/bulk-tiers",
