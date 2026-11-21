@@ -52,6 +52,18 @@ export const getByLocation = asyncHandler(async (req, res) => {
   return apiResponse(res, 200, "OK", data)
 })
 
+/** GET /licenses/current?storeId — the store's license, short (the POS / the dashboard countdown). */
+export const current = asyncHandler(async (req, res) => {
+  const ref = req.query.storeId ?? req.query.store_id
+  // storeId (number or UUID) is optional; when sent it must be the store of the token.
+  if (ref !== undefined && ref !== null && String(ref).trim() !== "") {
+    const value = String(ref).trim()
+    if (value !== String(req.storeNumber) && value !== String(req.storeId)) throw new ForbiddenError("storeId must be the store of your token")
+  }
+  const data = await licenseService.getLicenseSummary(req.storeId)
+  return apiResponse(res, 200, "OK", data)
+})
+
 export const me = asyncHandler(async (req, res) => {
   const data = await licenseService.getCurrentLicense(req.storeId)
   return apiResponse(res, 200, "OK", data)

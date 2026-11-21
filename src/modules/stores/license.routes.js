@@ -10,6 +10,7 @@ import { validate } from "../../shared/middlewares/validate.middleware.js"
 import { parseValidateLicense } from "./license.validation.js"
 import {
   getByLocation,
+  current,
   getMine,
   listMine,
   me,
@@ -28,6 +29,8 @@ router.post(
 const tenant = [authMiddleware, tenantMiddleware, requireTenantStore]
 
 router.get("/", ...tenant, authorize("store_admin"), listMine)
+// The store's license, short: ?storeId (optional, the store of your token). The POS and the dashboard countdown.
+router.get("/current", ...tenant, authorize("store_admin", "manager", "cashier"), current)
 router.get(
   "/me",
   ...tenant,

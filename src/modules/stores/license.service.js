@@ -369,6 +369,47 @@ export async function getCurrentLicense(storeId) {
   })
 }
 
+/**
+ * GET /licenses/current — the store's license as the POS and the dashboard countdown read it, short numbers
+ * only: { store, plan, license_key, status, starts_at, expires_at, expired, time_left { days, hours,
+ * minutes, seconds, total_seconds }, grace_days, devices { used, max } }. time_left counts to expires_at
+ * (all 0 once it has passed).
+ */
+export async function getLicenseSummary(storeId) {
+  const rows = await StoreLicense.findAll({
+    where: { store_id: storeId },
+    include: [{ model: Plan, attributes: ["id", "plan_number", "code", "name", "max_devices"] }],
+  })
+  if (!rows.length) throw new NotFoundError("License not found")
+  for (const row of rows) await refreshExpired(row)
+  const license = rows.sort(
+    (a, b) =>
+      (LICENSE_STATUS_RANK[a.status] ?? 9) - (LICENSE_STATUS_RANK[b.status] ?? 9) ||
+      new Date(b.expires_at) - new Date(a.expires_at)
+  )[0]
+  const store = await Store.findByPk(storeId, { attributes: ["store_id_int", "name"] })
+  const left = Math.max(0, Math.floor((new Date(license.expires_at).getTime() - Date.now()) / 1000))
+  const plan = license.Plan
+  return {
+    store: store ? { id: store.store_id_int, name: store.name } : null,
+    plan: plan ? { id: plan.plan_number, code: plan.code, name: plan.name } : null,
+    license_key: license.license_key,
+    status: license.status,
+    starts_at: license.starts_at,
+    expires_at: license.expires_at,
+    expired: left === 0,
+    time_left: {
+      days: Math.floor(left / 86400),
+      hours: Math.floor((left % 86400) / 3600),
+      minutes: Math.floor((left % 3600) / 60),
+      seconds: left % 60,
+      total_seconds: left,
+    },
+    grace_days: license.grace_days ?? 0,
+    devices: { used: readDeviceUuids(license).length, max: plan?.max_devices ?? null },
+  }
+}
+
 export async function listStoreLicenses(storeId) {
   const rows = await StoreLicense.findAll({
     where: { store_id: storeId },
