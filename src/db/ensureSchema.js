@@ -53,6 +53,7 @@ import * as variantDiscount from "./migrations/20261130120000-variant-discount.j
 import * as orderPricingV2 from "./migrations/20261201120000-order-pricing-v2.js"
 import * as refundOrderDiscount from "./migrations/20261202120000-refund-order-discount.js"
 import * as staffSessionClockOutDevice from "./migrations/20261203120000-staff-session-clock-out-device.js"
+import * as registerSessionCloseDevice from "./migrations/20261204120000-register-session-close-device.js"
 
 // Migrations the running code cannot work without (e.g. users.token_version is read on every
 // authenticated request). Each one checks before it changes anything, so running it on a
@@ -160,6 +161,8 @@ const REQUIRED = [
   refundOrderDiscount,
   // staff_sessions.clock_out_device_id: the till a staff member clocked out on.
   staffSessionClockOutDevice,
+  // register_sessions.close_device_id: the till a batch was closed on.
+  registerSessionCloseDevice,
 ]
 
 export async function ensureSchema() {

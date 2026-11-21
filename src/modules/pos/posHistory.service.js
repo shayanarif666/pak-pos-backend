@@ -725,6 +725,9 @@ function batchListRow(row, refs) {
     staff: refs.staff(row.cashier_id),
     location: refs.location(row.location_id),
     status: row.status,
+    // The tills (device numbers) it was opened and closed on; null when none was recorded.
+    opening_device_id: refs.number("device", row.device_id),
+    closing_device_id: refs.number("device", row.close_device_id),
     opening_amount: num(row.opening_cash),
     cash_sales: num(row.cash_sales),
     total_cash: num(row.counted_cash),
@@ -735,7 +738,11 @@ function batchListRow(row, refs) {
 }
 
 const batchRefs = (rows) =>
-  new Refs().loadAll({ user: rows.map((row) => row.cashier_id), location: rows.map((row) => row.location_id) })
+  new Refs().loadAll({
+    user: rows.map((row) => row.cashier_id),
+    location: rows.map((row) => row.location_id),
+    device: rows.flatMap((row) => [row.device_id, row.close_device_id]),
+  })
 
 function batchRow(row, refs) {
   return {
@@ -743,6 +750,8 @@ function batchRow(row, refs) {
     staff: refs.staff(row.cashier_id),
     location: refs.location(row.location_id),
     status: row.status,
+    opening_device_id: refs.number("device", row.device_id),
+    closing_device_id: refs.number("device", row.close_device_id),
     opening_amount: num(row.opening_cash),
     opening_at: row.opened_at,
     cash_sales: num(row.cash_sales),

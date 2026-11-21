@@ -13,7 +13,9 @@ export const RegisterSession = sequelize.define(
     location_id: uuidCol(false),
     location_id_int: { type: DataTypes.INTEGER, allowNull: false },
     cashier_id: uuidCol(false),
+    // The till the batch was opened on, and the one it was closed on.
     device_id: uuidCol(true),
+    close_device_id: uuidCol(true),
     // A batch (cash drawer): open from batch opening until batch closing.
     status: {
       type: DataTypes.ENUM(...REGISTER_SESSION_STATUS),

@@ -248,6 +248,8 @@ export async function openBatch(actor, staff, fields) {
  */
 export async function closeBatch(actor, staff, fields) {
   let row
+  // The till it is closed on: the device that picked the batch, else the one sent with batch_id, else the token's.
+  let closeDevice = null
   if (fields.batch_id) {
     row = await getSessionByIdOrNumber(actor.store_id, fields.batch_id)
   } else if (fields.device_id || fields.device_uid) {
@@ -262,6 +264,7 @@ export async function closeBatch(actor, staff, fields) {
       order: [["opened_at", "DESC"]],
     })
     if (!row) throw new NotFoundError("This staff member has no open batch on this device")
+    closeDevice = device
   } else {
     // Several open batches (one on each counter): say which one — batch_id or the device.
     const open = await RegisterSession.findAll({
@@ -274,6 +277,9 @@ export async function closeBatch(actor, staff, fields) {
   }
   if (row.status !== "open") {
     throw new ConflictError("This batch is already closed")
+  }
+  if (!closeDevice && fields.batch_id && (fields.device_id || fields.device_uid)) {
+    closeDevice = await resolveDevice(actor.store_id, row.location_id || null, { deviceId: fields.device_id || null, deviceUid: fields.device_uid || null })
   }
 
   const counted =
@@ -291,6 +297,7 @@ export async function closeBatch(actor, staff, fields) {
     cash_variance: variance,
     status: "closed",
     closed_at: fields.closed_at || new Date(),
+    close_device_id: closeDevice?.id || actor.device_id || null,
   })
 
   await writeAudit({
@@ -312,6 +319,8 @@ export async function closeBatch(actor, staff, fields) {
     staff: staffSummary(staff),
     ...(await batchLocation(row)),
     device_id: tillOf?.device_number ?? null,
+    // The till it was closed on (device number), null without one.
+    closing_device_id: closeDevice?.device_number ?? (row.close_device_id ? (await PosDevice.findByPk(row.close_device_id, { attributes: ["device_number"] }))?.device_number ?? null : null),
     total_cash: Number(row.counted_cash),
     closing_at: row.closed_at,
   }
