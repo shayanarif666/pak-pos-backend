@@ -533,7 +533,46 @@ export async function stockMovements(req) {
     limit: pageInfo.limit,
     offset: pageInfo.offset,
   })
-  return paged(await posStockMovements(rows), count, pageInfo)
+  return paged(await withProductImages(await posStockMovements(rows), rows), count, pageInfo)
+}
+
+/** A product row's image: its featured image, else the first of its images; null = none. */
+function productImageOf(row) {
+  if (!row) return null
+  if (row.featured_image) return row.featured_image
+  let list = row.images
+  if (typeof list === "string") {
+    try {
+      list = JSON.parse(list)
+    } catch {
+      list = []
+    }
+  }
+  const first = Array.isArray(list) ? list[0] : null
+  return (typeof first === "string" ? first : first?.url) || null
+}
+
+/**
+ * GET /stock-movements: product.image (the product's) and variant.image (the variant's own; null = use the
+ * product's) on each movement. views[i] is the reply of movements[i].
+ */
+async function withProductImages(views, movements) {
+  const ids = [...new Set(movements.map((row) => row.product_id).filter(Boolean))]
+  if (!ids.length) return views
+  const own = await Product.findAll({ where: { id: { [Op.in]: ids } }, attributes: ["id", "parent_product_id", "featured_image", "images"], paranoid: false })
+  const parentIds = [...new Set(own.map((row) => row.parent_product_id).filter(Boolean))]
+  const parents = parentIds.length ? await Product.findAll({ where: { id: { [Op.in]: parentIds } }, attributes: ["id", "featured_image", "images"], paranoid: false }) : []
+  const byId = new Map([...own, ...parents].map((row) => [row.id, row]))
+  return views.map((view, index) => {
+    const row = byId.get(movements[index]?.product_id)
+    if (!row || !view) return view
+    const parent = row.parent_product_id ? byId.get(row.parent_product_id) : null
+    return {
+      ...view,
+      product: view.product ? { ...view.product, image: productImageOf(parent || row) } : view.product,
+      variant: view.variant ? { ...view.variant, image: productImageOf(row) } : view.variant,
+    }
+  })
 }
 
 // ---- 8. Stock transfers (sent from or arriving at the location) ----
