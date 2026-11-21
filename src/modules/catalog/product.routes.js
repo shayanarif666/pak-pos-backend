@@ -25,6 +25,7 @@ import {
   getImage,
   getOne,
   getVariant,
+  search,
   list,
   listBulkTiers,
   listExpiry,
@@ -90,6 +91,8 @@ router.get("/stock", ...catalogRead, listStock)
 // Dashboard: the Products table (Product #, Title, SKU, Barcode, Total Variants, Status) and the weighted products.
 router.get("/lists", ...catalogRead, productLists)
 router.get("/weighted", ...catalogRead, weightedLists)
+// Dashboard: the product picker — a page of products found by name, SKU or barcode (?q, page, limit).
+router.get("/search", ...catalogRead, search)
 // Dashboard: one variant's detail page (:id = variant number with ?product_id, or its UUID).
 router.get("/variants/:id", ...catalogRead, getVariant)
 router.get("/varients/:id", ...catalogRead, getVariant)

@@ -21,6 +21,7 @@ import * as posHistory from "../pos/posHistory.service.js"
 import { listStockRows } from "./stockList.service.js"
 import { posShape } from "../../shared/utils/posShape.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
+import { searchProducts } from "./productSearch.service.js"
 
 export const list = asyncHandler(async (req, res) => {
   if (posShape(req)) return posHistory.sendPage(res, await posHistory.products(req))
@@ -46,6 +47,11 @@ export const getOne = asyncHandler(async (req, res) => {
     for (const key of PARENT_ONLY_VARIANT_FIELDS) delete row[key]
   }
   return apiResponse(res, 200, "OK", row)
+})
+
+/** GET /products/search — the dashboard product picker: ?q (name, SKU or barcode), page, limit. */
+export const search = asyncHandler(async (req, res) => {
+  return posHistory.sendPage(res, await searchProducts(req.user, req.query))
 })
 
 /**

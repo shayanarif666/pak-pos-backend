@@ -97,6 +97,18 @@ export async function listStockRows(scope, query = {}) {
     productWhere.category_id = category.id
   }
 
+  // product_id: one product (its number or UUID) — the product itself or all its variants.
+  const productRef = String(query.product_id ?? query.productId ?? "").trim()
+  if (productRef) {
+    const product = await Product.findOne({
+      where: { store_id: scope.store_id, parent_product_id: null, deleted_at: null, ...(/^[0-9]+$/.test(productRef) ? { product_number: Number(productRef) } : { id: productRef }) },
+      attributes: ["id"],
+    })
+    // An unknown product matches nothing.
+    if (!product) return { rows: [], total: 0 }
+    productWhere[Op.or] = [{ id: product.id }, { parent_product_id: product.id }]
+  }
+
   const stocks = await ProductStock.findAll({
     where,
     include: [{ model: Product, where: productWhere, include: [{ model: Product, as: "parent", attributes: ["id", "product_number", "title", "sku", "barcode", "featured_image", "images", "created_at"] }] }],
