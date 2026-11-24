@@ -394,22 +394,18 @@ function posPricedTotals({ lines, store, input, orderDiscount, couponDiscount })
 }
 
 const OFFLINE_AFTER_MS = 2 * 60 * 1000
-const MAX_OFFLINE_AGE_MS = 30 * 24 * 60 * 60 * 1000
 
-/** Offline POS sales keep the time they were rung up, not the time they reached the server. */
 /** The order discount type column takes percentage / fixed only; any other type is kept in the order's JSON. */
 function knownDiscountType(type) {
   return type === "percentage" || type === "fixed" ? type : null
 }
 
+/** Offline POS sales keep the time they were rung up (however old), not the time they reached the server. */
 function resolvePlacedAt(input, now) {
   if (!input.placed_at) return now
   const at = new Date(input.placed_at)
   // Not a valid date: the time the server got it. A future date is kept as sent.
   if (Number.isNaN(at.getTime())) return now
-  if (now.getTime() - at.getTime() > MAX_OFFLINE_AGE_MS) {
-    throw new AppError("Offline sale is older than 30 days", 400)
-  }
   return at
 }
 

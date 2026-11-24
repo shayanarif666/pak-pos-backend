@@ -92,14 +92,16 @@ function parseEntries(list, label, { levels, custom, kind }) {
   return list.map((entry, index) => {
     const at = `${label}[${index}]`
     if (!entry || typeof entry !== "object") throw new AppError(`${at} is invalid`, 400)
-    const level = String(entry.level || "")
-    if (!levels.includes(level)) throw new AppError(`${at}.level must be ${levels.join(", ")}`, 400)
+    // A level that is not one of the known ones is saved as manual (the sale is not refused).
+    const sentLevel = String(entry.level || "")
+    const known = levels.includes(sentLevel)
+    const level = known ? sentLevel : "manual"
     // Any type is accepted (percentage / fixed are the usual ones).
     const type = entry.type === undefined || entry.type === null ? "percentage" : String(entry.type)
     const value = money(entry, "value", at, { required: true })
     if (type === "percentage" && value > 100 && kind === "discount") throw new AppError(`${at}.value cannot be more than 100%`, 400)
     const id = entryId(entry, at)
-    if (!custom) {
+    if (!custom && known) {
       // A catalog line: the product / category / variant discounts and the category / product / variant taxes come
       // from the product itself (no id); the others are picked from their page (an id), a manual one has none.
       const own = kind === "discount" ? ["category", "product", "variant", "manual"] : ["category", "product", "variant"]
@@ -115,16 +117,14 @@ function parseLine(row, index) {
   const label = `order_items[${index}]`
   if (!row || typeof row !== "object") throw new AppError(`${label} is invalid`, 400)
   const isCustom = Boolean(row.is_custom)
-  const qty = Number(row.qty ?? row.quantity)
-  // Any qty is accepted (0 or below too); it must only be a number.
-  if (Number.isNaN(qty)) throw new AppError(`${label}.qty must be a number`, 400)
+  // Any qty is accepted (0 or below too); one that is not a number is taken as 1.
+  const sentQty = row.qty ?? row.quantity
+  const qty = sentQty == null || sentQty === "" || Number.isNaN(Number(sentQty)) ? 1 : Number(sentQty)
   const price = money(row, "price", label, { required: true })
-  const product_id = ref(row, ["product_id"], label)
-  const title = text(row, "name") || text(row, "title")
-  if (isCustom) {
-    if (product_id) throw new AppError(`${label}: a custom line has no product_id`, 400)
-    if (!title) throw new AppError(`${label}.name is required on a custom line`, 400)
-  } else if (!product_id) {
+  // A custom line: a product_id / variant_id sent with it is left out; without a name it is "Custom item".
+  const product_id = isCustom ? null : ref(row, ["product_id"], label)
+  const title = text(row, "name") || text(row, "title") || (isCustom ? "Custom item" : null)
+  if (!isCustom && !product_id) {
     throw new AppError(`${label}.product_id is required (or is_custom: true with a name)`, 400)
   }
   const saleUnit = row.sale_unit === undefined || row.sale_unit === null || row.sale_unit === "" ? "unit" : row.sale_unit
@@ -151,7 +151,7 @@ function parseLine(row, index) {
 
   return {
     product_id,
-    variant_id: ref(row, ["variant_id"], label),
+    variant_id: isCustom ? null : ref(row, ["variant_id"], label),
     sale_unit: saleUnit,
     title,
     custom_category: text(row, "category"),

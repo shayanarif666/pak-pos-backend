@@ -92,6 +92,21 @@ test("tax_exempt / discount_exempt, any qty and any discount type are accepted a
   const parsed = parseOrderV2(odd)
   assert.equal(parsed.items[0].quantity, 0)
   assert.equal(parsed.order_discount.type, "flat")
+  // a qty that is not a number is 1; an unknown level is manual (its id kept, not checked)
+  const loose = clone(SAMPLE_ORDERS[0])
+  loose.order_items[0].qty = "abc"
+  loose.order_items[0].discount = [{ id: 7, level: "festival", name: "Eid", type: "fixed", value: 5 }]
+  loose.order_items[0].taxes = [{ id: null, level: "city", name: "City tax", type: "percentage", value: 1 }]
+  const looseParsed = parseOrderV2(loose).items[0]
+  assert.equal(looseParsed.quantity, 1)
+  assert.equal(looseParsed.priced.discount.entries[0].level, "manual")
+  assert.equal(looseParsed.priced.taxes[0].level, "manual")
+  // a custom line without a name, sent with a product_id
+  const custom = clone(SAMPLE_ORDERS[0])
+  custom.order_items[0] = { ...custom.order_items[0], is_custom: true, name: undefined, variant_id: 3 }
+  const customLine = parseOrderV2(custom).items[0]
+  assert.equal(customLine.product_id, null)
+  assert.equal(customLine.title, "Custom item")
 })
 
 test("bundles must match the lines", () => {
