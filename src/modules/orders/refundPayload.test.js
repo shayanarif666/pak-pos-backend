@@ -15,7 +15,7 @@ test("the four sample refunds parse", () => {
   }
 })
 
-test("payments is not needed; when sent it is checked", () => {
+test("payments is not needed; when sent it is saved as sent", () => {
   const input = parseRefundV2(clone(SAMPLE_REFUNDS[3]))
   assert.equal(input.surcharge_total, 160)
   assert.equal(input.total_amount, 1210.05)
@@ -59,4 +59,15 @@ test("a line or a method listed twice is refused", () => {
   const method = clone(SAMPLE_REFUNDS[3])
   method.payments = [{ method: "cash", return_amount: 1160 }, { method: "cash", return_amount: 50.05 }]
   fails(method, /twice/)
+})
+
+test("missing amounts are 0 and line taxes are kept as sent", () => {
+  const input = parseRefundV2({
+    local_id: "R-X", order_id: 1, refund_type: "partial", reason: "x",
+    refund_items: [{ order_item_id: 1, qty: 1, taxes: [{ level: "store", name: "GST", type: "percentage", value: 18, amount: 2.5 }] }],
+  })
+  assert.equal(input.total_amount, 0)
+  assert.equal(input.items[0].total, 0)
+  assert.equal(input.surcharge_total, null)
+  assert.deepEqual(input.items[0].taxes, [{ level: "store", name: "GST", type: "percentage", rate: 18, amount: 2.5 }])
 })

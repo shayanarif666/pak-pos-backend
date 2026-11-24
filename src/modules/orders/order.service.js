@@ -1154,8 +1154,6 @@ async function refundSession(storeId, ref, actor, transaction) {
   return RegisterSession.findOne({ where: { store_id: storeId, cashier_id: actor.id, status: "open" }, order: [["opened_at", "DESC"]], transaction })
 }
 
-const near = (a, b, tolerance = 0.02) => Math.abs(Number(a) - Number(b)) <= tolerance
-
 /** How a sale was paid: [{ method, bill_share, amount, surcharge_amount, surcharge_type, surcharge_value }] (older sales: one row). */
 function salePaymentsOf(order) {
   let breakdown = order.tax_breakdown
@@ -1185,10 +1183,9 @@ function salePaymentsOf(order) {
 }
 
 /**
- * The new POS refund (partial and complete in one): each line's figures are its share of what was sold,
- * the order discount share is the lines' share of the order discount, and what each payment method gets
- * back is its share of the sale's bill with its own surcharge (only a surcharge that was charged is given
- * back). The till's figures must match; the checks pass, the refund is saved by refundPosOrder.
+ * The new POS refund (partial and complete in one). Every figure is the till's and is saved as sent:
+ * the server works nothing out (no share of the sale, the order discount or the payments) and checks no
+ * figure. Only the qty left on each line is checked (refundPosOrder).
  */
 export async function refundOrderV2(actor, id, v2) {
   const store = await getStoreForManager(actor.store_id)
@@ -1201,64 +1198,27 @@ export async function refundOrderV2(actor, id, v2) {
     throw new ConflictError("Only a completed sale can be refunded")
   }
   const items = order.OrderItems || []
-  const packOf = (item) => (item.sale_unit === "pack" ? Number(item.pack_size) || 1 : 1)
-  const where = (item) => `Order ${order.order_number} line ${item.item_number}`
-
-  // 1. the lines: not more than what is left (their figures are the till's, saved as sent)
+  // The lines: each found on the order (its qty left is checked in refundPosOrder); figures as sent.
   const picked = v2.items.map((row) => {
     const ref = String(row.order_item_id)
     const item = items.find((entry) => entry.id === ref || String(entry.item_number) === ref)
     if (!item) throw new NotFoundError(`Order ${order.order_number} has no line ${ref}`)
-    const units = Number((row.qty * packOf(item)).toFixed(4))
-    const left = Number(item.quantity) - Number(item.refunded_qty || 0)
-    if (units > left + 1e-6) throw new AppError(`${where(item)}: only ${Number((left / packOf(item)).toFixed(4))} left to refund (${row.qty} sent)`, 400)
-    const share = units / Number(item.quantity)
-    // The line's taxes broken down for the receipt: the sold line's taxes in proportion (a record, never a check).
-    const taxes = (Array.isArray(item.line_taxes) ? item.line_taxes : []).map((tax) => ({ level: tax.level, name: tax.name ?? null, rate: tax.rate ?? null, amount: money(Number(tax.amount || 0) * share) }))
-    return { row, item, units, taxes }
+    return { row }
   })
 
-  // 2. partial or complete
-  const everythingBack = items.every((item) => {
-    const left = Number(item.quantity) - Number(item.refunded_qty || 0)
-    const sent = picked.find((entry) => entry.item.id === item.id)?.units || 0
-    return left - sent <= 1e-6
-  })
-  if (v2.refund_type === "partial" && everythingBack) {
-    throw new AppError(`Order ${order.order_number}: this gives back everything left, send refund_type complete`, 400)
-  }
-
-  // 3. the bill this refund gives back: its lines less its order discount share, both as the till sent them
-  const soldTotal = money(items.reduce((total, item) => total + Number(item.subtotal) + Number(item.tax_amount || 0), 0))
-  const orderDiscount = money(order.discount_amount || 0)
-  const linesTotal = money(picked.reduce((total, entry) => total + entry.row.total, 0))
-  const refundBill = money(linesTotal - v2.order_discount_amount)
-
-  // 4. what each payment method gets back: its share of the bill, with its own surcharge
+  // The payments, as the till sent them. The surcharge type / value are copied from how the sale was paid
+  // with that method (a record). Left out: the whole refund goes back on the method the sale was paid with
+  // (its first method on a split sale), with the till's total and surcharge — nothing is split or worked out.
   const sale = salePaymentsOf(order)
-  const saleBill = money(soldTotal - orderDiscount)
-  const paidShare = money(sale.reduce((total, row) => total + row.bill_share, 0))
-  const credit = money(Math.max(0, saleBill - paidShare))
-  const methods = [...sale.map((row) => ({ ...row, share: row.bill_share })), ...(credit > 0.01 ? [{ method: "credit", amount: credit, surcharge_amount: 0, bill_share: credit, share: credit, surcharge_type: null, surcharge_value: null }] : [])]
-  const shareTotal = money(methods.reduce((total, row) => total + row.share, 0)) || 1
-  let allocated = 0
-  const expectedPayments = methods.map((row, index) => {
-    const bill = index === methods.length - 1 ? money(refundBill - allocated) : money((refundBill * row.share) / shareTotal)
-    allocated = money(allocated + bill)
-    const surcharge = row.surcharge_amount > 0 && row.bill_share > 0 ? money((row.surcharge_amount * bill) / row.bill_share) : 0
-    const raw = money(bill + surcharge)
-    return { ...row, bill, surcharge, expected: row.method === "cash" ? Math.round(raw) : raw }
-  })
-  // The payments: as the till sent them (no check against the sale). Left out, each method of the sale gets
-  // its share back (the only thing worked out here, when the till did not say).
+  const saleRow = (method) => sale.find((entry) => entry.method === method) || null
   let payments
   if (v2.payments.length) {
     payments = v2.payments.map((row) => {
-      const known = expectedPayments.find((entry) => entry.method === row.method)
       const surcharge = row.surcharge_amount != null ? money(row.surcharge_amount) : v2.payments.length === 1 ? money(v2.surcharge_total || 0) : 0
+      const known = saleRow(row.method)
       return {
         method: row.method,
-        bill_share: money(row.return_amount - surcharge),
+        bill_share: row.bill_amount != null ? money(row.bill_amount) : null,
         surcharge_type: surcharge > 0 ? known?.surcharge_type ?? null : null,
         surcharge_value: surcharge > 0 ? known?.surcharge_value ?? null : null,
         surcharge_amount: surcharge,
@@ -1266,9 +1226,17 @@ export async function refundOrderV2(actor, id, v2) {
       }
     })
   } else {
-    payments = expectedPayments
-      .filter((row) => row.bill >= 0.005)
-      .map((row) => ({ method: row.method, bill_share: row.bill, surcharge_type: row.surcharge > 0 ? row.surcharge_type : null, surcharge_value: row.surcharge > 0 ? row.surcharge_value : null, surcharge_amount: row.surcharge, amount: money(row.expected) }))
+    const method = (order.payment_method && order.payment_method !== "mixed" ? order.payment_method : sale[0]?.method) || "cash"
+    const known = saleRow(method)
+    const surcharge = money(v2.surcharge_total || 0)
+    payments = [{
+      method,
+      bill_share: null,
+      surcharge_type: surcharge > 0 ? known?.surcharge_type ?? null : null,
+      surcharge_value: surcharge > 0 ? known?.surcharge_value ?? null : null,
+      surcharge_amount: surcharge,
+      amount: money(v2.total_amount),
+    }]
   }
 
   return refundPosOrder(
@@ -1279,23 +1247,28 @@ export async function refundOrderV2(actor, id, v2) {
       client_local_id: v2.client_local_id,
       refunded_at: v2.refunded_at,
       batch_ref: v2.batch_ref,
-      lines: picked.map(({ row, taxes }) => ({
+      lines: picked.map(({ row }) => ({
         order_item_id: row.order_item_id,
         qty: row.qty,
         restock: row.restock,
         discount_amount: row.discount_amount,
         gross_amount: row.gross_amount,
         amount: row.subtotal,
-        taxes,
+        taxes: row.taxes,
         tax_amount: row.tax_amount,
         total: row.total,
       })),
       payments,
       order_discount_amount: v2.order_discount_amount,
-      // The refund's total is the till's.
+      // The refund's totals are the till's.
       total_amount: v2.total_amount,
+      surcharge_amount: v2.surcharge_total,
+      subtotal: v2.subtotal,
+      tax_amount: v2.tax_amount,
+      discount_amount: v2.discount_amount,
     },
-    { complete: v2.refund_type === "complete" }
+    // refund_type is saved as sent: not checked against the qty left on the order.
+    { complete: v2.refund_type === "complete", checkComplete: false }
   )
 }
 
@@ -1306,7 +1279,7 @@ export async function refundOrderV2(actor, id, v2) {
  * total_amount = the sum of the payments (checked when parsed). client_local_id makes it safe to
  * send again. restock false keeps that qty out of stock (damaged / expired).
  */
-export async function refundPosOrder(actor, id, fields, { complete = false } = {}) {
+export async function refundPosOrder(actor, id, fields, { complete = false, checkComplete = true } = {}) {
   const store = await getStoreForManager(actor.store_id)
   const existing = await OrderRefund.findOne({ where: { store_id: store.id, client_local_id: fields.client_local_id } })
   if (existing) return { refund: existing, idempotent: true }
@@ -1333,7 +1306,7 @@ export async function refundPosOrder(actor, id, fields, { complete = false } = {
   if (new Set(picked.map((row) => row.item.id)).size !== picked.length) {
     throw new AppError("A line is listed twice: send it once with its whole qty", 400)
   }
-  if (complete) {
+  if (complete && checkComplete) {
     for (const item of items) {
       const left = Number(item.quantity) - Number(item.refunded_qty || 0)
       const sent = picked.find((row) => row.item.id === item.id)?.units || 0
@@ -1349,10 +1322,12 @@ export async function refundPosOrder(actor, id, fields, { complete = false } = {
   const now = new Date()
   const refundedAt = refundTime(fields.refunded_at, now)
   const sum = (rows, key) => money(rows.reduce((total, row) => total + Number(row[key] || 0), 0))
-  const lineAmount = sum(fields.lines, "amount")
+  // The refund's totals as the till sent them; not sent: the sum of what it sent on its lines / payments.
+  const lineAmount = fields.subtotal != null ? money(fields.subtotal) : sum(fields.lines, "amount")
   const lineTax = sum(fields.lines, "tax_amount")
-  const discount = sum(fields.lines, "discount_amount")
-  const surcharge = sum(fields.payments, "surcharge_amount")
+  const discount = fields.discount_amount != null ? money(fields.discount_amount) : sum(fields.lines, "discount_amount")
+  const surcharge = fields.surcharge_amount != null ? money(fields.surcharge_amount) : sum(fields.payments, "surcharge_amount")
+  const refundTax = fields.tax_amount != null ? money(fields.tax_amount) : money(lineTax + surcharge)
   const total = money(fields.total_amount)
   // The share of the order discount this refund gives back.
   const orderDiscount = money(fields.order_discount_amount || 0)
@@ -1381,7 +1356,7 @@ export async function refundPosOrder(actor, id, fields, { complete = false } = {
         cashier_id: actor.id,
         subtotal: lineAmount,
         discount_amount: money(discount + orderDiscount),
-        tax_amount: money(lineTax + surcharge),
+        tax_amount: refundTax,
         shipping_fee: 0,
         total_amount: total,
         issued_at: refundedAt,
@@ -1404,8 +1379,8 @@ export async function refundPosOrder(actor, id, fields, { complete = false } = {
         reason: fields.reason,
         refund_type: complete ? "complete" : "partial",
         amount: total,
-        // Line taxes + payment surcharges, as the till sent them (not worked back from the total).
-        tax_amount: money(lineTax + surcharge),
+        // The till's tax_amount; not sent: line taxes + payment surcharges as sent.
+        tax_amount: refundTax,
         discount_amount: discount,
         order_discount_amount: orderDiscount,
         surcharge_amount: surcharge,
@@ -1436,7 +1411,7 @@ export async function refundPosOrder(actor, id, fields, { complete = false } = {
           // The till's gross and total of the refunded line, as sent.
           gross_amount: line.gross_amount ?? null,
           total: line.total ?? null,
-          line_taxes: line.taxes,
+          line_taxes: line.taxes || [],
           restocked: Boolean(line.restock && item.product_id),
         },
         { transaction }

@@ -5,12 +5,12 @@
  *     refund_items: [{ order_item_id, qty, gross_amount, discount_amount, subtotal, tax_amount, total }],
  *     order_discount_amount,
  *     total_payment_surcharge_refunded, total_refunded_amount }
- *   (payments: [{ method, return_amount }] is not needed: the server splits the refund over the methods the sale was
- *   paid with. It may still be sent, and is then checked against that split.)
+ *   (optional: payments [{ method, return_amount, surcharge_amount?, bill_amount? }], refund_items[].taxes [],
+ *   and the refund's own subtotal / tax_amount / discount_amount)
  *
- * Every figure is saved as the till sent it — none is worked out again or checked (a line's subtotal / total,
- * the payments against the total, each figure against the sale). Only the shape is checked here, and in
- * order.service.js the qty left on each line.
+ * Every figure is the till's and is saved as sent — the server works nothing out and checks no figure.
+ * A missing or non-numeric amount is 0. Only the shape is checked here, and in order.service.js the qty
+ * left on each line.
  */
 import { AppError } from "../../shared/errors/AppError.js"
 import { PAYMENT_METHOD } from "../../db/enums.js"
@@ -51,14 +51,46 @@ function money(row, key, label, { required = false, min = 0, positive = false } 
   return number
 }
 
+/** An amount the till sends, saved as sent; missing or not a number = 0 (never refused). */
+function amountOr0(row, key) {
+  const value = row?.[key]
+  if (value === undefined || value === null || value === "") return 0
+  const number = Number(value)
+  return Number.isNaN(number) ? 0 : number
+}
+
+/** An optional amount: as sent, or null when missing / not a number. */
+function amountOrNull(row, key) {
+  const value = row?.[key]
+  if (value === undefined || value === null || value === "") return null
+  const number = Number(value)
+  return Number.isNaN(number) ? null : number
+}
+
+/** The line's taxes as the till sent them (a record): [{ level, name, type, rate, amount }]. */
+function sentTaxes(list) {
+  if (!Array.isArray(list)) return []
+  return list
+    .filter((tax) => tax && typeof tax === "object")
+    .map((tax) => ({
+      ...(tax.id !== undefined ? { id: tax.id } : {}),
+      level: tax.level ?? null,
+      name: tax.name ?? null,
+      type: tax.type ?? null,
+      rate: amountOrNull(tax, "value") ?? amountOrNull(tax, "rate"),
+      amount: amountOr0(tax, "amount"),
+    }))
+}
+
 function parseItem(row, index, defaultRestock) {
   const label = `refund_items[${index}]`
   if (!row || typeof row !== "object") throw new AppError(`${label} is invalid`, 400)
-  const gross = money(row, "gross_amount", label, { required: true })
-  const discount = money(row, "discount_amount", label, { required: true })
-  const subtotal = money(row, "subtotal", label, { required: true })
-  const tax = money(row, "tax_amount", label, { required: true })
-  const total = money(row, "total", label, { required: true })
+  // The line's figures as sent; missing = 0.
+  const gross = amountOr0(row, "gross_amount")
+  const discount = amountOr0(row, "discount_amount")
+  const subtotal = amountOr0(row, "subtotal")
+  const tax = amountOr0(row, "tax_amount")
+  const total = amountOr0(row, "total")
   return {
     order_item_id: ref(row, ["order_item_id", "orderItemId"], label, { required: true }),
     qty: money(row, "qty", label, { required: true, positive: true }),
@@ -68,6 +100,7 @@ function parseItem(row, index, defaultRestock) {
     subtotal,
     tax_amount: tax,
     total,
+    taxes: sentTaxes(row.taxes),
   }
 }
 
@@ -78,7 +111,12 @@ function parsePayment(row, index) {
   // credit = the part that was udhaar: it comes off what the customer owes, nothing is paid out.
   if (!(PAYMENT_METHOD.includes(method) || method === "credit") || method === "mixed") throw new AppError(`${label}.method is invalid`, 400)
   // surcharge_amount: the part of return_amount that is surcharge given back (optional).
-  return { method, return_amount: money(row, "return_amount", label, { required: true, positive: true }), surcharge_amount: money(row, "surcharge_amount", label) }
+  return {
+    method,
+    return_amount: amountOr0(row, "return_amount"),
+    surcharge_amount: amountOrNull(row, "surcharge_amount"),
+    bill_amount: amountOrNull(row, "bill_amount"),
+  }
 }
 
 export function parseRefundV2(body) {
@@ -101,7 +139,7 @@ export function parseRefundV2(body) {
   const payments = sentPayments.map(parsePayment)
   if (new Set(payments.map((row) => row.method)).size !== payments.length) throw new AppError("payments lists a method twice", 400)
 
-  const total = money(body, "total_refunded_amount", label, { required: true, positive: true })
+  const total = amountOr0(body, "total_refunded_amount")
 
   return {
     order_id: ref(body, ["order_id", "orderId"], label, { required: true }),
@@ -110,9 +148,14 @@ export function parseRefundV2(body) {
     refund_type,
     reason,
     items,
-    order_discount_amount: money(body, "order_discount_amount", label) ?? 0,
+    order_discount_amount: amountOr0(body, "order_discount_amount"),
     payments,
-    surcharge_total: money(body, "total_payment_surcharge_refunded", label, { required: true }),
+    // Not sent: the payments' surcharge_amount as sent, added up.
+    surcharge_total: amountOrNull(body, "total_payment_surcharge_refunded"),
+    // The refund's own totals, when the till sends them (else the sum of its lines' figures as sent).
+    subtotal: amountOrNull(body, "subtotal"),
+    tax_amount: amountOrNull(body, "tax_amount"),
+    discount_amount: amountOrNull(body, "discount_amount"),
     total_amount: total,
     batch_ref: ref(body, ["batch_id", "batchId"], label),
     staff_ref: staffRefFrom(body),
