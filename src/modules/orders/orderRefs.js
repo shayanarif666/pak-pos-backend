@@ -20,6 +20,13 @@ export async function orderIdFromRef(storeId, ref) {
   return order.id
 }
 
+/** Like idFromNumber, but a number that is not found gives null (no error). */
+async function idFromNumberOrNull(model, column, storeId, ref) {
+  if (!ref || !isNumber(ref)) return ref || null
+  const row = await model.findOne({ where: { store_id: storeId, [column]: Number(ref) }, attributes: ["id"] })
+  return row?.id || null
+}
+
 async function idFromNumber(model, column, storeId, ref, label) {
   if (!ref || !isNumber(ref)) return ref
   const row = await model.findOne({
@@ -119,13 +126,8 @@ export async function resolveOrderRefs(storeId, input) {
   return {
     ...input,
     items,
-    register_session_id: await idFromNumber(
-      RegisterSession,
-      "session_number",
-      storeId,
-      input.register_session_id,
-      "Batch"
-    ),
-    customer_id: await idFromNumber(Customer, "customer_number", storeId, input.customer_id, "Customer"),
+    // A batch / customer that is not found does not stop the sale: it is saved without one.
+    register_session_id: await idFromNumberOrNull(RegisterSession, "session_number", storeId, input.register_session_id),
+    customer_id: await idFromNumberOrNull(Customer, "customer_number", storeId, input.customer_id),
   }
 }

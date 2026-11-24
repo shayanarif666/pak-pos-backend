@@ -534,20 +534,25 @@ async function verifyCredentials(user, { password }) {
  * POS tokens stay valid only while the store's POS is on and its license is active. Tokens
  * issued before login dropped device_uid may still carry a device; that device must be enabled.
  */
-export async function assertPosSessionUsable(storeId, { license_id, device_id }) {
+export async function assertPosSessionUsable(storeId, { license_id, device_id }, { skipStoreAndLicense = false } = {}) {
   const [store, license, device] = await Promise.all([
     Store.findByPk(storeId, { attributes: ["id", "is_active", "pos_enabled"] }),
     license_id ? StoreLicense.findOne({ where: { id: license_id, store_id: storeId } }) : null,
     device_id ? PosDevice.findOne({ where: { id: device_id, store_id: storeId } }) : null,
   ])
-  if (!store || !store.is_active) throw new UnauthorizedError("Store is suspended")
-  if (!store.pos_enabled) throw new UnauthorizedError("POS is disabled for this store")
-  if (!license) throw new UnauthorizedError("POS license not found")
-  if (["active", "trial"].includes(license.status) && isExpired(license.expires_at)) {
-    await license.update({ status: "expired" })
+  // Creating an order skips the store / license checks (a sale is always accepted).
+  if (!skipStoreAndLicense) {
+    if (!store || !store.is_active) throw new UnauthorizedError("Store is suspended")
   }
-  if (!["active", "trial"].includes(license.status)) {
-    throw new UnauthorizedError(`POS license is ${license.status}`)
+  if (store && !store.pos_enabled) throw new UnauthorizedError("POS is disabled for this store")
+  if (!skipStoreAndLicense) {
+    if (!license) throw new UnauthorizedError("POS license not found")
+    if (["active", "trial"].includes(license.status) && isExpired(license.expires_at)) {
+      await license.update({ status: "expired" })
+    }
+    if (!["active", "trial"].includes(license.status)) {
+      throw new UnauthorizedError(`POS license is ${license.status}`)
+    }
   }
   if (device_id && (!device || !device.is_active)) {
     throw new UnauthorizedError("POS device is deactivated")

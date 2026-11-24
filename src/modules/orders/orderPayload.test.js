@@ -81,13 +81,17 @@ test("ids: category / product / variant / manual have none, store / bulk / bundl
   assert.equal(parseOrderV2(custom).items[0].priced.discount.entries[0].id, null)
 })
 
-test("tax_exempt and discount_exempt", () => {
+test("tax_exempt / discount_exempt, any qty and any discount type are accepted as sent", () => {
   const taxed = clone(SAMPLE_ORDERS[0])
   taxed.tax_exempt = true
-  fails(taxed, /tax_exempt is true/)
-  const discounted = clone(SAMPLE_ORDERS[0])
-  discounted.discount_exempt = true
-  fails(discounted, /discount_exempt is true/)
+  taxed.discount_exempt = true
+  assert.equal(parseOrderV2(taxed).tax_exempt, true)
+  const odd = clone(SAMPLE_ORDERS[0])
+  odd.order_items[0].qty = 0
+  odd.order_discount = { id: null, name: "Odd", type: "flat", value: 5 }
+  const parsed = parseOrderV2(odd)
+  assert.equal(parsed.items[0].quantity, 0)
+  assert.equal(parsed.order_discount.type, "flat")
 })
 
 test("bundles must match the lines", () => {

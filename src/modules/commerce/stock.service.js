@@ -24,6 +24,8 @@ export async function deductSaleStock(
       reason: "sale",
       staff_id: staffId || null,
       order_id: orderId,
+      // A sale is never refused for stock: the stock may go below 0.
+      allow_negative: true,
     },
     { transaction }
   )

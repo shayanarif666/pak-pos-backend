@@ -9,7 +9,6 @@ import { StaffSession } from "./staffSession.model.js"
 import { nextSessionNumber } from "../../shared/utils/counter.util.js"
 import { AppError } from "../../shared/errors/AppError.js"
 import { ConflictError } from "../../shared/errors/ConflictError.js"
-import { ForbiddenError } from "../../shared/errors/ForbiddenError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import { Location } from "../locations/location.model.js"
 
@@ -347,7 +346,12 @@ function coversTime(row, at) {
  * - Offline sale (placedAt in the past): the seller's shift that was open at placedAt,
  *   even if it has been closed since the sale was made.
  */
-export async function requireOpenSession(
+/**
+ * The batch a sale goes into. Never refuses the sale: the batch sent is used as it is (closed,
+ * another cashier's or another location's too); without one, the open batch of the device /
+ * cashier at the location; none found = null (the order is saved without a batch).
+ */
+export async function findSaleSession(
   storeId,
   { locationId, deviceId, sessionId, cashierId, actorRole, placedAt, offline = false },
   { transaction } = {}
@@ -357,17 +361,7 @@ export async function requireOpenSession(
       where: { id: sessionId, store_id: storeId },
       transaction,
     })
-    if (!row) throw new NotFoundError("Register session not found")
-    if (actorRole === "cashier" && cashierId && row.cashier_id !== cashierId) {
-      throw new ForbiddenError("This register session belongs to another cashier")
-    }
-    if (row.status !== "open" && !(offline && coversTime(row, placedAt))) {
-      throw new ConflictError("This batch is closed")
-    }
-    if (locationId && row.location_id !== locationId) {
-      throw new AppError("Session is not at this location", 400)
-    }
-    return row
+    if (row) return row
   }
 
   const base = { store_id: storeId, location_id: locationId }
@@ -394,10 +388,7 @@ export async function requireOpenSession(
     })
     row = candidates.find((candidate) => coversTime(candidate, placedAt)) || null
   }
-  if (!row) {
-    throw new ConflictError("Open a batch before selling")
-  }
-  return row
+  return row || null
 }
 
 const METHOD_FIELD = {

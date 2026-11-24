@@ -14,7 +14,19 @@ import {
   assertStaffLicense,
 } from "../../modules/auth/auth.service.js"
 
-export async function authMiddleware(req, res, next) {
+export function authMiddleware(req, res, next) {
+  return authenticate(req, res, next, {})
+}
+
+/**
+ * Creating an order (POST /orders, /orders/bulk): the sale is always accepted, so a suspended
+ * account, a suspended store and an expired / suspended license do not stop it.
+ */
+export function orderCreateAuth(req, res, next) {
+  return authenticate(req, res, next, { orderCreate: true })
+}
+
+async function authenticate(req, res, next, { orderCreate = false }) {
   try {
     const header = req.headers.authorization || ""
     const token = header.startsWith("Bearer ") ? header.slice(7) : null
@@ -34,18 +46,18 @@ export async function authMiddleware(req, res, next) {
     const user = await User.findByPk(payload.sub)
     if (!user || user.deleted_at) throw new UnauthorizedError("Account is not available")
     // Deactivated staff: the token stops working at once.
-    if (!user.is_active) throw new UnauthorizedError("Account Suspended")
+    if (!user.is_active && !orderCreate) throw new UnauthorizedError("Account Suspended")
     if ((payload.tv ?? 0) !== (user.token_version ?? 0)) {
       throw new UnauthorizedError("Session has ended. Sign in again.")
     }
     await assertSessionOpen(payload)
     // Expired / suspended store license: 403 with data.code, the dashboard signs the user out.
     // Logout stays allowed so that sign-out can still close the session on the server.
-    if (!req.originalUrl.split("?")[0].endsWith("/auth/logout")) {
+    if (!orderCreate && !req.originalUrl.split("?")[0].endsWith("/auth/logout")) {
       await assertStaffLicense(user)
     }
     if (payload.channel === "pos") {
-      await assertPosSessionUsable(user.store_id, payload)
+      await assertPosSessionUsable(user.store_id, payload, { skipStoreAndLicense: orderCreate })
     }
 
     req.user = user

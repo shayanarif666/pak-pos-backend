@@ -29,7 +29,7 @@ import { ConflictError } from "../../shared/errors/ConflictError.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 import {
   applySessionSale,
-  requireOpenSession,
+  findSaleSession,
 } from "../pos/registerSession.service.js"
 import { deductSaleStock } from "./stock.service.js"
 import { storeTaxMatcher } from "../taxes/tax.service.js"
@@ -241,9 +241,8 @@ const sumOf = (rows, pick) => money(rows.reduce((sum, row) => sum + Number(pick(
 function packSaleSize(product, saleUnit) {
   if (saleUnit !== "pack") return null
   const size = Number(product?.pack_size)
-  if (!product?.is_pack_product || !(size >= 2)) {
-    throw new AppError(`${product?.title || "This product"} is not sold by the pack: send sale_unit unit`, 400)
-  }
+  // Not a pack product: the line is sold by the unit instead (the sale is not refused).
+  if (!product?.is_pack_product || !(size >= 2)) return null
   return size
 }
 
@@ -398,13 +397,16 @@ const OFFLINE_AFTER_MS = 2 * 60 * 1000
 const MAX_OFFLINE_AGE_MS = 30 * 24 * 60 * 60 * 1000
 
 /** Offline POS sales keep the time they were rung up, not the time they reached the server. */
+/** The order discount type column takes percentage / fixed only; any other type is kept in the order's JSON. */
+function knownDiscountType(type) {
+  return type === "percentage" || type === "fixed" ? type : null
+}
+
 function resolvePlacedAt(input, now) {
   if (!input.placed_at) return now
   const at = new Date(input.placed_at)
-  if (Number.isNaN(at.getTime())) throw new AppError("placed_at is not a valid date", 400)
-  if (at.getTime() > now.getTime() + 5 * 60 * 1000) {
-    throw new AppError("placed_at cannot be in the future", 400)
-  }
+  // Not a valid date: the time the server got it. A future date is kept as sent.
+  if (Number.isNaN(at.getTime())) return now
   if (now.getTime() - at.getTime() > MAX_OFFLINE_AGE_MS) {
     throw new AppError("Offline sale is older than 30 days", 400)
   }
@@ -439,7 +441,7 @@ export async function createOrder(actor, input) {
 
     let session = null
     if (channel === "pos") {
-      session = await requireOpenSession(
+      session = await findSaleSession(
         store.id,
         {
           locationId: requestedLocationId(actor, store, input),
@@ -454,7 +456,9 @@ export async function createOrder(actor, input) {
       )
     }
 
-    const locationId = session?.location_id || requestedLocationId(actor, store, input)
+    // The location the sale was made at; else the batch's; else the store's default.
+    const explicitLocation = actor.role === "store_admin" ? input.location_id : actor.location_id
+    const locationId = explicitLocation || session?.location_id || requestedLocationId(actor, store, input)
     if (!is_custom && !locationId) {
       throw new AppError("location_id is required to deduct stock", 400)
     }
@@ -518,8 +522,7 @@ export async function createOrder(actor, input) {
           if (!item.product_id) return posPricedLine(item, null, offersById)
           const product = productMap.get(item.product_id)
           if (!product) throw new NotFoundError("Product not found")
-          if (!product.is_active) throw new AppError("Product is not active", 400)
-          if (product.has_variants) throw new AppError(`${product.title} has variants: sell one of them`, 400)
+          // An inactive product, or a product with variants sold without one, is still sold.
           return posPricedLine(item, product, offersById)
         })
       : items.map((item) => {
@@ -540,15 +543,13 @@ export async function createOrder(actor, input) {
       }
       const product = productMap.get(item.product_id)
       if (!product) throw new NotFoundError("Product not found")
-      if (!product.is_active) throw new AppError("Product is not active", 400)
-      if (product.has_variants) throw new AppError(`${product.title} has variants: sell one of them`, 400)
-      packSaleSize(product, item.sale_unit)
+      // An inactive product, or a product with variants sold without one, is still sold.
       const line = priceCatalogLine({
         product,
         quantity: item.quantity,
         weight: item.weight,
         // pack: quantity is packs, priced by the pack.
-        saleUnit: item.sale_unit || "unit",
+        saleUnit: packSaleSize(product, item.sale_unit) ? "pack" : "unit",
         // offer_exempt (order or line): no offer; product / category discounts still apply.
         offers: input.offer_exempt || item.offer_exempt ? [] : offers,
         bulkTiers: tiersByProduct.get(product.id) || [],
@@ -691,7 +692,8 @@ export async function createOrder(actor, input) {
 
     let customer = null
     if (input.customer_id) {
-      customer = await getCustomer(store.id, input.customer_id)
+      // A customer that is not found: the order is saved without one.
+      customer = await getCustomer(store.id, input.customer_id).catch(() => null)
     } else if (actor.role === "customer") {
       customer = await Customer.findOne({
         where: { store_id: store.id, user_id: actor.id },
@@ -731,7 +733,7 @@ export async function createOrder(actor, input) {
           subtotal: totals.subtotal,
           is_order_discounted: orderDiscount > 0,
           order_discount_type:
-            orderDiscount > 0 ? (input.precomputed ? input.order_discount?.type : input.order_discount_type) : null,
+            orderDiscount > 0 ? knownDiscountType(input.precomputed ? input.order_discount?.type : input.order_discount_type) : null,
           discount_amount: totals.discount_amount,
           coupon_id: coupon?.id || null,
           coupon_code: coupon?.code || null,
@@ -829,6 +831,8 @@ export async function createOrder(actor, input) {
 
     for (const [index, line] of priced.entries()) {
       if (!line.product_id) continue
+      // A product with variants sold without a variant has no stock of its own to take from.
+      if (productMap.get(line.product_id)?.has_variants) continue
       const moved = await deductSaleStock(
         {
           store,
@@ -857,9 +861,7 @@ export async function createOrder(actor, input) {
     const tendered = money(Math.max(handedOver, input.amount_paid ?? 0))
     let creditAmount = money(totals.total_amount - collected)
     if (creditAmount < 0) creditAmount = 0
-    if (creditAmount > 0 && !customer) {
-      throw new AppError("A customer is required for credit / udhaar", 400)
-    }
+    // Credit / udhaar without a customer is accepted; it is just not put on anyone's account.
 
     const payments = []
     for (const row of plannedPayments) {
@@ -888,7 +890,7 @@ export async function createOrder(actor, input) {
       payments.push(payment)
     }
 
-    if (creditAmount > 0) {
+    if (creditAmount > 0 && customer) {
       await recordLedgerEntry(
         customer,
         {

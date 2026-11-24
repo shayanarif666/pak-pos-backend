@@ -1,10 +1,11 @@
 import { Router } from "express"
 import { orderLists } from "../dashboard/dashboardLists.js"
-import { authMiddleware } from "../../shared/middlewares/auth.middleware.js"
+import { authMiddleware, orderCreateAuth } from "../../shared/middlewares/auth.middleware.js"
 import { authorize } from "../../shared/middlewares/authorize.middleware.js"
 import {
   requireTenantStore,
   tenantMiddleware,
+  requireTenantStoreForOrder,
 } from "../../shared/middlewares/tenant.middleware.js"
 import { requestScope } from "../../shared/middlewares/requestScope.middleware.js"
 import { validate } from "../../shared/middlewares/validate.middleware.js"
@@ -48,10 +49,9 @@ const listRoles = [
   ...tenant,
   authorize("store_admin", "manager", "cashier", "customer"),
 ]
-const place = [
-  ...tenant,
-  authorize("store_admin", "manager", "cashier", "customer"),
-]
+// Creating an order: any signed-in account of the store, whatever its role, even when the account,
+// the store or its license is suspended / expired — a sale is always accepted.
+const place = [orderCreateAuth, tenantMiddleware, requireTenantStoreForOrder]
 const manage = [...tenant, authorize("store_admin", "manager", "cashier")]
 const cancelled = [...tenant, authorize("store_admin", "manager")]
 

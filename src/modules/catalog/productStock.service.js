@@ -100,6 +100,8 @@ export async function applyStockDelta(
     received_at,
     // A transfer in: the supplier the lot came from (the movement itself names none).
     lot_supplier_id,
+    // A sale: the stock may go below 0.
+    allow_negative = false,
   },
   { transaction }
 ) {
@@ -115,7 +117,7 @@ export async function applyStockDelta(
   })
   const oldQty = row ? Number(row.qty) : 0
   const newQty = oldQty + Number(delta)
-  if (newQty < 0) throw new AppError("qty cannot be negative", 400)
+  if (newQty < 0 && !allow_negative) throw new AppError("qty cannot be negative", 400)
 
   // unit_sold = units sold so far here: a sale (including a manual sale adjustment) adds the
   // units that left, a refund takes back the units that came back.

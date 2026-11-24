@@ -15,6 +15,18 @@ export function tenantMiddleware(req, res, next) {
   next()
 }
 
+/** Creating an order: the account must belong to a store, but a suspended store still sells. */
+export async function requireTenantStoreForOrder(req, res, next) {
+  try {
+    if (!req.storeId) throw new ForbiddenError("No store on this account")
+    const store = await Store.findByPk(req.storeId, { attributes: ["id"] })
+    if (!store) throw new ForbiddenError("No store on this account")
+    next()
+  } catch (err) {
+    next(err)
+  }
+}
+
 // A suspended store keeps its data but its staff and customers can no longer use the API.
 export async function requireTenantStore(req, res, next) {
   try {

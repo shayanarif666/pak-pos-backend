@@ -94,8 +94,8 @@ function parseEntries(list, label, { levels, custom, kind }) {
     if (!entry || typeof entry !== "object") throw new AppError(`${at} is invalid`, 400)
     const level = String(entry.level || "")
     if (!levels.includes(level)) throw new AppError(`${at}.level must be ${levels.join(", ")}`, 400)
+    // Any type is accepted (percentage / fixed are the usual ones).
     const type = entry.type === undefined || entry.type === null ? "percentage" : String(entry.type)
-    if (type !== "percentage" && type !== "fixed") throw new AppError(`${at}.type must be percentage or fixed`, 400)
     const value = money(entry, "value", at, { required: true })
     if (type === "percentage" && value > 100 && kind === "discount") throw new AppError(`${at}.value cannot be more than 100%`, 400)
     const id = entryId(entry, at)
@@ -116,7 +116,8 @@ function parseLine(row, index) {
   if (!row || typeof row !== "object") throw new AppError(`${label} is invalid`, 400)
   const isCustom = Boolean(row.is_custom)
   const qty = Number(row.qty ?? row.quantity)
-  if (Number.isNaN(qty) || qty <= 0) throw new AppError(`${label}.qty must be > 0`, 400)
+  // Any qty is accepted (0 or below too); it must only be a number.
+  if (Number.isNaN(qty)) throw new AppError(`${label}.qty must be a number`, 400)
   const price = money(row, "price", label, { required: true })
   const product_id = ref(row, ["product_id"], label)
   const title = text(row, "name") || text(row, "title")
@@ -205,8 +206,8 @@ function parseBundles(list, lines) {
 function parseOrderDiscount(value, linesTotal, sentAmount = null) {
   if (value === undefined || value === null) return null
   if (typeof value !== "object") throw new AppError("order_discount must be an object or null", 400)
+  // Any type is accepted (percentage / fixed are the usual ones).
   const type = value.type === undefined || value.type === null ? "percentage" : String(value.type)
-  if (type !== "percentage" && type !== "fixed") throw new AppError("order_discount.type must be percentage or fixed", 400)
   const amountValue = money(value, "value", "order_discount", { required: true })
   if (type === "percentage" && amountValue > 100) throw new AppError("order_discount.value cannot be more than 100%", 400)
   // The amount is the till's (summary.order_discount_amount); worked out only when it was not sent.
@@ -248,12 +249,7 @@ export function parseOrderV2(body) {
   const discountExempt = Boolean(body.discount_exempt ?? body.discount_exampt)
   const lines = body.order_items.map(parseLine)
 
-  if (taxExempt && lines.some((line) => line.priced.taxes.length || line.figures.tax > 0)) {
-    throw new AppError("tax_exempt is true: no line can have a tax", 400)
-  }
-  if (discountExempt && lines.some((line) => line.priced.discount.entries.length || line.figures.discount > 0)) {
-    throw new AppError("discount_exempt is true: no line can have a discount", 400)
-  }
+  // tax_exempt / discount_exempt are saved as sent; the lines' taxes and discounts are not checked against them.
 
   // The order's totals are the till's summary, saved as sent (not checked against the lines or the payments).
   const summary = body.summary && typeof body.summary === "object" ? body.summary : null
@@ -269,7 +265,6 @@ export function parseOrderV2(body) {
 
   const linesTotal = r2(lines.reduce((sum, line) => sum + line.figures.total, 0))
   const order_discount = parseOrderDiscount(body.order_discount, linesTotal, orderDiscountSent)
-  if (discountExempt && order_discount) throw new AppError("discount_exempt is true: send order_discount null", 400)
 
   const bundles = parseBundles(body.bundles, lines)
 
