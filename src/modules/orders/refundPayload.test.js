@@ -24,16 +24,18 @@ test("payments is not needed; when sent it is saved as sent", () => {
   assert.deepEqual(parseRefundV2(sent).payments.map((row) => [row.method, row.return_amount]), [["cash", 1160], ["card", 50.05]])
 })
 
-test("refund_type, reason and local_id are required", () => {
+test("refund_type is required; reason and local_id are optional; a bad qty is 1", () => {
   const noType = clone(SAMPLE_REFUNDS[0])
   delete noType.refund_type
   fails(noType, /refund_type/)
-  const noReason = clone(SAMPLE_REFUNDS[0])
-  noReason.reason = ""
-  fails(noReason, /reason/)
-  const noId = clone(SAMPLE_REFUNDS[0])
-  delete noId.local_id
-  fails(noId, /local_id/)
+  const loose = clone(SAMPLE_REFUNDS[0])
+  loose.reason = ""
+  delete loose.local_id
+  loose.refund_items[0].qty = -2
+  const input = parseRefundV2(loose)
+  assert.equal(input.reason, "")
+  assert.equal(input.client_local_id, null)
+  assert.equal(input.items[0].qty, 1)
 })
 
 test("a line's figures are saved as sent, even ones that do not add up", () => {

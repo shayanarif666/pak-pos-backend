@@ -1,6 +1,6 @@
 import { Router } from "express"
 import { orderLists } from "../dashboard/dashboardLists.js"
-import { authMiddleware, orderCreateAuth } from "../../shared/middlewares/auth.middleware.js"
+import { authMiddleware, orderCreateAuth, refundCreateAuth } from "../../shared/middlewares/auth.middleware.js"
 import { authorize } from "../../shared/middlewares/authorize.middleware.js"
 import {
   requireTenantStore,
@@ -53,6 +53,8 @@ const listRoles = [
 // the store or its license is suspended / expired — a sale is always accepted.
 const place = [orderCreateAuth, tenantMiddleware, requireTenantStoreForOrder]
 const manage = [...tenant, authorize("store_admin", "manager", "cashier")]
+// Creating a refund: the account / session / store / license / POS checks are skipped (see refundCreateAuth).
+const refundCreate = [refundCreateAuth, tenantMiddleware, requireTenantStoreForOrder, authorize("store_admin", "manager", "cashier")]
 const cancelled = [...tenant, authorize("store_admin", "manager")]
 
 // PATCH /bulk takes the body of its POST (storeId, items[] with the POST field names).
@@ -72,8 +74,8 @@ router.get("/cancelled", ...cancelled, listCancelled)
 router.get("/refunds", ...staff, listRefunds)
 router.get("/refunds/:refundId/receipt", ...staff, refundReceiptById)
 router.get("/summary/locations", ...cancelled, salesByLocation)
-router.post("/refunds/bulk", ...manage, requestScope(), refundItemsBulk)
-router.post("/refunds/complete/bulk", ...manage, requestScope(), refundCompleteBulk)
+router.post("/refunds/bulk", ...refundCreate, requestScope(), refundItemsBulk)
+router.post("/refunds/complete/bulk", ...refundCreate, requestScope(), refundCompleteBulk)
 router.get("/:id/payments", ...staff, listPayments)
 router.post(
   "/:id/payments",

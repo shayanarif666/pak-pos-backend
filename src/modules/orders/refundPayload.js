@@ -38,19 +38,6 @@ function text(row, key) {
   return String(row[key]).trim()
 }
 
-function money(row, key, label, { required = false, min = 0, positive = false } = {}) {
-  const value = row[key]
-  if (value === undefined || value === null || value === "") {
-    if (required) throw new AppError(`${label}.${key} is required`, 400)
-    return null
-  }
-  const number = Number(value)
-  if (Number.isNaN(number) || number < min || (positive && number <= 0)) {
-    throw new AppError(`${label}.${key} must be a number ${positive ? "> 0" : `>= ${min}`}`, 400)
-  }
-  return number
-}
-
 /** An amount the till sends, saved as sent; missing or not a number = 0 (never refused). */
 function amountOr0(row, key) {
   const value = row?.[key]
@@ -82,6 +69,11 @@ function sentTaxes(list) {
     }))
 }
 
+function refundQty(row) {
+  const value = Number(row.qty)
+  return row.qty === undefined || row.qty === null || row.qty === "" || Number.isNaN(value) || value <= 0 ? 1 : value
+}
+
 function parseItem(row, index, defaultRestock) {
   const label = `refund_items[${index}]`
   if (!row || typeof row !== "object") throw new AppError(`${label} is invalid`, 400)
@@ -93,7 +85,8 @@ function parseItem(row, index, defaultRestock) {
   const total = amountOr0(row, "total")
   return {
     order_item_id: ref(row, ["order_item_id", "orderItemId"], label, { required: true }),
-    qty: money(row, "qty", label, { required: true, positive: true }),
+    // qty missing, not a number, 0 or below = 1.
+    qty: refundQty(row),
     restock: row.restock === undefined || row.restock === null ? defaultRestock : Boolean(row.restock),
     gross_amount: gross,
     discount_amount: discount,
@@ -123,10 +116,9 @@ export function parseRefundV2(body) {
   const label = "refund"
   const refund_type = String(body.refund_type || "")
   if (!REFUND_TYPES.includes(refund_type)) throw new AppError("refund_type must be partial or complete", 400)
-  const reason = text(body, "reason")
-  if (!reason) throw new AppError("reason is required", 400)
+  // reason and local_id are optional: no reason = blank; no local_id = the refund cannot be matched if sent again.
+  const reason = text(body, "reason") || ""
   const client_local_id = text(body, "local_id") || text(body, "client_local_id")
-  if (!client_local_id) throw new AppError("local_id is required (the till's id for this refund)", 400)
   if (!Array.isArray(body.refund_items) || !body.refund_items.length) throw new AppError("refund_items needs at least one line", 400)
   const restock = body.restock === undefined || body.restock === null ? true : Boolean(body.restock)
   const items = body.refund_items.map((row, index) => parseItem(row, index, restock))

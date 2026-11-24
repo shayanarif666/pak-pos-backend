@@ -1132,15 +1132,12 @@ export async function attachOrderCustomer(actor, id, customerId) {
 
 // ---- POS refunds: the till works out every figure, the server saves them as sent ----
 
-const REFUND_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000
 
+/** When the refund happened at the till: as sent (a future or old date too); missing / invalid = now. */
 function refundTime(value, now) {
   if (!value) return now
   const at = new Date(value)
-  if (Number.isNaN(at.getTime())) throw new AppError("refunded_at is not a valid date", 400)
-  if (at.getTime() > now.getTime() + 5 * 60 * 1000) throw new AppError("refunded_at cannot be in the future", 400)
-  if (now.getTime() - at.getTime() > REFUND_MAX_AGE_MS) throw new AppError("Offline refund is older than 30 days", 400)
-  return at
+  return Number.isNaN(at.getTime()) ? now : at
 }
 
 /** The batch the money leaves from: the one sent (number or UUID), else the staff member's open one. */
@@ -1189,7 +1186,8 @@ function salePaymentsOf(order) {
  */
 export async function refundOrderV2(actor, id, v2) {
   const store = await getStoreForManager(actor.store_id)
-  const existing = await OrderRefund.findOne({ where: { store_id: store.id, client_local_id: v2.client_local_id } })
+  // Sent again with the same local_id: the saved refund (no local_id = always a new refund).
+  const existing = v2.client_local_id ? await OrderRefund.findOne({ where: { store_id: store.id, client_local_id: v2.client_local_id } }) : null
   if (existing) return { refund: existing, idempotent: true }
 
   const order = await findOrder(store.id, id)
@@ -1281,7 +1279,7 @@ export async function refundOrderV2(actor, id, v2) {
  */
 export async function refundPosOrder(actor, id, fields, { complete = false, checkComplete = true } = {}) {
   const store = await getStoreForManager(actor.store_id)
-  const existing = await OrderRefund.findOne({ where: { store_id: store.id, client_local_id: fields.client_local_id } })
+  const existing = fields.client_local_id ? await OrderRefund.findOne({ where: { store_id: store.id, client_local_id: fields.client_local_id } }) : null
   if (existing) return { refund: existing, idempotent: true }
 
   const order = await findOrder(store.id, id)
