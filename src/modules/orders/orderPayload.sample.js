@@ -97,8 +97,6 @@ export const SAMPLE_ORDERS = [
       },
     ],
     order_discount: { id: null, name: "Manager discount", type: "fixed", value: 100 },
-    // A cashier needs an approved discount_override request for a manual order discount (a manager / store admin does not).
-    approval_request_id: "6f1e8a52-3c1d-4a7e-9b4e-2d5a8c7f1b90",
     payments: [
       { method: "cash", bill_amount: 1000, surcharge_active: true, type: "percentage", value: 16, surcharge_amount: 160, amount: 1160, paid: 1200 },
       { method: "card", bill_amount: 50.05, surcharge_active: false, type: "percentage", value: 8, surcharge_amount: 0, amount: 50.05, paid: 50.05 },

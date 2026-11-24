@@ -31,7 +31,6 @@ import {
   applySessionSale,
   requireOpenSession,
 } from "../pos/registerSession.service.js"
-import { requireApprovedAction } from "../pos/approval.service.js"
 import { deductSaleStock } from "./stock.service.js"
 import { storeTaxMatcher } from "../taxes/tax.service.js"
 import {
@@ -574,15 +573,8 @@ export async function createOrder(actor, input) {
     const orderDiscount = input.precomputed
       ? money(input.order_discount?.amount || 0)
       : resolveOrderDiscount(lineSubtotal, input)
-    // A manual order discount is a discount_override: cashiers need a manager's approval.
-    if (orderDiscount > 0 && actor.role === "cashier" && !(input.v2 && input.order_discount?.id != null)) {
-      await requireApprovedAction({
-        store,
-        actor,
-        type: "discount_override",
-        approvalRequestId: input.approval_request_id,
-      })
-    }
+    // Any order discount — saved or manual — may be given by anyone, a cashier too: no approval is needed.
+    // The order keeps who sold it (its staff), so who gave the discount is on record.
     if (!input.precomputed && !input.tax_exempt && orderDiscount > 0 && lineSubtotal > 0) {
       const taxableShare = money((lineSubtotal - orderDiscount) / lineSubtotal)
       for (const line of priced) {
