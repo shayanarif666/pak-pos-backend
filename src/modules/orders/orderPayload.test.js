@@ -107,6 +107,12 @@ test("tax_exempt / discount_exempt, any qty and any discount type are accepted a
   const customLine = parseOrderV2(custom).items[0]
   assert.equal(customLine.product_id, null)
   assert.equal(customLine.title, "Custom item")
+  // missing amounts (line, payment, summary) are 0
+  const bare = parseOrderV2({ order_items: [{ product_id: 2, qty: 2 }], payments: [{ method: "cash" }] })
+  assert.equal(bare.items[0].unit_price, 0)
+  assert.equal(bare.payments[0].amount, 0)
+  assert.equal(bare.payments[0].bill_share, 0)
+  assert.equal(bare.total_amount, 0)
 })
 
 test("bundles must match the lines", () => {

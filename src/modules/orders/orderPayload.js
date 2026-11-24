@@ -61,6 +61,14 @@ function money(row, key, label, { required = false, min = 0 } = {}) {
   return number
 }
 
+/** An amount the till sends, saved as sent; missing or not a number = 0 (never refused). */
+function amountOr0(row, key) {
+  const value = row?.[key]
+  if (value === undefined || value === null || value === "") return 0
+  const number = Number(value)
+  return Number.isNaN(number) ? 0 : number
+}
+
 /** An id of a discount / tax / bundle: null, or a positive whole number. */
 function entryId(entry, label) {
   const value = entry.id
@@ -120,7 +128,8 @@ function parseLine(row, index) {
   // Any qty is accepted (0 or below too); one that is not a number is taken as 1.
   const sentQty = row.qty ?? row.quantity
   const qty = sentQty == null || sentQty === "" || Number.isNaN(Number(sentQty)) ? 1 : Number(sentQty)
-  const price = money(row, "price", label, { required: true })
+  // price and the line's figures: missing or not a number = 0.
+  const price = amountOr0(row, "price")
   // A custom line: a product_id / variant_id sent with it is left out; without a name it is "Custom item".
   const product_id = isCustom ? null : ref(row, ["product_id"], label)
   const title = text(row, "name") || text(row, "title") || (isCustom ? "Custom item" : null)
@@ -134,11 +143,12 @@ function parseLine(row, index) {
   const taxes = parseEntries(row.taxes, `${label}.taxes`, { levels: ITEM_TAX_LEVELS, custom: isCustom, kind: "tax" })
 
   // The figures are saved as the till sent them. Only gross_amount may be left out (then qty × price).
-  const gross = row.gross_amount != null && row.gross_amount !== "" ? money(row, "gross_amount", label) : r2(qty * price)
-  const sentDiscount = money(row, "discount_amount", label, { required: true })
-  const sentSubtotal = money(row, "subtotal", label, { required: true })
-  const sentTax = money(row, "tax_amount", label, { required: true })
-  const sentTotal = money(row, "total", label, { required: true })
+  const sentGross = Number(row.gross_amount)
+  const gross = row.gross_amount != null && row.gross_amount !== "" && !Number.isNaN(sentGross) ? sentGross : r2(qty * price)
+  const sentDiscount = amountOr0(row, "discount_amount")
+  const sentSubtotal = amountOr0(row, "subtotal")
+  const sentTax = amountOr0(row, "tax_amount")
+  const sentTotal = amountOr0(row, "total")
   // Each discount / tax entry's own amount: the one sent (amount), else its share for the record (never checked).
   const withAmounts = discounts.map((entry, i) => ({ ...entry, amount: entryAmount(row.discount?.[i]) ?? discountAmount(entry, gross) }))
   const taxesWithAmounts = taxes.map((entry, i) => ({ ...entry, amount: entryAmount(row.taxes?.[i]) ?? taxAmount(entry, sentSubtotal, qty) }))
@@ -220,14 +230,14 @@ function parsePayment(row, index) {
   if (!row || typeof row !== "object") throw new AppError(`${label} is invalid`, 400)
   const method = String(row.method || "")
   if (!PAYMENT_METHOD.includes(method) || method === "mixed") throw new AppError(`${label}.method is invalid`, 400)
-  const bill_amount = money(row, "bill_amount", label, { required: true })
+  const bill_amount = amountOr0(row, "bill_amount")
   const active = row.surcharge_active === undefined || row.surcharge_active === null ? false : Boolean(row.surcharge_active)
   const type = row.type === undefined || row.type === null || row.type === "" ? null : String(row.type)
   if (type && type !== "percentage" && type !== "fixed") throw new AppError(`${label}.type must be percentage or fixed`, 400)
   const value = money(row, "value", label) ?? 0
   // The surcharge and the amount are saved as the till sent them (not checked against bill_amount / value).
   const surcharge_amount = money(row, "surcharge_amount", label) ?? 0
-  const amount = money(row, "amount", label, { required: true })
+  const amount = amountOr0(row, "amount")
   const paid = money(row, "paid", label) ?? amount
   const raw_id = row.transaction_id ?? row.transactionId
   return {
@@ -252,9 +262,9 @@ export function parseOrderV2(body) {
   // tax_exempt / discount_exempt are saved as sent; the lines' taxes and discounts are not checked against them.
 
   // The order's totals are the till's summary, saved as sent (not checked against the lines or the payments).
-  const summary = body.summary && typeof body.summary === "object" ? body.summary : null
-  if (!summary) throw new AppError("summary is required", 400)
-  const sent = (key) => money(summary, key, "summary", { required: true })
+  // Left out, or any of its amounts missing: 0 (the order is never refused for it).
+  const summary = body.summary && typeof body.summary === "object" ? body.summary : {}
+  const sent = (key) => amountOr0(summary, key)
   const gross = sent("gross_amount")
   const itemsDiscount = sent("items_discount_amount")
   const subtotal = sent("subtotal")
