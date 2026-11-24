@@ -80,6 +80,9 @@ export const OrderItem = sequelize.define(
     category_tax_value: { type: DataTypes.DECIMAL(5, 2), allowNull: true },
     category_tax_name: { type: DataTypes.STRING(255), allowNull: true },
     subtotal: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
+    // The line's gross (price × qty) and total (subtotal + tax) as the till sent them; null on older rows.
+    gross_amount: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
+    total: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
   },
   {
     ...noTimestamps,

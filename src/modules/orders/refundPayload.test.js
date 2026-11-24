@@ -36,20 +36,20 @@ test("refund_type, reason and local_id are required", () => {
   fails(noId, /local_id/)
 })
 
-test("a line that does not add up is refused", () => {
-  const subtotal = clone(SAMPLE_REFUNDS[0])
-  subtotal.refund_items[0].subtotal = 250
-  fails(subtotal, /subtotal/)
-  const total = clone(SAMPLE_REFUNDS[0])
-  total.refund_items[0].total = 300
-  fails(total, /\.total/)
+test("a line's figures are saved as sent, even ones that do not add up", () => {
+  const refund = clone(SAMPLE_REFUNDS[0])
+  refund.refund_items[0].subtotal = 250
+  refund.refund_items[0].total = 300
+  const input = parseRefundV2(refund)
+  assert.equal(input.items[0].subtotal, 250)
+  assert.equal(input.items[0].total, 300)
 })
 
-test("payments sent must add up to total_refunded_amount", () => {
+test("the payments are not checked against total_refunded_amount", () => {
   const refund = clone(SAMPLE_REFUNDS[3])
   refund.payments = [{ method: "cash", return_amount: 1160 }, { method: "card", return_amount: 50.05 }]
   refund.total_refunded_amount = 370
-  fails(refund, /not the sum of the payments/)
+  assert.equal(parseRefundV2(refund).total_amount, 370)
 })
 
 test("a line or a method listed twice is refused", () => {

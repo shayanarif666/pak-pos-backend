@@ -33,40 +33,39 @@ test("two bundles in one order", () => {
   assert.deepEqual(input.items.map((line) => `${line.bundle_id}:${line.bundle_role}`), ["1:buy", "1:reward", "2:buy", "2:buy"])
 })
 
-test("a figure that does not add up is refused", () => {
-  const wrongTotal = clone(SAMPLE_ORDERS[0])
-  wrongTotal.order_items[0].total = 120
-  fails(wrongTotal, /order_items\[0\]\.total/)
-  const wrongDiscount = clone(SAMPLE_ORDERS[0])
-  wrongDiscount.order_items[0].discount[0].value = 10
-  fails(wrongDiscount, /discount_amount/)
-  const wrongTax = clone(SAMPLE_ORDERS[0])
-  wrongTax.order_items[0].taxes[0].value = 5
-  fails(wrongTax, /tax_amount/)
-  const wrongSummary = clone(SAMPLE_ORDERS[0])
-  wrongSummary.summary.total_amount = 150
-  fails(wrongSummary, /summary\.total_amount/)
-  const wrongSurcharge = clone(SAMPLE_ORDERS[0])
-  wrongSurcharge.payments[0].surcharge_amount = 16.1
-  wrongSurcharge.payments[0].amount = 117
-  wrongSurcharge.summary.surcharge_amount = 16.1
-  fails(wrongSurcharge, /surcharge_amount/)
+test("every figure is saved as sent, even one that does not add up", () => {
+  const order = clone(SAMPLE_ORDERS[0])
+  // 100 with 5% off is 95; the till sent 92, a total of 107.1 and a tax of 17.1 — all kept as they are.
+  order.order_items[0].subtotal = 92
+  order.order_items[0].total = 107.1
+  order.order_items[0].discount[0].value = 10
+  order.summary.total_amount = 150
+  order.summary.subtotal = 92
+  const input = parseOrderV2(order)
+  assert.equal(input.items[0].priced.subtotal, 92)
+  assert.equal(input.items[0].priced.total, 107.1)
+  assert.equal(input.items[0].priced.discount.amount, 5)
+  assert.equal(input.total_amount, 150)
+  assert.equal(input.lines_subtotal, 92)
 })
 
-test("a surcharge that is off must be 0", () => {
-  const order = clone(SAMPLE_ORDERS[2])
-  order.payments[1].surcharge_amount = 4
-  order.payments[1].amount = 54.05
-  fails(order, /surcharge_active is false/)
-})
-
-test("cash is rounded to the rupee, a card is exact", () => {
+test("a payment's surcharge and amount are saved as sent", () => {
+  const off = clone(SAMPLE_ORDERS[2])
+  off.payments[1].surcharge_amount = 4
+  off.payments[1].amount = 54.05
+  assert.deepEqual(parseOrderV2(off).payments.map((row) => row.surcharge_amount), [160, 4])
   const card = clone(SAMPLE_ORDERS[3])
   card.payments[0].amount = 893
-  fails(card, /payments\[0\]\.amount/)
+  assert.equal(parseOrderV2(card).payments[0].amount, 893)
   const cash = clone(SAMPLE_ORDERS[0])
   cash.payments[0].amount = 118
-  fails(cash, /payments\[0\]\.amount/)
+  assert.equal(parseOrderV2(cash).payments[0].amount, 118)
+})
+
+test("the order discount amount is the summary's", () => {
+  const order = clone(SAMPLE_ORDERS[0])
+  order.summary.order_discount_amount = 12
+  assert.equal(parseOrderV2(order).order_discount.amount, 12)
 })
 
 test("ids: category / product / variant / manual have none, store / bulk / bundle discounts need one", () => {
@@ -102,12 +101,12 @@ test("bundles must match the lines", () => {
   fails(unused, /on no line/)
 })
 
-test("the payments cannot pay more than the bill; paying less is udhaar", () => {
+test("payments are not checked against the bill; the total is the summary's", () => {
   const over = clone(SAMPLE_ORDERS[0])
   over.payments[0].bill_amount = 200
   over.payments[0].surcharge_amount = 32
   over.payments[0].amount = 232
-  fails(over, /more than the bill/)
+  assert.equal(parseOrderV2(over).payments[0].bill_share, 200)
   const credit = clone(SAMPLE_ORDERS[2])
   credit.payments = [credit.payments[0]]
   credit.summary.surcharge_amount = 160

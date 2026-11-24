@@ -1202,10 +1202,9 @@ export async function refundOrderV2(actor, id, v2) {
   }
   const items = order.OrderItems || []
   const packOf = (item) => (item.sale_unit === "pack" ? Number(item.pack_size) || 1 : 1)
-  const grossOf = (item) => (item.sale_unit === "pack" ? Number(item.pack_price || 0) * Number(item.qty_packs || 0) : Number(item.unit_price) * Number(item.quantity))
   const where = (item) => `Order ${order.order_number} line ${item.item_number}`
 
-  // 1. the lines: not more than what is left, and each figure is its share of the line sold
+  // 1. the lines: not more than what is left (their figures are the till's, saved as sent)
   const picked = v2.items.map((row) => {
     const ref = String(row.order_item_id)
     const item = items.find((entry) => entry.id === ref || String(entry.item_number) === ref)
@@ -1214,15 +1213,7 @@ export async function refundOrderV2(actor, id, v2) {
     const left = Number(item.quantity) - Number(item.refunded_qty || 0)
     if (units > left + 1e-6) throw new AppError(`${where(item)}: only ${Number((left / packOf(item)).toFixed(4))} left to refund (${row.qty} sent)`, 400)
     const share = units / Number(item.quantity)
-    const expected = {
-      gross_amount: money(grossOf(item) * share),
-      discount_amount: money(Number(item.discount_amount || 0) * share),
-      subtotal: money(Number(item.subtotal) * share),
-      tax_amount: money(Number(item.tax_amount || 0) * share),
-    }
-    for (const [key, value] of Object.entries(expected)) {
-      if (!near(row[key], value)) throw new AppError(`${where(item)}: ${key} ${row[key]} is not the share of the sale for ${row.qty} (${value})`, 400)
-    }
+    // The line's taxes broken down for the receipt: the sold line's taxes in proportion (a record, never a check).
     const taxes = (Array.isArray(item.line_taxes) ? item.line_taxes : []).map((tax) => ({ level: tax.level, name: tax.name ?? null, rate: tax.rate ?? null, amount: money(Number(tax.amount || 0) * share) }))
     return { row, item, units, taxes }
   })
@@ -1237,14 +1228,10 @@ export async function refundOrderV2(actor, id, v2) {
     throw new AppError(`Order ${order.order_number}: this gives back everything left, send refund_type complete`, 400)
   }
 
-  // 3. the order discount share
+  // 3. the bill this refund gives back: its lines less its order discount share, both as the till sent them
   const soldTotal = money(items.reduce((total, item) => total + Number(item.subtotal) + Number(item.tax_amount || 0), 0))
   const orderDiscount = money(order.discount_amount || 0)
   const linesTotal = money(picked.reduce((total, entry) => total + entry.row.total, 0))
-  const expectedDiscount = soldTotal > 0 ? money((orderDiscount * linesTotal) / soldTotal) : 0
-  if (!near(v2.order_discount_amount, expectedDiscount)) {
-    throw new AppError(`order_discount_amount ${v2.order_discount_amount} is not the share of the order discount for these lines (${expectedDiscount})`, 400)
-  }
   const refundBill = money(linesTotal - v2.order_discount_amount)
 
   // 4. what each payment method gets back: its share of the bill, with its own surcharge
@@ -1262,41 +1249,26 @@ export async function refundOrderV2(actor, id, v2) {
     const raw = money(bill + surcharge)
     return { ...row, bill, surcharge, expected: row.method === "cash" ? Math.round(raw) : raw }
   })
-  const sentBy = new Map(v2.payments.map((row) => [row.method, row.return_amount]))
-  for (const method of sentBy.keys()) {
-    if (!methods.some((row) => row.method === method)) throw new AppError(`payments: order ${order.order_number} was not paid by ${method}`, 400)
-  }
-  const prior = await OrderRefund.findAll({ where: { order_id: order.id }, attributes: ["payments"] })
-  const returnedBefore = new Map()
-  for (const entry of prior) {
-    for (const row of Array.isArray(entry.payments) ? entry.payments : []) returnedBefore.set(row.method, money((returnedBefore.get(row.method) || 0) + Number(row.amount || 0)))
-  }
-  const payments = []
-  for (const row of expectedPayments) {
-    // payments left out: every method gets its share back.
-    const sent = v2.payments.length ? sentBy.get(row.method) : row.bill < 0.005 ? null : row.expected
-    if (row.bill < 0.005) {
-      if (sent != null) throw new AppError(`payments: ${row.method} gets nothing back from this refund`, 400)
-      continue
-    }
-    if (sent == null) throw new AppError(`payments: ${row.method} must get ${row.expected} back (its share of the bill)`, 400)
-    if (!near(sent, row.expected, row.method === "cash" ? 0.5 : 0.02)) {
-      throw new AppError(`payments: ${row.method} return_amount ${sent} is not its share of this refund (${row.expected})`, 400)
-    }
-    if (row.method !== "credit" && money((returnedBefore.get(row.method) || 0) + sent) > row.amount + 0.51) {
-      throw new AppError(`payments: ${row.method} would get back more than it paid (${row.amount})`, 400)
-    }
-    payments.push({ method: row.method, bill_share: row.bill, surcharge_type: row.surcharge > 0 ? row.surcharge_type : null, surcharge_value: row.surcharge > 0 ? row.surcharge_value : null, surcharge_amount: row.surcharge, amount: money(sent) })
-  }
-  // The whole refund: what the payments give back together (cash in whole rupees).
-  const returnedTotal = money(payments.reduce((total, row) => total + row.amount, 0))
-  const cashRows = payments.filter((row) => row.method === "cash").length
-  if (!near(v2.total_amount, returnedTotal, 0.5 * cashRows + 0.02)) {
-    throw new AppError(`total_refunded_amount ${v2.total_amount} is not what this refund pays back (${returnedTotal})`, 400)
-  }
-  const surchargeBack = money(payments.reduce((total, row) => total + row.surcharge_amount, 0))
-  if (!near(v2.surcharge_total, surchargeBack)) {
-    throw new AppError(`total_payment_surcharge_refunded ${v2.surcharge_total} is not the surcharge of these payments (${surchargeBack})`, 400)
+  // The payments: as the till sent them (no check against the sale). Left out, each method of the sale gets
+  // its share back (the only thing worked out here, when the till did not say).
+  let payments
+  if (v2.payments.length) {
+    payments = v2.payments.map((row) => {
+      const known = expectedPayments.find((entry) => entry.method === row.method)
+      const surcharge = row.surcharge_amount != null ? money(row.surcharge_amount) : v2.payments.length === 1 ? money(v2.surcharge_total || 0) : 0
+      return {
+        method: row.method,
+        bill_share: money(row.return_amount - surcharge),
+        surcharge_type: surcharge > 0 ? known?.surcharge_type ?? null : null,
+        surcharge_value: surcharge > 0 ? known?.surcharge_value ?? null : null,
+        surcharge_amount: surcharge,
+        amount: money(row.return_amount),
+      }
+    })
+  } else {
+    payments = expectedPayments
+      .filter((row) => row.bill >= 0.005)
+      .map((row) => ({ method: row.method, bill_share: row.bill, surcharge_type: row.surcharge > 0 ? row.surcharge_type : null, surcharge_value: row.surcharge > 0 ? row.surcharge_value : null, surcharge_amount: row.surcharge, amount: money(row.expected) }))
   }
 
   return refundPosOrder(
@@ -1312,6 +1284,7 @@ export async function refundOrderV2(actor, id, v2) {
         qty: row.qty,
         restock: row.restock,
         discount_amount: row.discount_amount,
+        gross_amount: row.gross_amount,
         amount: row.subtotal,
         taxes,
         tax_amount: row.tax_amount,
@@ -1319,7 +1292,8 @@ export async function refundOrderV2(actor, id, v2) {
       })),
       payments,
       order_discount_amount: v2.order_discount_amount,
-      total_amount: returnedTotal,
+      // The refund's total is the till's.
+      total_amount: v2.total_amount,
     },
     { complete: v2.refund_type === "complete" }
   )
@@ -1430,8 +1404,8 @@ export async function refundPosOrder(actor, id, fields, { complete = false } = {
         reason: fields.reason,
         refund_type: complete ? "complete" : "partial",
         amount: total,
-        // Line taxes + payment surcharges (amount - tax = what the goods were worth after discount and the order discount).
-        tax_amount: money(total - lineAmount + orderDiscount),
+        // Line taxes + payment surcharges, as the till sent them (not worked back from the total).
+        tax_amount: money(lineTax + surcharge),
         discount_amount: discount,
         order_discount_amount: orderDiscount,
         surcharge_amount: surcharge,
@@ -1459,6 +1433,9 @@ export async function refundPosOrder(actor, id, fields, { complete = false } = {
           subtotal: line.amount,
           tax_amount: line.tax_amount,
           discount_amount: line.discount_amount,
+          // The till's gross and total of the refunded line, as sent.
+          gross_amount: line.gross_amount ?? null,
+          total: line.total ?? null,
           line_taxes: line.taxes,
           restocked: Boolean(line.restock && item.product_id),
         },

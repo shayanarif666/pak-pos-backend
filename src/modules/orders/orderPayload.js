@@ -1,6 +1,8 @@
 /**
  * The order the POS sends (one object of orders[] in POST /orders/bulk): the till works out every
- * figure and the server saves them as sent, after checking that they add up.
+ * figure and the server saves them exactly as sent — no figure is worked out again or checked against the
+ * others (a line's gross, discount, subtotal, tax, total; a payment's surcharge and amount; the summary).
+ * Only the shape is checked: required fields, numbers >= 0, ids, levels, methods.
  *
  *   { local_id, placed_at, customer_id, tax_exempt, discount_exempt,
  *     order_items: [{ product_id, variant_id, sale_unit, qty, price, gross_amount,
@@ -13,7 +15,7 @@
  *     summary: { currency, total_items, gross_amount, items_discount_amount, subtotal, order_discount_amount,
  *                tax_amount, surcharge_amount, total_amount } }
  *
- * How the figures are worked out (the same on the till and here):
+ * How the till works the figures out (the server does not redo it):
  *   line gross = qty × price; every discount is taken off the gross (a percentage of it, or a fixed amount),
  *   none on top of another; subtotal = gross − discounts; every tax is on the subtotal; total = subtotal + taxes.
  *   The order discount comes off the lines' totals together; that is the bill. A payment method pays its
@@ -29,7 +31,6 @@ export const ITEM_TAX_LEVELS = ["store", "category", "product", "variant"]
 const BUNDLE_REWARDS = ["free_item", "percentage", "fixed"]
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-const TOLERANCE = 0.02
 
 export const r2 = (value) => Math.round((Number(value) + Number.EPSILON) * 100) / 100
 
@@ -68,8 +69,11 @@ function entryId(entry, label) {
   return Number(value)
 }
 
-function close(a, b, tolerance = TOLERANCE) {
-  return Math.abs(Number(a) - Number(b)) <= tolerance
+/** The amount a discount / tax entry was sent with (null when it has none). */
+function entryAmount(entry) {
+  if (!entry || entry.amount === undefined || entry.amount === null || entry.amount === "") return null
+  const value = Number(entry.amount)
+  return Number.isNaN(value) ? null : r2(value)
 }
 
 /** One discount of a line and what it takes off: a percentage of the gross, or a fixed amount. */
@@ -128,28 +132,15 @@ function parseLine(row, index) {
   const discounts = parseEntries(row.discount, `${label}.discount`, { levels: ITEM_DISCOUNT_LEVELS, custom: isCustom, kind: "discount" })
   const taxes = parseEntries(row.taxes, `${label}.taxes`, { levels: ITEM_TAX_LEVELS, custom: isCustom, kind: "tax" })
 
-  const gross = r2(qty * price)
-  if (row.gross_amount != null && !close(row.gross_amount, gross)) {
-    throw new AppError(`${label}.gross_amount ${row.gross_amount} is not qty × price (${gross})`, 400)
-  }
-  const withAmounts = discounts.map((entry) => ({ ...entry, amount: discountAmount(entry, gross) }))
-  const discountSum = r2(withAmounts.reduce((sum, entry) => sum + entry.amount, 0))
+  // The figures are saved as the till sent them. Only gross_amount may be left out (then qty × price).
+  const gross = row.gross_amount != null && row.gross_amount !== "" ? money(row, "gross_amount", label) : r2(qty * price)
   const sentDiscount = money(row, "discount_amount", label, { required: true })
-  if (discountSum > gross + TOLERANCE) throw new AppError(`${label}: the discounts (${discountSum}) are more than the line (${gross})`, 400)
-  if (!close(sentDiscount, discountSum)) {
-    throw new AppError(`${label}.discount_amount ${sentDiscount} does not match its discounts (${discountSum})`, 400)
-  }
-  const subtotal = r2(gross - sentDiscount)
   const sentSubtotal = money(row, "subtotal", label, { required: true })
-  if (!close(sentSubtotal, subtotal)) throw new AppError(`${label}.subtotal ${sentSubtotal} is not gross − discount (${subtotal})`, 400)
-
-  const taxesWithAmounts = taxes.map((entry) => ({ ...entry, amount: taxAmount(entry, sentSubtotal, qty) }))
-  const taxSum = r2(taxesWithAmounts.reduce((sum, entry) => sum + entry.amount, 0))
   const sentTax = money(row, "tax_amount", label, { required: true })
-  if (!close(sentTax, taxSum)) throw new AppError(`${label}.tax_amount ${sentTax} does not match its taxes (${taxSum})`, 400)
-  const total = r2(sentSubtotal + sentTax)
   const sentTotal = money(row, "total", label, { required: true })
-  if (!close(sentTotal, total)) throw new AppError(`${label}.total ${sentTotal} is not subtotal + tax (${total})`, 400)
+  // Each discount / tax entry's own amount: the one sent (amount), else its share for the record (never checked).
+  const withAmounts = discounts.map((entry, i) => ({ ...entry, amount: entryAmount(row.discount?.[i]) ?? discountAmount(entry, gross) }))
+  const taxesWithAmounts = taxes.map((entry, i) => ({ ...entry, amount: entryAmount(row.taxes?.[i]) ?? taxAmount(entry, sentSubtotal, qty) }))
 
   const bundle_id = row.bundle_id == null || row.bundle_id === "" ? null : Number(row.bundle_id)
   if (bundle_id != null && (!Number.isInteger(bundle_id) || bundle_id < 1)) throw new AppError(`${label}.bundle_id must be a number`, 400)
@@ -178,6 +169,7 @@ function parseLine(row, index) {
         entries: withAmounts,
       },
       taxes: taxesWithAmounts.map((entry) => ({ id: entry.id, level: entry.level, name: entry.name, type: entry.type, rate: entry.value, amount: entry.amount })),
+      gross_amount: gross,
       subtotal: sentSubtotal,
       tax_amount: sentTax,
       total: sentTotal,
@@ -210,14 +202,15 @@ function parseBundles(list, lines) {
   return bundles
 }
 
-function parseOrderDiscount(value, linesTotal) {
+function parseOrderDiscount(value, linesTotal, sentAmount = null) {
   if (value === undefined || value === null) return null
   if (typeof value !== "object") throw new AppError("order_discount must be an object or null", 400)
   const type = value.type === undefined || value.type === null ? "percentage" : String(value.type)
   if (type !== "percentage" && type !== "fixed") throw new AppError("order_discount.type must be percentage or fixed", 400)
   const amountValue = money(value, "value", "order_discount", { required: true })
   if (type === "percentage" && amountValue > 100) throw new AppError("order_discount.value cannot be more than 100%", 400)
-  const amount = type === "fixed" ? Math.min(amountValue, linesTotal) : r2((linesTotal * amountValue) / 100)
+  // The amount is the till's (summary.order_discount_amount); worked out only when it was not sent.
+  const amount = sentAmount != null ? sentAmount : type === "fixed" ? Math.min(amountValue, linesTotal) : r2((linesTotal * amountValue) / 100)
   return { id: entryId(value, "order_discount"), name: text(value, "name"), type, value: amountValue, amount: r2(amount) }
 }
 
@@ -231,19 +224,9 @@ function parsePayment(row, index) {
   const type = row.type === undefined || row.type === null || row.type === "" ? null : String(row.type)
   if (type && type !== "percentage" && type !== "fixed") throw new AppError(`${label}.type must be percentage or fixed`, 400)
   const value = money(row, "value", label) ?? 0
+  // The surcharge and the amount are saved as the till sent them (not checked against bill_amount / value).
   const surcharge_amount = money(row, "surcharge_amount", label) ?? 0
-  // A surcharge that is off (or not set up) is 0; one that is on is its value of the bill share.
-  if (!active && surcharge_amount !== 0) throw new AppError(`${label}: surcharge_active is false, so surcharge_amount must be 0`, 400)
-  if (active) {
-    if (!type) throw new AppError(`${label}.type is required while surcharge_active is true`, 400)
-    const expected = type === "fixed" ? r2(value) : r2((bill_amount * value) / 100)
-    if (!close(surcharge_amount, expected, 0.011)) throw new AppError(`${label}.surcharge_amount ${surcharge_amount} is not ${value}${type === "fixed" ? "" : "%"} of ${bill_amount} (${expected})`, 400)
-  }
-  const raw = r2(bill_amount + surcharge_amount)
   const amount = money(row, "amount", label, { required: true })
-  // Cash has no coins: its amount is rounded to the whole rupee; everything else is exact.
-  const room = method === "cash" ? 0.5 : 0.011
-  if (Math.abs(amount - raw) > room) throw new AppError(`${label}.amount ${amount} is not bill_amount + surcharge_amount (${raw})`, 400)
   const paid = money(row, "paid", label) ?? amount
   const raw_id = row.transaction_id ?? row.transactionId
   return {
@@ -272,45 +255,26 @@ export function parseOrderV2(body) {
     throw new AppError("discount_exempt is true: no line can have a discount", 400)
   }
 
-  const sum = (pick) => r2(lines.reduce((total, line) => total + pick(line.figures), 0))
-  const gross = sum((f) => f.gross)
-  const itemsDiscount = sum((f) => f.discount)
-  const subtotal = sum((f) => f.subtotal)
-  const tax = sum((f) => f.tax)
-  const linesTotal = sum((f) => f.total)
+  // The order's totals are the till's summary, saved as sent (not checked against the lines or the payments).
+  const summary = body.summary && typeof body.summary === "object" ? body.summary : null
+  if (!summary) throw new AppError("summary is required", 400)
+  const sent = (key) => money(summary, key, "summary", { required: true })
+  const gross = sent("gross_amount")
+  const itemsDiscount = sent("items_discount_amount")
+  const subtotal = sent("subtotal")
+  const tax = sent("tax_amount")
+  const surcharge = sent("surcharge_amount")
+  const total = sent("total_amount")
+  const orderDiscountSent = sent("order_discount_amount")
 
-  const order_discount = parseOrderDiscount(body.order_discount, linesTotal)
+  const linesTotal = r2(lines.reduce((sum, line) => sum + line.figures.total, 0))
+  const order_discount = parseOrderDiscount(body.order_discount, linesTotal, orderDiscountSent)
   if (discountExempt && order_discount) throw new AppError("discount_exempt is true: send order_discount null", 400)
-  const orderDiscountAmount = order_discount?.amount || 0
-  const bill = r2(linesTotal - orderDiscountAmount)
 
   const bundles = parseBundles(body.bundles, lines)
 
   if (!Array.isArray(body.payments) || !body.payments.length) throw new AppError("payments needs at least one row", 400)
   const payments = body.payments.map(parsePayment)
-  const billPaid = r2(payments.reduce((total, row) => total + row.bill_share, 0))
-  if (billPaid > bill + 0.011) throw new AppError(`the payments' bill_amount (${billPaid}) is more than the bill (${bill})`, 400)
-  const surcharge = r2(payments.reduce((total, row) => total + row.surcharge_amount, 0))
-  // What the payments pay, and any part of the bill left unpaid (udhaar: needs a customer).
-  const total = r2(payments.reduce((sum2, row) => sum2 + row.amount, 0) + (bill - billPaid))
-
-  const summary = body.summary && typeof body.summary === "object" ? body.summary : null
-  if (!summary) throw new AppError("summary is required", 400)
-  const checks = [
-    ["gross_amount", gross],
-    ["items_discount_amount", itemsDiscount],
-    ["subtotal", subtotal],
-    ["order_discount_amount", orderDiscountAmount],
-    ["tax_amount", tax],
-    ["surcharge_amount", surcharge],
-    ["total_amount", total],
-  ]
-  for (const [key, expected] of checks) {
-    const sent = money(summary, key, "summary", { required: true })
-    if (!close(sent, expected, key === "total_amount" ? 0.011 : TOLERANCE)) {
-      throw new AppError(`summary.${key} ${sent} does not match the order (${expected})`, 400)
-    }
-  }
 
   const items = lines.map(({ figures: _figures, ...line }) => line)
   const methods = payments.map((row) => row.method)

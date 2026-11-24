@@ -18,6 +18,9 @@ export const OrderRefundItem = sequelize.define(
     unit_price: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
     tax_amount: { type: DataTypes.DECIMAL(12, 2), allowNull: false, defaultValue: 0 },
     subtotal: { type: DataTypes.DECIMAL(12, 2), allowNull: false },
+    // The line's gross and total as the till sent them; null on older rows.
+    gross_amount: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
+    total: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
     // POS refunds: the discount on the qty given back, its taxes as sent, and whether it was restocked.
     discount_amount: { type: DataTypes.DECIMAL(12, 2), allowNull: true },
     line_taxes: { type: DataTypes.JSON, allowNull: true },

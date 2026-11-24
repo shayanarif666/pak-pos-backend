@@ -325,13 +325,14 @@ function orderItemView(item, refs, refundEntry) {
   // What the line cost before its discount: price × qty as sold (per pack on a pack line).
   const gross = packLine ? Number(item.pack_price || 0) * Number(item.qty_packs || 0) : Number(item.unit_price || 0) * Number(item.quantity || 0)
   const figures = {
-    gross_amount: Number(gross.toFixed(2)),
+    gross_amount: item.gross_amount != null ? Number(item.gross_amount) : Number(gross.toFixed(2)),
     discount: lineDiscountsOf(item),
     discount_amount: num(item.discount_amount) ?? 0,
     subtotal,
     taxes: lineTaxesOf(item),
     tax_amount: taxAmount,
-    total: Number((subtotal + taxAmount).toFixed(2)),
+    // The till's total as saved; older lines: subtotal + tax.
+    total: item.total != null ? Number(item.total) : Number((subtotal + taxAmount).toFixed(2)),
     // The bundle the line was sold in (its number) and its role: buy | reward.
     ...(item.bundle_id != null ? { bundle_id: item.bundle_id, bundle_role: item.bundle_role || null } : {}),
     ...lineRefundView(item, refundEntry),
@@ -535,11 +536,11 @@ export async function posRefunds(refundIds) {
           qty: pack ? Number((Number(line.quantity) / Number(item.pack_size)).toFixed(4)) : num(line.quantity),
           sale_unit: pack ? "pack" : "unit",
           unit_price: pack ? num(item.pack_price) : num(line.unit_price),
-          gross_amount: Number((subtotal + discount).toFixed(2)),
+          gross_amount: line.gross_amount != null ? Number(line.gross_amount) : Number((subtotal + discount).toFixed(2)),
           discount_amount: discount,
           subtotal,
           tax_amount: tax,
-          total: Number((subtotal + tax).toFixed(2)),
+          total: line.total != null ? Number(line.total) : Number((subtotal + tax).toFixed(2)),
           restocked: line.restocked == null ? Boolean(line.product_id) : Boolean(line.restocked),
         }
       })

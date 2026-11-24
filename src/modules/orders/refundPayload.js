@@ -8,20 +8,18 @@
  *   (payments: [{ method, return_amount }] is not needed: the server splits the refund over the methods the sale was
  *   paid with. It may still be sent, and is then checked against that split.)
  *
- * This file only checks what can be checked without the order (the arithmetic of a line, the payments adding
- * up to the total); order.service.js checks the rest against the saved sale (qty left, each line's share of
- * what was sold, the order discount share, what each payment method gets back and its surcharge).
+ * Every figure is saved as the till sent it — none is worked out again or checked (a line's subtotal / total,
+ * the payments against the total, each figure against the sale). Only the shape is checked here, and in
+ * order.service.js the qty left on each line.
  */
 import { AppError } from "../../shared/errors/AppError.js"
 import { PAYMENT_METHOD } from "../../db/enums.js"
 import { staffRefFrom } from "../../shared/utils/staff.util.js"
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-const TOLERANCE = 0.02
 
 export const REFUND_TYPES = ["partial", "complete"]
 export const r2 = (value) => Math.round((Number(value) + Number.EPSILON) * 100) / 100
-const close = (a, b, tolerance = TOLERANCE) => Math.abs(Number(a) - Number(b)) <= tolerance
 
 function ref(row, keys, label, { required = false } = {}) {
   for (const key of keys) {
@@ -61,8 +59,6 @@ function parseItem(row, index, defaultRestock) {
   const subtotal = money(row, "subtotal", label, { required: true })
   const tax = money(row, "tax_amount", label, { required: true })
   const total = money(row, "total", label, { required: true })
-  if (!close(subtotal, gross - discount)) throw new AppError(`${label}.subtotal ${subtotal} is not gross_amount − discount_amount (${r2(gross - discount)})`, 400)
-  if (!close(total, subtotal + tax)) throw new AppError(`${label}.total ${total} is not subtotal + tax_amount (${r2(subtotal + tax)})`, 400)
   return {
     order_item_id: ref(row, ["order_item_id", "orderItemId"], label, { required: true }),
     qty: money(row, "qty", label, { required: true, positive: true }),
@@ -81,7 +77,8 @@ function parsePayment(row, index) {
   const method = String(row.method || "")
   // credit = the part that was udhaar: it comes off what the customer owes, nothing is paid out.
   if (!(PAYMENT_METHOD.includes(method) || method === "credit") || method === "mixed") throw new AppError(`${label}.method is invalid`, 400)
-  return { method, return_amount: money(row, "return_amount", label, { required: true, positive: true }) }
+  // surcharge_amount: the part of return_amount that is surcharge given back (optional).
+  return { method, return_amount: money(row, "return_amount", label, { required: true, positive: true }), surcharge_amount: money(row, "surcharge_amount", label) }
 }
 
 export function parseRefundV2(body) {
@@ -105,8 +102,6 @@ export function parseRefundV2(body) {
   if (new Set(payments.map((row) => row.method)).size !== payments.length) throw new AppError("payments lists a method twice", 400)
 
   const total = money(body, "total_refunded_amount", label, { required: true, positive: true })
-  const returned = r2(payments.reduce((sum, row) => sum + row.return_amount, 0))
-  if (payments.length && !close(returned, total, 0.011)) throw new AppError(`total_refunded_amount ${total} is not the sum of the payments (${returned})`, 400)
 
   return {
     order_id: ref(body, ["order_id", "orderId"], label, { required: true }),

@@ -311,6 +311,9 @@ function posPricedLine(item, product, offersById) {
     bundle_role: item.bundle_role ?? null,
     // The till's own figures: price × qty as it sold them (per pack on a pack line).
     subtotal: item.priced.subtotal != null ? money(item.priced.subtotal) : money(salePrice * Number(item.quantity) - discount_amount),
+    // The till's gross and total of the line, kept as sent (null when it did not send them).
+    gross_amount: item.priced.gross_amount != null ? money(item.priced.gross_amount) : null,
+    line_total: item.priced.total != null ? money(item.priced.total) : null,
     tax_amount: item.priced.tax_amount != null ? money(item.priced.tax_amount) : sumOf(taxes, (tax) => tax.amount),
     // Every tax of the line as the till sent it (level, name, rate, amount).
     line_taxes: taxes.map((tax) => ({ ...(tax.id !== undefined ? { id: tax.id } : {}), level: tax.level, name: tax.name, ...(tax.type ? { type: tax.type } : {}), rate: tax.rate ?? null, amount: money(tax.amount) })),
@@ -348,10 +351,6 @@ function posPricedTotals({ lines, store, input, orderDiscount, couponDiscount })
   })
   // The till totals win; without them they are the sums of what it sent.
   const subtotal = input.lines_subtotal != null ? money(input.lines_subtotal) : sumOf(lines, (line) => line.subtotal)
-  // A check, not a calculation: the order subtotal the till sent must be the sum of its lines.
-  if (input.lines_subtotal != null && Math.abs(subtotal - sumOf(lines, (line) => line.subtotal)) > 0.01) {
-    throw new AppError(`subtotal ${subtotal} is not the sum of the lines (${sumOf(lines, (line) => line.subtotal)})`, 400)
-  }
   const line_tax = input.lines_tax_amount != null ? money(input.lines_tax_amount) : sumOf(lines, (line) => line.tax_amount)
   const shipping_fee = money(input.shipping_fee || 0)
   const gst = input.surcharge_amount != null ? money(input.surcharge_amount) : sumOf(splits, (row) => row.gst_amount)
@@ -830,6 +829,8 @@ export async function createOrder(actor, input) {
         category_tax_value: line.category_tax_value ?? null,
         category_tax_name: line.category_tax_name || null,
         subtotal: line.subtotal,
+        gross_amount: line.gross_amount ?? null,
+        total: line.line_total ?? null,
       })),
       { transaction }
     )
