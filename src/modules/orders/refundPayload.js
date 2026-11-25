@@ -4,8 +4,9 @@
  *   { local_id, refunded_at, order_id, refund_type (partial | complete), reason, currency,
  *     refund_items: [{ order_item_id, qty, gross_amount, discount_amount, subtotal, tax_amount, total }],
  *     order_discount_amount,
- *     total_payment_surcharge_refunded, total_refunded_amount }
- *   (optional: payments [{ method, return_amount, surcharge_amount?, bill_amount? }], refund_items[].taxes [],
+ *     total_payment_surcharge_refunded, total_refunded_amount,
+ *     payments: [{ method, amount }] }   — how the money went back, one row per method (a split refund has several)
+ *   (optional: payments[].surcharge_amount / bill_amount, refund_items[].taxes [],
  *   and the refund's own subtotal / tax_amount / discount_amount)
  *
  * Every figure is the till's and is saved as sent — the server works nothing out and checks no figure.
@@ -106,7 +107,8 @@ function parsePayment(row, index) {
   // surcharge_amount: the part of return_amount that is surcharge given back (optional).
   return {
     method,
-    return_amount: amountOr0(row, "return_amount"),
+    // amount = what this method gave back (return_amount, the older name, still works).
+    return_amount: row.amount !== undefined && row.amount !== null && row.amount !== "" ? amountOr0(row, "amount") : amountOr0(row, "return_amount"),
     surcharge_amount: amountOrNull(row, "surcharge_amount"),
     bill_amount: amountOrNull(row, "bill_amount"),
   }

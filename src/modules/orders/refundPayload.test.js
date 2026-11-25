@@ -11,17 +11,24 @@ test("the four sample refunds parse", () => {
     const input = parseRefundV2(clone(refund))
     assert.equal(input.total_amount, refund.total_refunded_amount)
     assert.equal(input.refund_type, refund.refund_type)
-    assert.deepEqual(input.payments, [])
+    assert.deepEqual(
+      input.payments.map((row) => [row.method, row.return_amount]),
+      refund.payments.map((row) => [row.method, row.amount])
+    )
   }
 })
 
-test("payments is not needed; when sent it is saved as sent", () => {
+test("payments is saved as sent (amount, or the older return_amount); it may be left out", () => {
   const input = parseRefundV2(clone(SAMPLE_REFUNDS[3]))
   assert.equal(input.surcharge_total, 160)
   assert.equal(input.total_amount, 1210.05)
-  const sent = clone(SAMPLE_REFUNDS[3])
-  sent.payments = [{ method: "cash", return_amount: 1160 }, { method: "card", return_amount: 50.05 }]
-  assert.deepEqual(parseRefundV2(sent).payments.map((row) => [row.method, row.return_amount]), [["cash", 1160], ["card", 50.05]])
+  assert.deepEqual(input.payments.map((row) => [row.method, row.return_amount]), [["cash", 1160], ["card", 50.05]])
+  const older = clone(SAMPLE_REFUNDS[3])
+  older.payments = [{ method: "cash", return_amount: 1000 }, { method: "card", return_amount: 210.05 }]
+  assert.deepEqual(parseRefundV2(older).payments.map((row) => [row.method, row.return_amount]), [["cash", 1000], ["card", 210.05]])
+  const none = clone(SAMPLE_REFUNDS[3])
+  delete none.payments
+  assert.deepEqual(parseRefundV2(none).payments, [])
 })
 
 test("refund_type is required; reason and local_id are optional; a bad qty is 1", () => {

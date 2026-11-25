@@ -1,7 +1,7 @@
 /**
  * The four refunds of the POST /orders/refunds/bulk documentation (they refund the four orders of
  * orderPayload.sample.js): 1) partial, paid cash; 2) partial, paid by card; 3) complete, paid cash, with the order
- * discount; 4) complete, a split payment (cash 1160 + card 50.05: the server splits it, no payments[] is sent).
+ * discount; 4) complete, a split payment (cash 1160 + card 50.05). payments[] says how the shopkeeper gave the money back.
  * The tests parse them and the docs show them.
  */
 export const SAMPLE_REFUNDS = [
@@ -18,6 +18,7 @@ export const SAMPLE_REFUNDS = [
     order_discount_amount: 0,
     total_payment_surcharge_refunded: 50.98,
     total_refunded_amount: 370,
+    payments: [{ method: "cash", amount: 370 }],
   },
   {
     local_id: "POS1-R-20261106-0002",
@@ -32,6 +33,7 @@ export const SAMPLE_REFUNDS = [
     order_discount_amount: 0,
     total_payment_surcharge_refunded: 9.84,
     total_refunded_amount: 132.84,
+    payments: [{ method: "card", amount: 132.84 }],
   },
   {
     local_id: "POS1-R-20261107-0001",
@@ -46,6 +48,7 @@ export const SAMPLE_REFUNDS = [
     order_discount_amount: 11.21,
     total_payment_surcharge_refunded: 16.14,
     total_refunded_amount: 117,
+    payments: [{ method: "cash", amount: 117 }],
   },
   {
     local_id: "POS1-R-20261107-0002",
@@ -60,6 +63,10 @@ export const SAMPLE_REFUNDS = [
     order_discount_amount: 100,
     total_payment_surcharge_refunded: 160,
     total_refunded_amount: 1210.05,
+    payments: [
+      { method: "cash", amount: 1160 },
+      { method: "card", amount: 50.05 },
+    ],
   },
 ]
 
