@@ -47,7 +47,10 @@ import {
   posTransfers,
 } from "./posResponses.js"
 import { AppError } from "../../shared/errors/AppError.js"
-import { STOCK_MOVEMENT_REASON, STOCK_MOVEMENT_TYPE, TRANSFER_STATUS } from "../../db/enums.js"
+import { CASH_MOVEMENT_PARTY, CASH_MOVEMENT_TYPE, STOCK_MOVEMENT_REASON, STOCK_MOVEMENT_TYPE, TRANSFER_STATUS } from "../../db/enums.js"
+import { CashMovement } from "./cashMovement.model.js"
+import { PosDevice } from "./posDevice.model.js"
+import { cashRefs, findCashMovement, publicCashMovement } from "./cashMovement.service.js"
 import { StockTransferItem } from "../inventory/stockTransferItem.model.js"
 import { NotFoundError } from "../../shared/errors/NotFoundError.js"
 
@@ -314,6 +317,59 @@ export async function staffSessionOne(req) {
   })
   if (!row) throw new NotFoundError("Staff session not found")
   return sessionListRow(row, await sessionRefs([row]))
+}
+
+// ---- Cash movements (Pay In / Pay Out) ----
+/**
+ * GET /cash-movements: newest first. Filters: type (pay_in | pay_out), partyType, staffId (who entered
+ * it), batchId, deviceId, locations (store admin), from / to / range (occurred_at), q (the reason or
+ * party name, or the movement number). summary: the Pay In, Pay Out and net of every matching row.
+ */
+export async function cashMovements(req) {
+  const scope = await scopeOf(req)
+  const pageInfo = pageOf(req.query)
+  const where = {
+    store_id: scope.store_id,
+    deleted_at: null,
+    ...(await locationWhere(scope, req.query)),
+    ...dateRange(req.query, "occurred_at"),
+  }
+  const type = queryRef(req.query, "type")
+  if (type) {
+    if (!CASH_MOVEMENT_TYPE.includes(type)) throw new AppError("type must be pay_in or pay_out", 400)
+    where.type = type
+  }
+  const partyType = queryRef(req.query, "partyType", "party_type")
+  if (partyType) {
+    if (!CASH_MOVEMENT_PARTY.includes(partyType)) throw new AppError(`partyType must be one of: ${CASH_MOVEMENT_PARTY.join(", ")}`, 400)
+    where.party_type = partyType
+  }
+  const staffId = await staffOf(scope, req.query)
+  if (staffId) where.staff_id = staffId
+  const batchRef = queryRef(req.query, "batchId", "batch_id")
+  if (batchRef) where.batch_id = await idOf(RegisterSession, "session_number", scope.store_id, batchRef, "Batch")
+  const deviceRef = queryRef(req.query, "deviceId", "device_id")
+  if (deviceRef) where.device_id = await idOf(PosDevice, "device_number", scope.store_id, deviceRef, "Device")
+  const text = queryRef(req.query, "q")
+  if (text) {
+    const like = `%${text}%`
+    where[Op.or] = [{ reason: { [Op.like]: like } }, { party_name: { [Op.like]: like } }, ...(isNumber(text) ? [{ movement_number: Number(text) }] : [])]
+  }
+  const [{ rows, count }, sums] = await Promise.all([
+    CashMovement.findAndCountAll({ where, order: [["occurred_at", "DESC"], ["movement_number", "DESC"]], limit: pageInfo.limit, offset: pageInfo.offset }),
+    CashMovement.findAll({ where, attributes: ["type", [CashMovement.sequelize.fn("SUM", CashMovement.sequelize.col("amount")), "total"]], group: ["type"], raw: true }),
+  ])
+  const total = (kind) => Number(sums.find((row) => row.type === kind)?.total || 0)
+  const refs = await cashRefs(rows)
+  const result = paged(rows.map((row) => publicCashMovement(row, refs)), count, pageInfo)
+  result.summary = { pay_in: total("pay_in"), pay_out: total("pay_out"), net: Math.round((total("pay_in") - total("pay_out")) * 100) / 100, count }
+  return result
+}
+
+/** GET /cash-movements/:id — one movement (its number or UUID); a manager / cashier: their location only. */
+export async function cashMovementOne(req) {
+  const row = await findCashMovement(req.user, String(req.params.id ?? "").trim())
+  return publicCashMovement(row, await cashRefs([row]))
 }
 
 // ---- 2. Categories ----

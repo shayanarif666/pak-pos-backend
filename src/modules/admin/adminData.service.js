@@ -80,6 +80,7 @@ export const DATA_MODULES = {
   licenses: { table: "store_licenses", cascade: [] },
   pos_devices: { table: "pos_devices", cascade: [] },
   register_sessions: { table: "register_sessions", cascade: [] },
+  cash_movements: { table: "cash_movements", cascade: [] },
   billings: { table: "billings", cascade: [] },
   store_banners: { table: "store_banners", cascade: [] },
   audit_logs: { table: "audit_logs", cascade: [] },

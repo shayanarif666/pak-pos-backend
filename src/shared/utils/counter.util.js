@@ -138,6 +138,9 @@ export const nextSupplierNumber = (storeId, transaction) =>
 export const nextSupplierLedgerNumber = (supplierId, transaction) =>
   getNextSequence(`supplier_ledger:${supplierId}`, transaction)
 
+export const nextCashMovementNumber = (storeId, transaction) =>
+  getNextSequence(`cash_movement:${storeId}`, transaction)
+
 export const nextStockMovementNumber = (storeId, transaction) =>
   getNextSequence(`stock_movement:${storeId}`, transaction)
 

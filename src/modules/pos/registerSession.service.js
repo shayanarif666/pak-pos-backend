@@ -423,6 +423,24 @@ export async function applySessionSale(session, { payments, total, reverse = fal
   await session.update(patch, { transaction })
 }
 
+/**
+ * A Pay In / Pay Out on a batch: its amount is added to (reverse: taken off) the batch's cash_in or
+ * cash_out, and what the drawer should hold follows (a closed batch's variance too). Applied as a
+ * change, so cash_in / cash_out typed on the batch before stay as they were.
+ */
+export async function applySessionCash(batchId, { type, amount, reverse = false }, { transaction }) {
+  if (!batchId) return
+  const session = await RegisterSession.findOne({ where: { id: batchId }, transaction, lock: transaction?.LOCK?.UPDATE })
+  if (!session) return
+  const field = type === "pay_in" ? "cash_in" : "cash_out"
+  const patch = { [field]: money(Number(session[field] || 0) + (reverse ? -1 : 1) * Number(amount)) }
+  patch.expected_cash = expectedCash({ ...session.toJSON(), ...patch })
+  if (session.status === "closed" && session.closing_cash != null) {
+    patch.cash_variance = money(Number(session.closing_cash) - patch.expected_cash)
+  }
+  await session.update(patch, { transaction })
+}
+
 const MONEY_FIELDS = ["opening_cash", "cash_in", "cash_out", "counted_cash"]
 
 /** A batch by session number or UUID, visible to the actor (a manager / cashier: their location). */

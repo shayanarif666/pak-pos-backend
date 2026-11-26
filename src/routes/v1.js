@@ -31,6 +31,7 @@ import surchargeRoutes from "../modules/surcharges/surcharge.routes.js"
 import couponRoutes from "../modules/coupons/coupon.routes.js"
 import registerSessionRoutes from "../modules/pos/registerSession.routes.js"
 import staffSessionRoutes from "../modules/pos/staffSession.routes.js"
+import cashMovementRoutes from "../modules/pos/cashMovement.routes.js"
 import {
   approvalOverrideRoutes,
   approvalRequestRoutes,
@@ -87,6 +88,8 @@ router.use("/coupons", couponRoutes)
 router.use("/register-sessions", registerSessionRoutes)
 router.use("/batches", registerSessionRoutes)
 router.use("/staff-sessions", staffSessionRoutes)
+// Pay In / Pay Out: cash put into or taken out of a till's drawer.
+router.use("/cash-movements", cashMovementRoutes)
 router.use("/approval-requests", approvalRequestRoutes)
 router.use("/approvals", approvalOverrideRoutes)
 router.use("/orders", orderRoutes)

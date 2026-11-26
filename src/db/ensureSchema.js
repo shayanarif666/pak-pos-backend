@@ -55,6 +55,7 @@ import * as refundOrderDiscount from "./migrations/20261202120000-refund-order-d
 import * as staffSessionClockOutDevice from "./migrations/20261203120000-staff-session-clock-out-device.js"
 import * as registerSessionCloseDevice from "./migrations/20261204120000-register-session-close-device.js"
 import * as lineGrossTotal from "./migrations/20261205120000-line-gross-total.js"
+import * as cashMovements from "./migrations/20261206120000-cash-movements.js"
 
 // Migrations the running code cannot work without (e.g. users.token_version is read on every
 // authenticated request). Each one checks before it changes anything, so running it on a
@@ -166,6 +167,8 @@ const REQUIRED = [
   registerSessionCloseDevice,
   // order_items / order_refund_items gross_amount and total: a line's figures as the till sent them.
   lineGrossTotal,
+  // cash_movements: Pay In / Pay Out of a till's drawer.
+  cashMovements,
 ]
 
 export async function ensureSchema() {

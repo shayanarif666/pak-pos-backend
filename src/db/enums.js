@@ -155,6 +155,10 @@ export const STOCK_MOVEMENT_REASON = [
 ]
 /** register_sessions (batches = cash drawer): open until the batch is closed. */
 export const REGISTER_SESSION_STATUS = ["open", "closed"]
+/** Pay In / Pay Out: cash put into (pay_in) or taken out of (pay_out) a till's drawer by hand. */
+export const CASH_MOVEMENT_TYPE = ["pay_in", "pay_out"]
+/** Who the cash went to / came from: a supplier, a customer, a staff member, or anyone else (party_name). */
+export const CASH_MOVEMENT_PARTY = ["supplier", "customer", "staff", "other"]
 export const APPROVAL_STATUS = ["pending", "approved", "rejected"]
 export const APPROVAL_TYPE = [
   "void_order",
